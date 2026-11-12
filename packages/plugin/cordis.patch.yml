@@ -1,0 +1,5 @@
+# dsh-frp-pocket：宿主侧网关 + frpc 管理 + 设置页 RPC
+# 由 DSH bundle 机制插入到当前 profile 的组合里。
+- insert:
+    - id: dsh-frp-pocket
+      name: dsh-frp-pocket

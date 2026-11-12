@@ -1,0 +1,47 @@
+# =============================================================================
+# dsh-frp-pocket — frpc (家里 PC) 配置模板  ·  frp v0.71.x 语法
+#
+# 这份文件是「手写/排查用」的参考模板：插件运行时会在
+#   $DSH_HOME/dsh-frp-pocket/frpc.toml
+# 自动生成等价内容（见 docs/CONTRACT.md §6），用户不需要手改这份。
+# 用途：不装插件时手工验证、或隧道起不来时对比插件生成的配置。
+#
+# 占位符：VPS_IP / FRP_TOKEN / dsh.example.com
+# =============================================================================
+
+serverAddr = "VPS_IP"
+serverPort = 7000
+
+auth.method = "token"
+auth.token = "FRP_TOKEN"
+
+# 控制连接不走 TLS（与 frps 默认一致）。若 VPS 上开了 transport.tls.force，
+# 这里必须改成 true，否则连不上。
+transport.tls.enable = false
+
+# 断线重连与心跳：默认即可，显式写出便于对照插件日志
+transport.heartbeatInterval = 30
+transport.heartbeatTimeout = 90
+
+log.to = "console"
+log.level = "info"
+
+# --- 代理：把公网 home.dsh.example.com 映射到本机网关 3081 --------------------
+[[proxies]]
+name = "dsh-frp-home"
+type = "http"
+localIP = "127.0.0.1"
+localPort = 3081          # dsh-frp-pocket 网关端口（不是 dsh web 的端口！）
+subdomain = "home"        # → home.dsh.example.com（frps 的 subDomainHost 拼接）
+# healthCheck 故意不开：网关自己会返回 200，frpc 的 healthCheck 只对 tcp 更可靠。
+
+# -----------------------------------------------------------------------------
+# 备选写法 A：显式完整域名（不依赖 frps 的 subDomainHost，适合多域名/裸域）
+# 注释掉 subdomain，改用：
+# customDomains = ["home.dsh.example.com"]
+#
+# 备选写法 B：不走域名，直接映射一个 VPS 端口（frps allowPorts 必须放行）
+# 删掉 subdomain 行，改用：
+# remotePort = 30001
+# 之后手机访问 http://VPS_IP:30001/ —— 没有 TLS，只建议内网/临时排障用。
+# -----------------------------------------------------------------------------

@@ -1,0 +1,11 @@
+{"t":1762918600,"event":"goal_started","detail":"M1 scaffold+contract","session":"ef93a605"}
+{"t":1762918600,"event":"dispatch","detail":"W1 plugin / W2 app / W3 deploy+docs (3 workers)","session":"ef93a605"}
+{"t":"2026-11-12T01:57:26Z","who":"W3","event":"delivered","detail":"deploy/ frps+Caddy+systemd+install-vps+frpc双机模板; docs ARCHITECTURE/VPS/PC-SETUP/APP/TROUBLESHOOT; scripts smoke-local/check/build-apk; 20 files"}
+{"t":"2026-11-12T01:57:26Z","who":"lead","event":"verified","detail":"frps/frpc verify OK; smoke-local.sh 独立复跑: vhost Host=home.dsh.example.com 打通 + WS 101 透传 PASS; 网关段 SKIP(等W1)"}
+{"t":"2026-11-12T02:04:45Z","who":"lead","event":"verified","detail":"插件装入隔离 profile 后: /frp-pocket/api/info=200 JSON ok; GET /=200 登录页; 错PIN=200/对PIN=303+frp_auth cookie; 首屏 x-frp-pocket-handshake=transition 并回传上游 dsh-auth cookie; 之后 GET /=200 真实 DSH, /api/version=404(已鉴权, 端点不存在)"}
+{"t":"2026-11-12T02:04:45Z","who":"lead","event":"finding","detail":"遗留: api/info 的 dsh 版本为空串; 单元测试 20/20 通过; 老进程热加载插件(需重启做干净启动验证)"}
+{"t":"2026-11-12T02:13:29Z","who":"lead","event":"verified","detail":"端到端全链路(真DSH+真frps+真frpc): Host home.dsh.test 经 frp vhost 8099 -> PIN登录303 -> bootstrap 回传 dsh-auth -> 真实DSH 41383B; info/health/未知API/限速(5次锁60s,提示'尝试次数过多，请50秒后再试',解锁后303) 全部符合契约"}
+{"t":"2026-11-12T02:13:29Z","who":"lead","event":"defect","detail":"F1 CLI frpc start 子进程随CLI退出即死(frps: login 10:10:11.888 -> client exit .892); F2 state.json 永远停在 starting(frpc pid 23396 存活且已注册); F3 frpc 日志不落盘; F4 死进程的 pid 不回收, frpc status 误报"}
+{"t":"2026-11-12T02:38:28Z","who":"lead","event":"fix-verified","detail":"F1-F4 修复后回归: 单测29/29; 干净启动 state.json=running + frpc.log 落盘; health frp.state=running; CLI start 后 frpc 存活并注册 clitest; stop 生效; 强杀后自动拉起新 pid 且 vhost 恢复200; 全链路 PIN->303->bootstrap->41383B 真实DSH"}
+{"t":"2026-11-12T02:38:28Z","who":"lead","event":"integration","detail":"修 scripts/smoke-local.sh 与真实 CLI 的漂移(不存在 --gateway-only): 改用 serve --upstream --port --config, 网关段前重启 frpc 指向网关; 结果 11 项全 PASS; scripts/check.sh ALL CHECKS PASSED"}
+{"t":"2026-11-12T02:42:26Z","who":"lead","event":"build","detail":"release APK 按 ABI 拆分构建成功: arm64-v8a 25.4MB / armeabi-v7a 21.4MB / x86_64 27.7MB; README 补安装表; 本机无 adb(platform-tools 未入 PATH), 真机安装未验证"}

@@ -1,0 +1,33 @@
+# =============================================================================
+# dsh-frp-pocket — frpc (工作室 PC) 配置模板  ·  frp v0.71.x 语法
+#
+# 与 frpc-home.toml 的差别只有三处：
+#   1) [[proxies]].name  不同（frps 侧按 name 区分代理，重名会互相踢掉）
+#   2) subdomain         不同（studio → studio.dsh.example.com）
+#   3) PIN / displayName 不同（在插件设置页里，不在这份文件里）
+#
+# 占位符：VPS_IP / FRP_TOKEN / dsh.example.com
+# =============================================================================
+
+serverAddr = "VPS_IP"
+serverPort = 7000
+
+auth.method = "token"
+auth.token = "FRP_TOKEN"
+
+transport.tls.enable = false
+transport.heartbeatInterval = 30
+transport.heartbeatTimeout = 90
+
+log.to = "console"
+log.level = "info"
+
+[[proxies]]
+name = "dsh-frp-studio"
+type = "http"
+localIP = "127.0.0.1"
+localPort = 3081          # 网关端口；两台机器可以相同，因为各自在本机
+subdomain = "studio"      # → studio.dsh.example.com
+
+# 备选：customDomains = ["studio.dsh.example.com"]
+# 备选：remotePort = 30002   （需 frps allowPorts 放行，且两台 PC 不能同端口）

@@ -1,0 +1,50 @@
+# =============================================================================
+# /etc/systemd/system/frps.service
+# 由 deploy/install-vps.sh 安装；也可手动：
+#   sudo install -m 0644 deploy/systemd/frps.service /etc/systemd/system/frps.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now frps
+#
+# 设计要点：
+#   - 专用系统用户 frp：即使 frps 被打，也拿不到 root
+#   - frps 只监听 7000(公网) 与 127.0.0.1:8080 / 127.0.0.1:7500，无需任何 capability
+#   - ProtectSystem=strict：文件系统只读，唯一可写是 PrivateTmp 的临时目录
+# =============================================================================
+[Unit]
+Description=frp server (dsh-frp-pocket)
+Documentation=https://github.com/fatedier/frp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=frp
+Group=frp
+ExecStart=/usr/local/bin/frps -c /etc/frp/frps.toml
+Restart=always
+RestartSec=3
+LimitNOFILE=1048576
+
+# --- 加固 ---
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# 日志走 journald（配置里 log.to="console"）
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=frps
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+# 统一换行，避免 Windows 上 checkout 后 shell 脚本带 CRLF 在 Linux/VPS 上跑挂
+* text=auto eol=lf
+*.sh text eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.toml text eol=lf
+*.apk binary
+*.png binary
+*.jpg binary
+*.ico binary

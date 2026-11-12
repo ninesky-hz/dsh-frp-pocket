@@ -1,0 +1,1 @@
+{"t":"2026-11-12T02:14:00Z","q":"部署需要两个真实值：① VPS 的公网 IP（或域名）② 你打算用的泛域名，例如 dsh.example.com（frps 用 subdomain 模式，家里的机器自动得到 home.dsh.example.com、工作室得到 studio.dsh.example.com）","blocking":false,"workaround":"先用占位 dsh.example.com 完成全部验收与文档，真实值只需改 deploy/frps/frps.toml 的 subDomainHost、Caddyfile 的两个站点名、frpc-*.toml 的 serverAddr/auth.token"}

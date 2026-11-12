@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.e2e/
+*.log
+*.apk
+!packages/app/**/app-release.apk
+.DS_Store
+Thumbs.db

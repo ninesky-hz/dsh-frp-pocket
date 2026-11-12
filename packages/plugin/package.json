@@ -1,0 +1,42 @@
+{
+  "name": "dsh-frp-pocket",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DSH 手机远控宿主插件：PIN 网关 + 自建 frp 隧道 + 设置页",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client/index.js",
+    "./lib/*": "./lib/*",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "dsh-frp-pocket": "bin/dsh-frp-pocket.mjs"
+  },
+  "files": [
+    "lib",
+    "client",
+    "bin",
+    "cordis.patch.yml",
+    "LICENSE",
+    "vendor/dsh-pocket/LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "GPL-2.0-or-later"
+}

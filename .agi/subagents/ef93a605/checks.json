@@ -1,0 +1,61 @@
+[
+  {
+    "id": "c1",
+    "cmd": "cd D:/Ai-Project/dsh-frp-pocket && node --test packages/plugin/test/*.test.mjs 2>&1 | tee /tmp/frp-test.log | awk '/^# pass /{p=$3} /^# fail /{f=$3} END{if(p<8||f!=0) exit 1}'",
+    "expect": ["e1"]
+  },
+  {
+    "id": "c2",
+    "cmd": "cd D:/Ai-Project/dsh-frp-pocket && node --test packages/plugin/test/gateway.test.mjs",
+    "expect": ["e1", "e2", "e6"]
+  },
+  {
+    "id": "c3",
+    "cmd": "cd D:/Ai-Project/dsh-frp-pocket && node .e2e/accept.mjs",
+    "expect": ["e2", "e3"]
+  },
+  {
+    "id": "c4",
+    "cmd": "cd D:/Ai-Project/dsh-frp-pocket && out=$(node packages/plugin/bin/dsh-frp-pocket.mjs frpc dry-run --config .e2e/tmp-config.json) && echo \"$out\" | grep -q 'serverAddr' && echo \"$out\" | grep -q 'auth.token' && echo \"$out\" | grep -q '\\[\\[proxies\\]\\]' && echo \"$out\" | grep -Eq 'subdomain|remotePort' && test ! -e packages/plugin/frpc.toml",
+    "expect": ["e4"]
+  },
+  {
+    "id": "c5",
+    "file": "packages/plugin/package.json",
+    "contains": "\"patch\": \"./cordis.patch.yml\"",
+    "expect": ["e5"]
+  },
+  {
+    "id": "c6",
+    "file": "packages/plugin/package.json",
+    "contains": "\"platform\": \"web\"",
+    "expect": ["e5"]
+  },
+  {
+    "id": "c7",
+    "file": "packages/plugin/cordis.patch.yml",
+    "contains": "- insert:",
+    "expect": ["e5"]
+  },
+  {
+    "id": "c8",
+    "cmd": "cd D:/Ai-Project/dsh-frp-pocket && node -e \"const fs=require('fs');const s=fs.readFileSync('packages/plugin/cordis.patch.yml','utf8');if(!/insert:/.test(s)||!/dsh-frp-pocket/.test(s))process.exit(1);\"",
+    "expect": ["e5"]
+  },
+  {
+    "id": "c9",
+    "file": "packages/plugin/client/index.js",
+    "contains": "__ModuleLoader__",
+    "expect": ["e5"]
+  },
+  {
+    "id": "c10",
+    "cmd": "cd D:/Ai-Project/dsh-frp-pocket && node --test packages/plugin/test/config.test.mjs packages/plugin/test/frpc.test.mjs",
+    "expect": ["e1", "e4"]
+  },
+  {
+    "id": "c11",
+    "note": "WS 行为在 test/gateway.test.mjs 中实现：未认证 upgrade 被拒绝（断言 401/连接被断），认证 upgrade 打到假上游并收到回显（真实 Sec-WebSocket-Accept + 帧回显）。由 c2 覆盖 e6。",
+    "expect": ["e6"]
+  }
+]

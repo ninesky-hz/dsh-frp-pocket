@@ -1,0 +1,94 @@
+# =============================================================================
+# /etc/caddy/Caddyfile — dsh-frp-pocket 的 TLS 入口
+# 由 deploy/install-vps.sh 渲染（替换 dsh.example.com 与 ACME_EMAIL）：
+#   sudo install -m 0644 deploy/caddy/Caddyfile /etc/caddy/Caddyfile
+#   sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+#   sudo systemctl reload caddy
+#
+# 职责：终止 TLS（自动申请/续期 Let's Encrypt），按域名把请求转给 frps 的
+#       vhostHTTPPort（127.0.0.1:8080）。frps 再按 Host 头把流量交给对应 PC 的 frpc。
+#
+# 关键点：必须保留原始 Host 头！frps 就是靠 Host: home.dsh.example.com 找代理的。
+#         Caddy v2 默认透传原始 Host，这里显式写出以固定行为、方便后来人读懂。
+# =============================================================================
+
+{
+	# ACME 账户邮箱（证书到期提醒）。install-vps.sh 在未提供 --email 时会注释掉本行。
+	email ACME_EMAIL
+
+	# 管理 API 只监听回环（默认就是这样，写出来是为了明确）
+	admin 127.0.0.1:2019
+}
+
+# -----------------------------------------------------------------------------
+# 公共片段：安全头 + 压缩 + 反代
+# WebSocket：Caddy 原生支持 Upgrade 透传，无需额外配置（frps 侧同样透传）。
+# 注意 encode 对 101 升级请求自动跳过，不会破坏 WS。
+# -----------------------------------------------------------------------------
+(dsh_upstream) {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	reverse_proxy 127.0.0.1:8080 {
+		# 保留原始 Host —— frps 的 vhost 路由依赖它
+		header_up Host {host}
+
+		# 不缓冲响应：dsh web 的流式输出 / SSE / 长连接不会被攒住
+		flush_interval -1
+
+		# 上游是本机 frps，健康检查没必要；frps 自己会 404 未注册的 Host
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+# -----------------------------------------------------------------------------
+# 家里
+# -----------------------------------------------------------------------------
+home.dsh.example.com {
+	import dsh_upstream
+}
+
+# -----------------------------------------------------------------------------
+# 工作室
+# -----------------------------------------------------------------------------
+studio.dsh.example.com {
+	import dsh_upstream
+}
+
+# =============================================================================
+# 备选方案：通配符证书（以后想随手加机器，不用再改 DNS/证书）
+#
+# 泛域名证书只能用 DNS-01 验证，而 DNS-01 需要对应的 DNS provider 插件，
+# 官方 Caddy 二进制里没有。做法：
+#
+#   1) 用 xcaddy 自己编一个带插件的版本（以 Cloudflare 为例）：
+#        go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+#        xcaddy build --with github.com/caddy-dns/cloudflare
+#        sudo install -m 0755 ./caddy /usr/bin/caddy
+#   2) 给 Caddy 服务加环境变量（Cloudflare API Token，权限只需 Zone.DNS:Edit）：
+#        sudo systemctl edit caddy
+#        [Service]
+#        Environment=CF_API_TOKEN=你的token
+#   3) DNS 加一条泛解析：A  *.dsh.example.com  →  VPS_IP
+#   4) 把上面的两个站点换成下面这一段：
+#
+#      *.dsh.example.com {
+#          tls {
+#              dns cloudflare {env.CF_API_TOKEN}
+#              resolvers 1.1.1.1
+#          }
+#          import dsh_upstream
+#      }
+#
+#   警告：泛解析意味着任何人猜 subdomain 都能打到 frps；frps 只认已注册的代理，
+#   未注册的 Host 一律 404，但日志里会看到扫描。介意的话继续用逐条 A 记录。
+# =============================================================================

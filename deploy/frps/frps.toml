@@ -1,0 +1,70 @@
+# =============================================================================
+# dsh-frp-pocket — frps (服务端) 配置模板  ·  frp v0.71.x 语法
+# 目标路径：/etc/frp/frps.toml   属主 root:root   权限 0644（含 token，建议 0600）
+#
+# 拓扑：手机 → Caddy(443, TLS 终止) → 127.0.0.1:8080 (本文件 vhostHTTPPort)
+#                              ↑ frpc(7000) ── 家里 / 工作室 两台 PC
+#
+# 占位符（部署时替换）：
+#   FRP_TOKEN           frps 与 frpc 共享的认证 token（>= 32 位随机串）
+#   dsh.example.com     你的域名；子域 home. / studio. 由 frpc 侧声明
+#   DASHBOARD_PASSWORD  dashboard 口令（仅监听 127.0.0.1，仍建议强口令）
+# =============================================================================
+
+# --- 控制端口：frpc 连这里 -----------------------------------------------------
+bindAddr = "0.0.0.0"
+bindPort = 7000
+
+# --- HTTP 虚拟主机：Caddy 反代到这里 -------------------------------------------
+# 只监听回环，公网 8080 不暴露；公网入口只有 Caddy 的 443。
+proxyBindAddr = "127.0.0.1"
+vhostHTTPPort = 8080
+
+# vhostHTTPSPort 故意不启用：TLS 统一由 Caddy 终止，frps 只看明文 HTTP，
+# 避免 frps 抢 443、也避免证书在 frps 里再管一份。
+# vhostHTTPSPort = 8443
+
+# --- 认证 ---------------------------------------------------------------------
+auth.method = "token"
+auth.token = "FRP_TOKEN"
+
+# 附加一层：限制单个客户端可开的代理数（防止 token 泄漏后被无限开洞）
+# userConnections 针对单用户；此处按需打开。
+# maxPortsPerClient = 5
+
+# --- 子域名模式 ---------------------------------------------------------------
+# frpc 声明 subdomain = "home" 时，公网域名即 home.dsh.example.com
+subDomainHost = "dsh.example.com"
+
+# --- remotePort 模式留给「不走域名」的备用通道 ---------------------------------
+# 允许的 remotePort 区间；插件配置里的 frp.remotePort 必须落在此区间内。
+# 仅放一小段，够用即可（区间越小越好）。
+allowPorts = [
+  { start = 30000, end = 30010 },
+]
+
+# --- 传输层 -------------------------------------------------------------------
+# 控制连接自身的 mux / 心跳。默认值即可，显式写出便于排障。
+transport.maxPoolCount = 5
+transport.tcpMux = true
+transport.heartbeatTimeout = 90
+
+# 若希望 frpc→frps 的控制连接也走 TLS（需 frpc 侧 transport.tls.enable = true）：
+# transport.tls.force = true
+# 默认关闭：插件配置默认 transport = "tcp"，改 tls 要两边同时改。
+
+# --- 日志 ---------------------------------------------------------------------
+# console：交给 systemd-journald 收集，用 journalctl -u frps 查看。
+log.to = "console"
+log.level = "info"
+log.maxDays = 3
+
+# --- Dashboard（只监听回环，通过 SSH 隧道访问） --------------------------------
+webServer.addr = "127.0.0.1"
+webServer.port = 7500
+webServer.user = "admin"
+webServer.password = "DASHBOARD_PASSWORD"
+
+# --- 安全开关 -----------------------------------------------------------------
+# 不允许客户端自带 TLS 证书文件路径之类的“不安全特性”
+# （v0.71 的 allowUnsafeFeatures 由命令行 --allow-unsafe 控制，配置文件里无需写）
