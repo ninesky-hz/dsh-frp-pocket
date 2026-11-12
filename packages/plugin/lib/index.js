@@ -3,12 +3,12 @@
 // 职责：读配置 → 起 PIN 网关（默认 127.0.0.1:3081）→ 需要时起 frpc → 注册设置页 RPC。
 // 契约：docs/CONTRACT.md §2/§3/§4/§5/§6。任何一步失败都只记日志，不能拖垮 DSH。
 
-import { loadConfig, getSessionKey, updateConfig } from './config.mjs';
+import { loadConfig, getSessionKey, updateConfig, paths } from './config.mjs';
 import { createGateway } from './gateway.mjs';
 import { createFrpcManager } from './frpc.mjs';
 import { installRpc } from './rpc.mjs';
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 export const name = 'dsh-frp-pocket';
@@ -76,10 +76,37 @@ function readLaunchToken(ctx) {
 
 export async function apply(ctx, config = {}) {
   const log = makeLog(ctx);
+  const configFile = paths().config;
+  const configStamp = () => {
+    try {
+      const st = statSync(configFile);
+      return `${st.mtimeMs}:${st.size}`;
+    } catch {
+      return '';
+    }
+  };
   let current = loadConfig();
+  let currentStamp = configStamp();
+
+  /**
+   * 配置对账：外部改过 config.json（CLI、手工编辑、别的进程）就重新加载，
+   * 免得面板「重启隧道」时又把内存里的旧值写回磁盘。
+   */
+  const liveConfig = () => {
+    const stamp = configStamp();
+    if (stamp && stamp !== currentStamp) {
+      try {
+        current = loadConfig();
+        currentStamp = stamp;
+      } catch {
+        /* 文件正在写：保留上一次有效值 */
+      }
+    }
+    return current;
+  };
   const sessionKey = getSessionKey();
 
-  const frpc = createFrpcManager({ getConfig: () => current, log });
+  const frpc = createFrpcManager({ getConfig: liveConfig, log });
 
   const upstreamPort = await waitForUpstreamPort(ctx);
   if (!upstreamPort) {
@@ -94,7 +121,7 @@ export async function apply(ctx, config = {}) {
         port: current.gateway.port,
         host: current.gateway.bind,
         upstream: { host: '127.0.0.1', port: upstreamPort },
-        getConfig: () => current,
+        getConfig: liveConfig,
         sessionKey,
         version: VERSION,
         dshVersion: config?.dshVersion ?? detectDshVersion(),
@@ -109,9 +136,10 @@ export async function apply(ctx, config = {}) {
   }
 
   const disposeRpc = installRpc(ctx, {
-    getConfig: () => current,
+    getConfig: liveConfig,
     saveConfig: (patch) => {
       current = updateConfig(patch);
+      currentStamp = configStamp();
       return current;
     },
     frpc,

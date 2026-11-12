@@ -1,0 +1,44 @@
+[
+  {
+    "id": "c1-red-log-has-appscope-assertion",
+    "file": ".agi/subagents/a110c8ef/red-test.log",
+    "contains": "AppScope 未挂载到 widget 树",
+    "expect": ["e1"]
+  },
+  {
+    "id": "c2-hosts-flow-tests-pass",
+    "cmd": "cd /d/Ai-Project/dsh-frp-pocket/packages/app && \"/d/Program Files/Flutter/bin/flutter\" test test/hosts_flow_test.dart",
+    "expect": ["e1", "e4"]
+  },
+  {
+    "id": "c3-main-scope-outside-materialapp",
+    "cmd": "cd /d/Ai-Project/dsh-frp-pocket && grep -q 'return AppScope(' packages/app/lib/main.dart && grep -q 'child: MaterialApp(' packages/app/lib/main.dart && ! grep -q 'home: AppScope(' packages/app/lib/main.dart",
+    "expect": ["e2"]
+  },
+  {
+    "id": "c4-app-scope-maybe-of",
+    "file": "packages/app/lib/app_scope.dart",
+    "contains": "static AppScope? maybeOf",
+    "expect": ["e2"]
+  },
+  {
+    "id": "c5-analyze-clean",
+    "cmd": "cd /d/Ai-Project/dsh-frp-pocket/packages/app && \"/d/Program Files/Flutter/bin/flutter\" analyze",
+    "expect": ["e3"]
+  },
+  {
+    "id": "c6-all-tests",
+    "cmd": "cd /d/Ai-Project/dsh-frp-pocket/packages/app && \"/d/Program Files/Flutter/bin/flutter\" test",
+    "expect": ["e4"]
+  },
+  {
+    "id": "c7-apk-exists-over-20mb",
+    "cmd": "cd /d/Ai-Project/dsh-frp-pocket && test -f packages/app/build/app/outputs/flutter-apk/app-release.apk && test $(stat -c %s packages/app/build/app/outputs/flutter-apk/app-release.apk) -gt 20971520",
+    "expect": ["e5"]
+  },
+  {
+    "id": "c8-apk-size-note",
+    "note": "arm64 release APK: D:\\Ai-Project\\dsh-frp-pocket\\packages\\app\\build\\app\\outputs\\flutter-apk\\app-release.apk，36141046 字节（约 34.5MB），2026-11-12 13:55 构建",
+    "expect": ["e5"]
+  }
+]

@@ -412,11 +412,16 @@ window.__ModuleLoader__.load({
           { style: styles.card },
           h('h3', { style: styles.title }, 'frps 服务器'),
           h(
+            'div',
+            { style: styles.hint },
+            '服务器地址可以填域名（如 dsh.chenz.vip），frpc 会自己解析，不必写 IP。',
+          ),
+          h(
             Field,
             { label: '服务器地址' },
             h('input', {
               style: styles.input,
-              placeholder: 'home.dsh.example.com',
+              placeholder: 'dsh.chenz.vip',
               value: form.serverAddr,
               onChange: (e) => setForm({ ...form, serverAddr: e.target.value }),
             }),
@@ -634,6 +639,11 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = useState('');
       const [showPin, setShowPin] = useState(false);
       const mounted = useRef(true);
+      // 公网地址 / 域名草稿：用户正在编辑时不被 5s 轮询覆盖
+      const urlDirty = useRef(false);
+      const domainDirty = useRef(false);
+      const [urlDraft, setUrlDraft] = useState('');
+      const [domainDraft, setDomainDraft] = useState('');
 
       const call = async (endpoint, payload) => {
         const res = await rpcCall(endpoint, payload);
@@ -646,6 +656,10 @@ window.__ModuleLoader__.load({
           const value = await call('status', {});
           if (!mounted.current) return;
           setStatus(value);
+          if (!urlDirty.current) setUrlDraft(value.config?.frp?.publicUrl ?? '');
+          if (!domainDirty.current) {
+            setDomainDraft((value.config?.frp?.customDomains ?? []).join(', '));
+          }
           setError(null);
         } catch (err) {
           if (mounted.current) setError(err?.message ?? String(err));
@@ -673,6 +687,40 @@ window.__ModuleLoader__.load({
           if (mounted.current) setError(err?.message ?? String(err));
         } finally {
           if (mounted.current) setBusy('');
+        }
+      };
+
+      /** 就地改公网地址 / 域名：只提交 frp.publicUrl 与 frp.customDomains，其余配置不动。 */
+      const saveAddress = async () => {
+        const url = urlDraft.trim().replace(/\/+$/, '');
+        if (url && !/^https?:\/\/[^\s]+$/i.test(url)) {
+          setError('公网地址要写成 https://域名 或 http://IP:端口 | publicUrl must be an http(s) URL');
+          return;
+        }
+        const domains = domainDraft
+          .split(/[,\s]+/)
+          .map((d) => d.trim())
+          .filter(Boolean);
+        if (!url && !domains.length) {
+          setError('公网地址与域名至少填一个 | publicUrl or customDomains is required');
+          return;
+        }
+        setBusy('address');
+        setError(null);
+        try {
+          const value = await call('config.save', {
+            config: { frp: { publicUrl: url, customDomains: domains } },
+          });
+          urlDirty.current = false;
+          domainDirty.current = false;
+          setStatus(value);
+          setUrlDraft(value.config?.frp?.publicUrl ?? '');
+          setDomainDraft((value.config?.frp?.customDomains ?? []).join(', '));
+          setNotice('地址已更新 | address updated');
+        } catch (err) {
+          setError(err?.message ?? String(err));
+        } finally {
+          setBusy('');
         }
       };
 
@@ -723,7 +771,7 @@ window.__ModuleLoader__.load({
         notice ? h('div', { style: pageStyles.notice }, notice) : null,
         error ? h('div', { style: pageStyles.fail }, `lastError: ${error}`) : null,
 
-        // 公网地址
+        // 公网地址（就地可改，不用去设置页）
         h(
           'div',
           { style: styles.card },
@@ -731,22 +779,77 @@ window.__ModuleLoader__.load({
             'div',
             { style: styles.head },
             h('h3', { style: styles.title }, '公网地址'),
-            publicUrl
-              ? h(
-                  'div',
-                  { style: styles.row },
-                  h('button', { style: styles.btn, onClick: () => copy(publicUrl) }, '复制'),
-                  h(
+            h(
+              'div',
+              { style: styles.row },
+              h(
+                'button',
+                { style: styles.btn, onClick: () => copy(publicUrl) },
+                '复制',
+              ),
+              publicUrl
+                ? h(
                     'a',
                     { style: styles.btn, href: publicUrl, target: '_blank', rel: 'noreferrer' },
                     '打开',
-                  ),
-                )
-              : null,
+                  )
+                : null,
+            ),
           ),
-          publicUrl
-            ? h('div', { style: { ...styles.mono, fontSize: 14, wordBreak: 'break-all' } }, publicUrl)
-            : h('div', { style: styles.sub }, '尚未配置 publicUrl / customDomains —— 到设置页「FRP 远程」里填。'),
+          h(
+            'div',
+            { style: { ...styles.mono, fontSize: 14, wordBreak: 'break-all', marginBottom: 8 } },
+            publicUrl || '（未配置）',
+          ),
+          h(
+            'div',
+            { style: styles.row },
+            h('input', {
+              style: { ...styles.input, ...styles.mono, flex: 1 },
+              value: urlDraft,
+              placeholder: 'https://dsh.chenz.vip',
+              title: '公网地址：填什么这里就显示什么',
+              onChange: (e) => {
+                urlDirty.current = true;
+                setUrlDraft(e.target.value);
+              },
+            }),
+            h(
+              'button',
+              {
+                style: { ...styles.btn, ...styles.primary },
+                disabled: busy === 'address',
+                onClick: saveAddress,
+              },
+              busy === 'address' ? '保存中…' : '保存地址',
+            ),
+          ),
+          h(
+            'div',
+            { style: styles.sub },
+            '想用短域名就填 https://dsh.chenz.vip（VPS 上 Caddy 要有该站点的证书与 frps 的 customDomains 匹配）；留空则回退到下面的域名。',
+          ),
+          cfg.mode === 'customDomains'
+            ? h(
+                'div',
+                { style: styles.row },
+                h('input', {
+                  style: { ...styles.input, ...styles.mono, flex: 1 },
+                  value: domainDraft,
+                  placeholder: 'home.dsh.chenz.vip',
+                  title: 'frps customDomains：App 实际连的域名',
+                  onChange: (e) => {
+                    domainDirty.current = true;
+                    setDomainDraft(e.target.value);
+                  },
+                }),
+                h(
+                  'button',
+                  { style: styles.btn, disabled: busy === 'address', onClick: saveAddress },
+                  '保存域名',
+                ),
+              )
+            : null,
           h(
             'div',
             { style: pageStyles.grid },
@@ -758,6 +861,11 @@ window.__ModuleLoader__.load({
             h('div', { style: pageStyles.val }, status?.hostId ?? '—'),
             h('div', { style: pageStyles.key }, '网关'),
             h('div', { style: pageStyles.val }, `${status?.gateway?.bind ?? '127.0.0.1'}:${status?.gateway?.port ?? 3081}`),
+          ),
+          h(
+            'div',
+            { style: styles.sub },
+            'frps 地址可以是域名（如 dsh.chenz.vip），frpc 会自己解析；改完在设置页保存并重启隧道。',
           ),
         ),
 

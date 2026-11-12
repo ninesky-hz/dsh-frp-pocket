@@ -19,3 +19,12 @@
 - 本机 frpc 桥 `type=https` + `customDomains`，把 443 上的指定 SNI 接到 Caddy —— **不改 frps.toml**
 - 插件新增 `frp.mode=customDomains`
 - 文档：新增 `docs/VPS-TLS.md`（含真机实测表）；ARCHITECTURE/VPS/PC-SETUP/CONTRACT/README 同步
+
+## 2026-11-12 · 面板自定义地址 + frps 用域名 + App 保存修复（YG 三项需求）
+- 面板「公网地址」卡片就地可改：`packages/plugin/client/index.js` 增 `urlDraft`/`domainDraft` + `urlDirty`/`domainDirty`（5s 轮询不覆盖正在输入的内容）+ `saveAddress()`，只提交 `frp.publicUrl` / `frp.customDomains`（`config.save` 是 patch 语义）；`mode=customDomains` 时多一行域名输入。
+- 设置页 frps 卡片：placeholder 改 `dsh.chenz.vip`，加提示「服务器地址可以填域名，frpc 会自己解析」。
+- `packages/plugin/lib/index.js` 新增 `liveConfig()`：按 `config.json` 的 mtime+size 对账，外部改盘后下次读配置自动重载，避免面板「重启隧道」把内存旧值写回磁盘。
+- App 保存丢失根因（worker a110c8ef 用 widget test 先红复现）：`AppScope` 只包在 `MaterialApp.home` 里，`Navigator.push` 出来的路由祖先链上没有它 → `AppScope.of` 断言失败，既不落库也不 pop。修法：`AppScope` 移到 `MaterialApp` 外层（`lib/main.dart`），`app_scope.dart` 增 `maybeOf` + 中文 `StateError`，`hosts_screen` 支持注入 `probe`。
+- 新增 `packages/app/test/hosts_flow_test.dart`（手动添加 + 扫码预填两条链路，断言 pop、列表出现、`dsh_frp.hosts.v1` 持久化可读回）。
+- 实测：`config.json` 的 `frp.serverAddr=dsh.chenz.vip` → `frpc.toml` 同步 → 13:57:10 `login to server success` + `start proxy success`；`https://home.dsh.chenz.vip/frp-pocket/api/health` 返回 401（网关正常响应，需 PIN）。
+- 复验：插件 `node --test` 31/31；App `flutter analyze` 无问题、`flutter test` 44/44；APK 36141046 字节。

@@ -15,3 +15,13 @@
 {"ts":"2026-11-12T12:35:00+08:00","event":"plugin_customDomains_shipped","detail":"插件新增 frp.mode=customDomains（配置/生成frpc.toml/设置页/CLI/单测31）；commit bded3f8 + 3bd41d5 已推送"}
 {"ts":"2026-11-12T12:35:00+08:00","event":"e2e_public_https_verified","detail":"公网链路实测：?pin= -> 303 + frp_auth -> 过渡页 363B -> 真 DSH 41383B（title DeepSeek Harness）"}
 {"ts":"2026-11-12T13:30:00+08:00","event":"desktop-profile-install","detail":"desktop profile 手工安装：package.json 加 link 依赖+bundles、pnpm install 52s、模块可解析；配置预置 home.dsh.chenz.vip；待重启应用加载"}
+{"ts":"2026-11-12T13:45:00+08:00","event":"home-online","detail":"桌面重启后插件生效：3081 LISTENING(pid18896)、frpc.exe pid7312 running、公网 api/info 200 hostId=host-8630811a、?pin= 303+frp_auth、进站 50523B DeepSeek Harness；boot 98 entries 含 dsh-frp-pocket rev=568abf8df941"}
+{"ts":"2026-11-12T05:49:51.280Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 8 轮没有任何产出，先停在这里等人工确认","idleTicks":8}}
+{"ts":"2026-11-12T05:52:43.347Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-12T05:55:13.272Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-12T05:58:49.284Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-12T06:00:00Z","event":"milestone","detail":{"m":"面板公网地址就地可改","files":["packages/plugin/client/index.js"],"verify":"node --test 31/31"}}
+{"ts":"2026-11-12T06:00:10Z","event":"milestone","detail":{"m":"frps 用域名 dsh.chenz.vip 实测通","evidence":"frpc.log 13:57:10 login success + start proxy success; https health 401 (网关在响应)","files":["C:/Users/Chen/.dsh/dsh-frp-pocket/config.json","C:/Users/Chen/.dsh/dsh-frp-pocket/frpc.toml"]}}
+{"ts":"2026-11-12T06:00:20Z","event":"milestone","detail":{"m":"App 保存丢失修复 + APK","worker":"a110c8ef","verify":"analyze clean; flutter test 44/44; apk 36141046 bytes"}}
+{"ts":"2026-11-12T06:00:30Z","event":"note","detail":{"m":"config.json 曾被 PS Get-Content/Set-Content 按 ANSI 读写导致 mojibake 并被重置为默认；已用 UTF8-no-BOM 从 backup 恢复并改为域名；后续写该文件一律 [IO.File]+UTF8Encoding($false)"}}
+{"ts":"2026-11-12T06:02:04.150Z","event":"goal-revised","detail":{"session":"a110c8ef","from":1,"to":1,"digestChanged":true}}

@@ -10,3 +10,7 @@ build/
 !packages/app/**/app-release.apk
 .DS_Store
 Thumbs.db
+
+# dsh-main-agent 的循环记账（每轮重写，不是源码）
+.agi/loop-state*.json
+.agi/BRIEF.md

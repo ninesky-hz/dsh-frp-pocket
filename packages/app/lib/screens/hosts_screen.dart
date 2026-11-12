@@ -15,14 +15,19 @@ import 'settings_screen.dart';
 
 /// 首页：主机列表（CONTRACT §7.2.1）。
 class HostsScreen extends StatefulWidget {
-  const HostsScreen({super.key});
+  const HostsScreen({super.key, this.probe});
+
+  /// 测试注入用：传入假探测实现后可避免 widget test 触发真实网络。
+  /// 生产环境不传，仍然创建真实 [ProbeService]。
+  @visibleForTesting
+  final ProbeService? probe;
 
   @override
   State<HostsScreen> createState() => _HostsScreenState();
 }
 
 class _HostsScreenState extends State<HostsScreen> {
-  final ProbeService _probe = ProbeService();
+  late final ProbeService _probe = widget.probe ?? ProbeService();
   final PlatformBridge _bridge = const PlatformBridge();
   final Map<String, ProbeResult> _results = <String, ProbeResult>{};
   final Set<String> _probing = <String>{};
