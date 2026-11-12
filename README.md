@@ -2,6 +2,8 @@
 
 自用的 **DSH 远程控制**方案：手机 App 经自建 **frp** 隧道，远程操作「家里」和「工作室」两台电脑上的 DeepSeek Harness。
 
+**手机安装包**：[Releases · v0.1.0](https://github.com/ninesky-hz/dsh-frp-pocket/releases/tag/v0.1.0)（arm64-v8a / armeabi-v7a / x86_64）
+
 ```
 手机 App ──HTTPS──▶ VPS(Caddy → frps) ──frp──▶ 家里 PC / 工作室 PC
                                               └─ dsh-frp-pocket 网关(127.0.0.1:3081) → dsh web
@@ -35,15 +37,16 @@ dsh plugin --profile desktop add -w D:/Ai-Project/dsh-frp-pocket/packages/plugin
 # 3) 手机：装 packages/app 构建的 APK → 扫码或手填 → 打开
 ```
 
-现成的安装包（已构建，按 ABI 拆分）：
+手机端安装包直接下（**[Releases · v0.1.0](https://github.com/ninesky-hz/dsh-frp-pocket/releases/tag/v0.1.0)**，按 ABI 拆分）：
 
 | 文件 | 体积 | 适用 |
 | --- | --- | --- |
-| `packages/app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk` | 25.4 MB | 绝大多数手机（推荐） |
-| `packages/app/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk` | 21.4 MB | 老 32 位机型 |
-| `packages/app/build/app/outputs/flutter-apk/app-debug.apk` | 166 MB | 仅调试用，全 ABI 未裁剪 |
+| [`dsh-frp-pocket-v0.1.0-arm64-v8a.apk`](https://github.com/ninesky-hz/dsh-frp-pocket/releases/download/v0.1.0/dsh-frp-pocket-v0.1.0-arm64-v8a.apk) | 25.4 MB | 绝大多数手机（推荐） |
+| [`dsh-frp-pocket-v0.1.0-armeabi-v7a.apk`](https://github.com/ninesky-hz/dsh-frp-pocket/releases/download/v0.1.0/dsh-frp-pocket-v0.1.0-armeabi-v7a.apk) | 21.4 MB | 老 32 位机型 |
+| [`dsh-frp-pocket-v0.1.0-x86_64.apk`](https://github.com/ninesky-hz/dsh-frp-pocket/releases/download/v0.1.0/dsh-frp-pocket-v0.1.0-x86_64.apk) | 27.7 MB | 模拟器 / x86 平板 |
 
-安装：手机传文件后点开安装（需允许「安装未知来源应用」），或 `adb install -r app-arm64-v8a-release.apk`。
+源码里也能自己出包：`packages/app/build/app/outputs/flutter-apk/app-{abi}-release.apk`（`bash scripts/build-apk.sh`）。
+安装：手机点开下载好的 APK（需允许「安装未知来源应用」），或 `adb install -r dsh-frp-pocket-v0.1.0-arm64-v8a.apk`。
 当前 release 包用 debug 签名，自用足够；要长期升级请按 `docs/APP.md` 生成自己的 keystore。
 
 > 所有示例中的 `VPS_IP`、`dsh.example.com`、`FRP_TOKEN`、PIN 均为占位符，请替换为你自己的值；凭据只存本机。
