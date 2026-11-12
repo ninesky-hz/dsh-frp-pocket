@@ -116,3 +116,4 @@
 {"ts":"2026-11-12T16:20:29.394Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
 {"ts":"2026-11-12T16:24:32.498Z","event":"release-pushed","detail":{"app":"1.1.0+2","plugin":"0.2.0","commits":["31bf378","affaa8f","2e88844"],"remote":"origin/main=2e88844","tests":{"app":223,"plugin":48},"apk":{"bytes":36733030,"md5":"ffd9a52f332e02b8a6b7dc9a13a7be70"}}}
 {"ts":"2026-11-12T16:42:11.122Z","event":"mission-complete","detail":{"app":"1.1.0+2","plugin":"0.2.0","tests":{"app":223,"plugin":48},"remote":"origin/main=ab5ad02","pending_user":["重启 DSH 使插件 0.2.0 生效","真机安装验证"]}}
+{"ts":"2026-11-12T18:30:00Z","kind":"verify","item":"通配证书续期链路","detail":"acme.sh cron 2,8,14,20 点；主域名 *.dsh.chenz.vip(SAN dsh.chenz.vip) ec-256；Le_RealFullChainPath=/etc/caddy/certs/fullchain.pem、Le_RealKeyPath=/etc/caddy/certs/privkey.pem、Le_ReloadCmd=systemctl restart caddy；Le_NextRenewTime=2027-01-11T19:42:22Z；当前 notAfter=2027-02-10"}
