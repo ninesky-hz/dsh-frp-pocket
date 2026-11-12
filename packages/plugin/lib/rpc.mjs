@@ -256,7 +256,7 @@ export function tcpCheck(host, port, timeoutMs = 3000) {
  * @param {string} deps.version
  * @param {object} [deps.log]
  */
-export function createRpcHandler({ getConfig, saveConfig, frpc, gateway, version = '0.1.0', log = console }) {
+export function createRpcHandler({ getConfig, saveConfig, frpc, gateway, version = '0.2.0', log = console }) {
   const statusPayload = () => {
     const cfg = getConfig();
     const state = frpc?.status?.() ?? { state: 'stopped', since: 0, lastError: null, pid: null, logs: [] };

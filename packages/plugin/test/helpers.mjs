@@ -1,7 +1,7 @@
 // 测试辅助：临时 DSH_HOME + 假上游（HTTP + WS 原样回显）
 import http from 'node:http';
 import net from 'node:net';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -10,6 +10,11 @@ import { getSessionKey } from '../lib/config.mjs';
 import { createGateway, COOKIE_NAME, cookieFor } from '../lib/gateway.mjs';
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+
+/** 网关上报的版本号取自 package.json，升版本时测试不用跟着改。 */
+export const pkgVersion = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+).version;
 
 /** 建一个假 dsh web：HTML 页面 + 升级后逐字节回显。 */
 export async function startUpstream() {
@@ -64,7 +69,7 @@ export async function startGateway({ upstreamPort, cfg, frpc = null }) {
     upstream: { host: '127.0.0.1', port: upstreamPort },
     getConfig: () => cfg,
     sessionKey: getSessionKey(),
-    version: '0.1.0',
+    version: pkgVersion,
     dshVersion: '0.2.2-rc.1',
     launchToken: () => 'launch-token-test',
     frpc,

@@ -10,7 +10,8 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 
 test('package.json：name/version/type/bin/dsh.bundle.patch/dsh.client 齐全', () => {
   assert.equal(pkg.name, 'dsh-frp-pocket');
-  assert.equal(pkg.version, '0.1.0');
+  // 版本号会随发布变化，这里只校验形状，避免每次升版本都要改测试。
+  assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
   assert.equal(pkg.type, 'module');
   assert.equal(pkg.bin['dsh-frp-pocket'], 'bin/dsh-frp-pocket.mjs');
   assert.equal(pkg.dsh.bundle.patch, './cordis.patch.yml');

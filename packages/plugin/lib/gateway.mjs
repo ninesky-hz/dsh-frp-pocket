@@ -311,12 +311,21 @@ function createHandshakeTracker({ max = 3, windowMs = 60_000 } = {}) {
   };
 }
 
-function attachWebSocketHeartbeat(socket, { intervalMs = 30_000, missLimit = 2 } = {}) {
+export function attachWebSocketHeartbeat(socket, { intervalMs = 30_000, missLimit = 10 } = {}) {
   let misses = 0;
-  const onPong = () => {
+  // 这里的 socket 是 net.Socket（TCP），**不是** ws 对象：它的 'pong' 事件永远
+  // 不会触发——pong 帧是上游 ws 库解析完才发出的事件，我们这层只看得到字节。
+  // 早期版本只挂 'pong'，于是 misses 永远不清零，每个 WebSocket 连接都会在
+  // 60 秒（30s × 2）后被无条件 destroy：App 的 $events 因此每 90 秒断一次，
+  // 聊天页状态条反复闪「重连中」。
+  //
+  // 现在按字节判活：客户端应答的 pong 帧会走到 'data'，有流量就重置计数。
+  // 阈值放宽到 5 分钟，避免误杀只是暂时安静的会话。
+  const onTraffic = () => {
     misses = 0;
   };
-  socket.on('pong', onPong);
+  socket.on('data', onTraffic);
+  socket.on('pong', onTraffic);
   const timer = setInterval(() => {
     if (socket.destroyed) return clearInterval(timer);
     if (misses >= missLimit) {
@@ -332,7 +341,10 @@ function attachWebSocketHeartbeat(socket, { intervalMs = 30_000, missLimit = 2 }
     }
   }, intervalMs);
   timer.unref?.();
-  socket.on('close', () => clearInterval(timer));
+  socket.on('close', () => {
+    clearInterval(timer);
+    socket.off('data', onTraffic);
+  });
 }
 
 /** 上游 dsh web 是否活着：TCP connect，结果缓存 3s，避免 health 每 15s 打满。 */
@@ -382,7 +394,7 @@ export function createGateway({
   upstream,
   getConfig,
   sessionKey,
-  version = '0.1.0',
+  version = '0.2.0',
   dshVersion = '',
   launchToken = () => '',
   frpc = null,

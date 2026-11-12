@@ -3,7 +3,8 @@ import { test, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { loadConfig } from '../lib/config.mjs';
-import { authCookie, makeHome, rawRequest, startGateway, startUpstream } from './helpers.mjs';
+import { authCookie, makeHome, pkgVersion, rawRequest, startGateway, startUpstream } from './helpers.mjs';
+
 
 let home;
 let upstream;
@@ -38,7 +39,7 @@ test('GET /frp-pocket/api/info 免鉴权，schema=1 且不泄露 PIN/token/路�
   assert.equal(body.schema, 1);
   assert.equal(body.ok, true);
   assert.equal(body.plugin, 'dsh-frp-pocket');
-  assert.equal(body.version, '0.1.0');
+  assert.equal(body.version, pkgVersion);
   assert.equal(body.dsh, '0.2.2-rc.1');
   assert.equal(body.requiresPin, true);
   assert.equal(body.hostId, cfg.hostId);
