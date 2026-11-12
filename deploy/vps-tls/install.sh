@@ -89,7 +89,12 @@ fi
 if [ -x "$FRPC_BIN" ]; then "$FRPC_BIN" -v; else echo "缺少 $FRPC_BIN（用 --frp-tar 提供 frp 压缩包）" >&2; exit 2; fi
 
 echo "== 4/7 写 frpc 桥配置 =="
-DOMAIN_TOML=$(printf '%s\n' "${CLEAN[@]}" | sed -E 's/.*/"&"/' | paste -sd ', ' -)
+# 注意：不能用 paste -sd ', ' —— paste 会把 ", " 当成「分隔符轮换序列」，
+# 三个域名会生成 `"a","b" "c"`（缺逗号），frpc 直接解析失败。
+DOMAIN_TOML=''
+for d in "${CLEAN[@]}"; do
+  if [ -z "$DOMAIN_TOML" ]; then DOMAIN_TOML="\"$d\""; else DOMAIN_TOML="$DOMAIN_TOML, \"$d\""; fi
+done
 cat > /opt/frp-bridge/frpc-bridge.toml <<EOF
 # 由 deploy/vps-tls/install.sh 生成于 $(date '+%Y-%m-%d %H:%M:%S')
 # 作用：把 frps(vhostHTTPSPort) 上这些域名的 TLS 字节接到本机 Caddy(9443)
