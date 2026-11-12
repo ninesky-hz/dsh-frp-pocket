@@ -54,9 +54,9 @@
 
 | 主机记录 | 类型 | 值 | 用途 |
 | --- | --- | --- | --- |
-| `dsh` | A | `118.178.127.39` | 已经存在，当前指向本机 |
-| `home` **或** `home.dsh` | A | `118.178.127.39` | 家里那台（二选一，见下） |
-| `studio` **或** `studio.dsh` | A | `118.178.127.39` | 工作室那台 |
+| `dsh` | A | `VPS_IP` | 已经存在，当前指向本机 |
+| `home` **或** `home.dsh` | A | `VPS_IP` | 家里那台（二选一，见下） |
+| `studio` **或** `studio.dsh` | A | `VPS_IP` | 工作室那台 |
 
 命名建议：**用 `home.dsh.chenz.vip` / `studio.dsh.chenz.vip`**（多一级，语义清楚，
 也不占用 `dsh.chenz.vip` 这个「总入口」）。此时 DNS 里加的是 `home.dsh` 和 `studio.dsh` 两条 A 记录。
@@ -82,7 +82,7 @@ curl -fsSL -o caddy.tar.gz \
   https://github.com/caddyserver/caddy/releases/download/v2.11.9/caddy_2.11.9_linux_amd64.tar.gz
 curl -fsSL -o frp.tar.gz \
   https://github.com/fatedier/frp/releases/download/v0.72.0/frp_0.72.0_linux_amd64.tar.gz
-scp caddy.tar.gz frp.tar.gz root@118.178.127.39:/tmp/
+scp caddy.tar.gz frp.tar.gz root@VPS_IP:/tmp/
 ```
 
 本机实测：18 MB / 9 s、14.5 MB / 2 s；scp 上传 32 MB 约 5 s。
@@ -90,8 +90,8 @@ scp caddy.tar.gz frp.tar.gz root@118.178.127.39:/tmp/
 ### 3.2 一键安装
 
 ```bash
-scp deploy/vps-tls/install.sh root@118.178.127.39:/tmp/
-ssh root@118.178.127.39
+scp deploy/vps-tls/install.sh root@VPS_IP:/tmp/
+ssh root@VPS_IP
 bash /tmp/install.sh \
   --token 'FRP_TOKEN' \
   --domains 'dsh.chenz.vip' \
@@ -118,7 +118,7 @@ find /var/lib/caddy -name '*.crt'              # 证书签好后会有 dsh.chenz
 
 ## 4. 实测记录（2026-11-12，真机）
 
-环境：`118.178.127.39`，Ubuntu 22.04.5，frps 0.72.0（生产共用），域名 `dsh.chenz.vip`。
+环境：`VPS_IP`，Ubuntu 22.04.5，frps 0.72.0（生产共用），域名 `dsh.chenz.vip`。
 
 | 检查 | 命令 | 结果 |
 | --- | --- | --- |
@@ -126,7 +126,7 @@ find /var/lib/caddy -name '*.crt'              # 证书签好后会有 dsh.chenz
 | 桥登录 frps | `tail /var/log/frp-bridge.log` | `login to server success` + `[dsh-pocket-tls] start proxy success` |
 | 证书签发 | `openssl s_client -connect 127.0.0.1:9443 -servername dsh.chenz.vip` | `subject=CN=dsh.chenz.vip`，`issuer=C=US, O=Let's Encrypt, CN=YE1`，有效至 2027-02-10 |
 | 公网 443 → 桥 → Caddy | `curl --resolve dsh.chenz.vip:443:127.0.0.1 https://dsh.chenz.vip/` | `tls_verify_result=0`（证书链有效） |
-| 全链路（到家里 DSH） | `curl --resolve dsh.chenz.vip:443:118.178.127.39 https://dsh.chenz.vip/frp-pocket/api/info` | `200` `{"ok":true,"hostId":"home-abcd1234","plugin":"dsh-frp-pocket","dsh":"0.2.2-rc.1"}` |
+| 全链路（到家里 DSH） | `curl --resolve dsh.chenz.vip:443:VPS_IP https://dsh.chenz.vip/frp-pocket/api/info` | `200` `{"ok":true,"hostId":"home-abcd1234","plugin":"dsh-frp-pocket","dsh":"0.2.2-rc.1"}` |
 | PIN 登录 | `curl -c jar "https://dsh.chenz.vip/?pin=<PIN>"` | `303` + `Set-Cookie: frp_auth=…; HttpOnly; SameSite=Lax; Max-Age=2592000` |
 | 进 DSH | `curl -b jar https://dsh.chenz.vip/`（同一会话） | `200` + 41,383 B 真实 DSH 页面（`<title>DeepSeek Harness</title>`） |
 | 既有站点未受影响 | `curl https://ha.chenz.vip/`、`https://x.chenz.vip/` | `200`（改造前后一致） |
@@ -138,7 +138,7 @@ find /var/lib/caddy -name '*.crt'              # 证书签好后会有 dsh.chenz
 
 ## 5. 加第二台（工作室）
 
-1. 先加 DNS：`studio.dsh` → `118.178.127.39`，等解析生效（`dig +short studio.dsh.chenz.vip`）。
+1. 先加 DNS：`studio.dsh` → `VPS_IP`，等解析生效（`dig +short studio.dsh.chenz.vip`）。
 2. 在 VPS 上追加域名并重跑脚本（幂等，证书会按需为新域名签发）：
 
 ```bash

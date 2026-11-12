@@ -28,7 +28,7 @@
 
 两条路，按 VPS 现状选：
 
-**A. VPS 上已经有一台在跑业务的 frps（当前现状，`118.178.127.39` / `dsh.chenz.vip`）**
+**A. VPS 上已经有一台在跑业务的 frps（当前现状，`VPS_IP` / `dsh.chenz.vip`）**
 
 ```bash
 # 1) VPS：加一个只听回环的 Caddy 做 TLS + 一个本机 frpc 桥（不动 frps.toml）
