@@ -51,3 +51,41 @@
 - 证书剩余 <20 天 WARN 的 systemd timer。
 - `api/info` 的 `dsh` 版本号探测（现为空串，纯展示）。
 - 更换 frps `auth.token`（曾进公开仓库历史，已重写历史但旧 fork 可能残留）。
+
+---
+
+# 追加报告 — 2026-11-13（原生客户端 + 发布）
+
+## 状态：可交付，已发布
+
+app **1.1.0+2**、plugin **0.2.0** 已提交并推送（origin/main = `ab5ad02`，仓库 https://github.com/ninesky-hz/dsh-frp-pocket）。
+
+## 这一阶段补上的能力（都在本机实测过）
+
+- 原生会话/聊天，不再依赖内置网页；WebView 降级为「完整面板」入口
+- 实时流式：`session/follow` + `workspace/follow`，草稿与定稿共用 `row:m<turn>.<step>` 作 key，逐字增长不重建列表项
+- 审批/提问卡片：`$events` 的 `approval/request`、`user-questions/request`；通过 `{kind:result,value:allowed-once}`、拒绝 `{kind:result,value:rejected}`、提问 `{kind:result,value:{answers}}`，stale 帧 300ms 退避重投
+- 会话操作：置顶 / 归档（4s 可撤销）/ 重命名；工作区六帧增量收敛
+- 列表：按工作区分组与平铺切换、本地搜索、行尾三态（排队 > 运行 > 未读），已读水位落 `dsh_frp.seen.<hostId>`
+- 弱网：连接状态条四态、离线发送队列（固定 requestId 串行补发）、回前台或长断线后整表对账
+- 滚动：`CustomScrollView(center:)` + 前后双 Sliver，翻历史不跳视口
+
+## 证据（Lead 本人复跑）
+
+| 项 | 结果 |
+| --- | --- |
+| `flutter analyze` | No issues found |
+| `flutter test --concurrency=1` | **223 全绿** |
+| `node --test test/*.test.mjs`（plugin） | **48 pass / 0 fail** |
+| arm64 APK | 36,733,030 B，md5 `ffd9a52f332e02b8a6b7dc9a13a7be70` |
+| APK 内容核对 | 解包 `libapp.so` 命中 `1.1.0`/`chat-center`/`link-state`/`outbox.`/`dsh_frp.seen.` |
+
+## 还差用户侧一步
+
+**重启一次 DSH**：插件 0.2.0 改了 `gateway.mjs`（反代查询串透传 + WS 心跳按字节判活），不重启仍在跑旧逻辑，App 的 `$events` 会被每 60 秒断开一次。
+
+## 未验证（诚实边界，仍在）
+
+1. 真机安装与操作手感（本机无 adb 设备连接）
+2. 插件 0.2.0 在 DSH 重启后的实机行为（心跳阈值 5 分钟需长跑观察）
+3. 多台主机的真实并发（目前只有 home 一台在线）
