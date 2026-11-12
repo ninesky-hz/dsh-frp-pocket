@@ -113,3 +113,5 @@
 {"ts":"2026-11-12T16:13:12.828Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
 {"t":"2026-11-12T16:14:09.169Z","event":"ws-heartbeat-fixed","scope":"packages/plugin","why":"App 的 $events 长连接被网关心跳误杀（socket.on(pong) 在裸 TCP 上永不触发，60s 必 destroy）","tests":"48 pass / 0 fail","needs":"restart DSH"}
 {"ts":"2026-11-12T16:16:29.391Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-12T16:20:29.394Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-12T16:24:32.498Z","event":"release-pushed","detail":{"app":"1.1.0+2","plugin":"0.2.0","commits":["31bf378","affaa8f","2e88844"],"remote":"origin/main=2e88844","tests":{"app":223,"plugin":48},"apk":{"bytes":36733030,"md5":"ffd9a52f332e02b8a6b7dc9a13a7be70"}}}

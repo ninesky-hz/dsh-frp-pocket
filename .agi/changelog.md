@@ -170,3 +170,11 @@
 - 修法：改为按字节判活（`socket.on("data")` 重置计数，客户端回的 pong 帧也算流量），`missLimit` 放宽到 10（5 分钟）；`close` 时同时摘掉监听。导出函数以便单测。
 - 新增 `packages/plugin/test/ws-heartbeat.test.mjs` 4 条；插件全量 48 全绿。
 - **需重启 DSH 生效**（插件 host 侧代码在加载时快照）。
+
+## 2026-11-13 00:23 发布 app 1.1.0+2 / plugin 0.2.0
+
+- 版本号五处同步：pubspec 1.1.0+2、constants kAppVersion/kBuildNumber、plugin package.json 0.2.0、gateway.mjs/rpc.mjs 默认 version
+- 版本断言去硬编码：manifest.test 校验 semver 形状，gateway.test/helpers 读 package.json
+- 新增根 CHANGELOG.md
+- 提交三段：31bf378 app 能力、affaa8f plugin 修复+版本、2e88844 文档与记录；已推送 origin/main=2e88844
+- 回归：app 223 全绿 / plugin 48 全绿；arm64 APK 36,733,030B md5 ffd9a52f332e02b8a6b7dc9a13a7be70，libapp.so 内确认 1.1.0
