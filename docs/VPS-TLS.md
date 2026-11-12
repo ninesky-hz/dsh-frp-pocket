@@ -207,3 +207,77 @@ systemctl daemon-reload
 ```
 
 frps 与既有站点完全不受影响（本方案从未修改 `frps.toml`）。
+
+---
+
+## 8. Caddy 怎么「进设置」
+
+**Caddy 没有 Web 后台。** 它的「设置」就是一份文本文件 `/etc/caddy/Caddyfile`，
+改完 `validate` + `reload` 生效。我们这套还刻意写了 `admin off` ——
+admin API 能整体改写运行时配置（等同 root 级操作），常开没有收益。
+
+为了不必每次背命令，VPS 上装了个薄壳 `dsh-caddy`（源码 `deploy/vps-tls/caddy-ctl.sh`）：
+
+```bash
+dsh-caddy status        # 服务/监听/站点/admin 模式一览（最常用）
+dsh-caddy show          # 打印 Caddyfile
+dsh-caddy edit          # 用 vi 改，保存后自动校验，校验失败自动回滚；确认才 reload
+dsh-caddy validate      # 只校验
+dsh-caddy reload        # 平滑重载（不断现有连接）
+dsh-caddy adapt         # 看 Caddyfile 展开成的 JSON（排查「我写的为什么没生效」）
+dsh-caddy certs         # 证书清单 + 到期时间 + 逐域名 SNI 自检
+dsh-caddy logs 100      # 服务日志
+dsh-caddy access 50     # 访问日志（状态码/耗时）
+```
+
+实际输出（真机）：
+
+```
+$ dsh-caddy status
+Caddyfile : /etc/caddy/Caddyfile
+caddy     : v2.11.9
+service   : active / enabled=enabled
+bridge    : active
+admin     : off
+listen    :   LISTEN 0 4096 127.0.0.1:9443
+站点      :   dsh.chenz.vip   home.dsh.chenz.vip   studio.dsh.chenz.vip
+
+$ dsh-caddy certs
+dsh.chenz.vip              Feb 10 03:22:06 2027 GMT
+home.dsh.chenz.vip         Feb 10 03:40:57 2027 GMT
+studio.dsh.chenz.vip       Feb 10 03:40:55 2027 GMT
+SNI 自检: home.dsh.chenz.vip http=200
+```
+
+### 真想用「点界面」的方式
+
+只有一条干净路子：**临时开 admin API + SSH 隧道**（admin 只绑回环，公网永远碰不到）。
+
+```bash
+# VPS 上
+dsh-caddy tunnel          # 打开 admin 127.0.0.1:2019，并打印下一行命令
+
+# 你自己的 Windows（PowerShell）
+ssh -N -L 2019:127.0.0.1:2019 root@VPS_IP
+
+# 本机浏览器
+http://127.0.0.1:2019/config/          ← 当前生效配置（JSON，可直接 POST/PATCH 改）
+http://127.0.0.1:2019/config/apps/http  ← 只看 http 应用那一段
+
+# 用完关掉
+dsh-caddy admin off
+```
+
+常见字段看哪里：
+
+| 想改的东西 | 在 Caddyfile 的哪一段 |
+| --- | --- |
+| 对外域名 | 文件末尾的 `xxx { import dsh_site }` 段 |
+| 证书签发方式（HTTP-01 / TLS-ALPN-01 / DNS-01） | `(dsh_site)` 里的 `tls { issuer acme { … } }` |
+| 反代目标（现在就指向 frps 的 80） | `reverse_proxy 127.0.0.1:80` |
+| WebSocket 长连接 | `flush_interval -1`（删了会让 DSH 的实时输出卡住） |
+| 安全头 / 压缩 | `header { … }`、`encode zstd gzip` |
+| 日志位置与轮转 | 站点段里的 `log { output file … }` |
+
+> 改 Caddyfile 后**必须** `dsh-caddy reload`；只改文件不 reload 不会生效，重启进程才会。
+> `dsh-caddy edit` 已经帮你串好「改 → 校验 → 回滚 → 确认 reload」。
