@@ -39,13 +39,26 @@ export function qrSvg(text, { size = 240, margin = 2, dark = '#111827', light = 
   return parts.join('');
 }
 
+/** App 列表里的固定前缀：扫码加进来的主机都叫「FRP 远程 …」。 */
+export const PAIR_NAME_PREFIX = 'FRP 远程';
+
+/**
+ * 配对名 = 「FRP 远程」+ 副标题（设置页的显示名称）。
+ * 副标题为空、或本身就叫「FRP 远程」时不重复拼接。
+ */
+export function pairName(cfg) {
+  const sub = String(cfg?.displayName ?? '').trim();
+  if (!sub || sub === PAIR_NAME_PREFIX) return PAIR_NAME_PREFIX;
+  return `${PAIR_NAME_PREFIX} · ${sub}`;
+}
+
 /** App 扫码 payload（字段顺序固定，便于测试断言）。 */
 export function qrText(cfg) {
   const url = cfg.frp.publicUrl || `http://127.0.0.1:${cfg.gateway.port}`;
   const q = new URLSearchParams({
     url,
     pin: cfg.auth.pin,
-    name: cfg.displayName,
+    name: pairName(cfg),
     hostId: cfg.hostId,
   });
   return `dshfrp://add?${q.toString()}`;

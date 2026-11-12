@@ -191,3 +191,57 @@ test('WS：未认证升级被拒；带 cookie 升级到假上游可回显', asyn
   assert.equal(echoed.toString('utf8'), 'RAW-ECHO-1234');
   authed.socket.destroy();
 });
+
+test('handshake：拿不到 dsh-auth 会话 cookie 时不 503，先自动重连、最后放行给上游', async () => {
+  // 模拟“浏览器没把 DSH 的会话 cookie 带回来”的客户端（headless/WebView 首屏常见）
+  const seen = [];
+  for (let i = 0; i < 10; i += 1) {
+    const res = await fetch(url('/'), { headers: { cookie: authCookie(cfg) } });
+    const body = await res.text();
+    seen.push({ status: res.status, hs: res.headers.get('x-frp-pocket-handshake') ?? '', body });
+  }
+
+  const blocked = seen.filter((r) => r.status === 503);
+  assert.equal(blocked.length, 0, '不应再出现 503 blocked 页');
+  assert.ok(seen.some((r) => r.hs === 'retry'), '应至少自动重连一次（x-frp-pocket-handshake: retry）');
+  assert.ok(
+    seen.some((r) => r.body.includes('UPSTREAM-OK')),
+    '重试耗尽后应放行到上游，而不是一直停在过渡页',
+  );
+  const last = seen[seen.length - 1];
+  assert.equal(last.hs, '', '放行后不应再标记 handshake');
+});
+
+function jsonOf(res) {
+  // rawRequest 返回的是原始字节（可能带 chunked 分帧），只取最外层 JSON 对象。
+  const text = res.rest.toString('utf8');
+  return text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1);
+}
+
+// DSH 的组合式插件脚本路径形如 /plugins/??@scope/pkg/client.js&rev=…：问号开头的查询串
+// 里含 @ 与 /。网关若用 URLSearchParams 重新序列化，这些字符会被转义成 %40/%2F，
+// 上游直接 404，前端就报 “Failed to load plugins / HTML did not preload”。
+test('反代保留原始查询串：/plugins/??@scope/pkg/client.js&rev=… 不被重新编码', async () => {
+  const cookie = authCookie(cfg);
+  const path = '/api/plugins/??@deepseek-ai/dsh-client-modules/client.js&rev=ab8559b742fc';
+  const res = await rawRequest(
+    gw.port,
+    `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: ${cookie}\r\nConnection: close\r\n\r\n`,
+    { waitMs: 1000 },
+  );
+  assert.equal(res.status, 200);
+  const body = JSON.parse(jsonOf(res));
+  assert.equal(body.path, path, '上游收到的路径必须逐字节一致');
+});
+
+test('桌面标记仍被剥离，其余查询参数保持原样', async () => {
+  const cookie = authCookie(cfg);
+  const res = await rawRequest(
+    gw.port,
+    `GET /api/x?dsh-desktop-a=1&rev=z HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: ${cookie}\r\nConnection: close\r\n\r\n`,
+    { waitMs: 1000 },
+  );
+  assert.equal(res.status, 200);
+  const body = JSON.parse(jsonOf(res));
+  assert.equal(body.path, '/api/x?rev=z');
+});

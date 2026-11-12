@@ -33,3 +33,21 @@
 1. 填 `deploy/frps/frps.toml` 的 subDomainHost、`deploy/caddy/Caddyfile` 两站点、两台 frpc 的 serverAddr/auth.token
 2. VPS 跑 install-vps.sh；两台 PC 跑 install-pc.ps1（或计划任务）
 3. 手机装 arm64 APK，扫码加入两台主机
+
+## 状态快照（2026-11-12 20:10）
+
+**已交付并验证**
+- 插件 `dsh-frp-pocket`：PIN 登录网关、launch-token 303 握手、WS 直通、限速（5 次/60s）、自定义域名模式、`liveConfig()` 热重载、左侧导航「FRP 远程」面板 + 设置页。
+- App：Flutter 多主机列表/扫码配对/WebView；v0.1.0 Release 三个 ABI APK（debug 签名）。
+- VPS：Caddy（`*.dsh.chenz.vip` 通配证书，DNS-01）+ frpc-bridge（`customDomains=["*.dsh.chenz.vip","dsh.chenz.vip"]`）+ 复用既有 frps（未改其 80/443 配置）。
+- 家机在线：`https://pqw8t9.dsh.chenz.vip` → 303 → 过渡页 → 200 / 50,523 B 真实 DSH。
+
+**阻塞在用户决策（非技术问题）**
+1. 门牌域名：A 恢复 `home.` / B 保持随机名 / C 两个都挂（`customDomains` 支持 5 个）。
+2. 工作室机上线：该机装插件 + 填 `studio.dsh.chenz.vip`（VPS 侧因通配已无需改动）。
+3. 面板 `displayName` 已被改为「工作室」但 `hostId` 仍是家机的 `host-8630811a`，两台会重名。
+
+**可选未做**（已验证可行，未获授权，不在 VPS 侧改动）
+- 证书剩余 <20 天 WARN 的 systemd timer。
+- `api/info` 的 `dsh` 版本号探测（现为空串，纯展示）。
+- 更换 frps `auth.token`（曾进公开仓库历史，已重写历史但旧 fork 可能残留）。

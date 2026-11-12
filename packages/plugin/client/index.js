@@ -8,7 +8,7 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     const React = require('react');
     const h = React.createElement;
-    const { useState, useEffect, useRef, useMemo } = React;
+    const { useState, useEffect, useRef } = React;
 
     const CHANNEL = '/dsh-frp-pocket';
     const styles = {
@@ -332,7 +332,9 @@ window.__ModuleLoader__.load({
       const frpc = status?.frpc ?? { state: 'stopped' };
       const qr = status?.qr ?? null;
       const lanList = (status?.lanAddresses ?? []).map((x) => `${x.address} (${x.name})`).join('\n');
-      const dirty = useMemo(() => Boolean(form), [form]);
+      // 注意：这里不能写 hook（useMemo/useState…）。上面有早退 return，
+      // 在它之后调用 hook 会让两次渲染的 hook 数量不一致，React 直接抛错 → 设置页整块白屏。
+      const dirty = Boolean(form);
 
       return h(
         'div',
@@ -352,7 +354,7 @@ window.__ModuleLoader__.load({
           ),
           h(
             Field,
-            { label: '显示名称' },
+            { label: '显示名称（仅 App 列表与配对串用）' },
             h('input', {
               style: styles.input,
               value: form.displayName,
@@ -719,11 +721,6 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = useState('');
       const [showPin, setShowPin] = useState(false);
       const mounted = useRef(true);
-      // 公网地址 / 域名草稿：用户正在编辑时不被 5s 轮询覆盖
-      const urlDirty = useRef(false);
-      const domainDirty = useRef(false);
-      const [urlDraft, setUrlDraft] = useState('');
-      const [domainDraft, setDomainDraft] = useState('');
 
       const call = async (endpoint, payload) => {
         const res = await rpcCall(endpoint, payload);
@@ -736,10 +733,6 @@ window.__ModuleLoader__.load({
           const value = await call('status', {});
           if (!mounted.current) return;
           setStatus(value);
-          if (!urlDirty.current) setUrlDraft(value.config?.frp?.publicUrl ?? '');
-          if (!domainDirty.current) {
-            setDomainDraft((value.config?.frp?.customDomains ?? []).join(', '));
-          }
           setError(null);
         } catch (err) {
           if (mounted.current) setError(err?.message ?? String(err));
@@ -770,40 +763,6 @@ window.__ModuleLoader__.load({
         }
       };
 
-      /** 就地改公网地址 / 域名：只提交 frp.publicUrl 与 frp.customDomains，其余配置不动。 */
-      const saveAddress = async () => {
-        const url = urlDraft.trim().replace(/\/+$/, '');
-        if (url && !/^https?:\/\/[^\s]+$/i.test(url)) {
-          setError('公网地址要写成 https://域名 或 http://IP:端口 | publicUrl must be an http(s) URL');
-          return;
-        }
-        const domains = domainDraft
-          .split(/[,\s]+/)
-          .map((d) => d.trim())
-          .filter(Boolean);
-        if (!url && !domains.length) {
-          setError('公网地址与域名至少填一个 | publicUrl or customDomains is required');
-          return;
-        }
-        setBusy('address');
-        setError(null);
-        try {
-          const value = await call('config.save', {
-            config: { frp: { publicUrl: url, customDomains: domains } },
-          });
-          urlDirty.current = false;
-          domainDirty.current = false;
-          setStatus(value);
-          setUrlDraft(value.config?.frp?.publicUrl ?? '');
-          setDomainDraft((value.config?.frp?.customDomains ?? []).join(', '));
-          setNotice('地址已更新 | address updated');
-        } catch (err) {
-          setError(err?.message ?? String(err));
-        } finally {
-          setBusy('');
-        }
-      };
-
       /** 泛域名：掷一个 6 位子域并落盘；frpc 重启后才会用新域名建隧道。 */
       const rotateDomain = async () => {
         const frp = status?.config?.frp ?? {};
@@ -819,11 +778,7 @@ window.__ModuleLoader__.load({
           const value = await call('config.save', {
             config: { frp: { customDomains: [host], publicUrl: `https://${host}`, autoDomain: true } },
           });
-          urlDirty.current = false;
-          domainDirty.current = false;
           setStatus(value);
-          setUrlDraft(value.config?.frp?.publicUrl ?? '');
-          setDomainDraft((value.config?.frp?.customDomains ?? []).join(', '));
           setNotice(`已换到 ${host}，重启隧道后生效 | restart to apply`);
         } catch (err) {
           setError(err?.message ?? String(err));
@@ -866,7 +821,11 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: pageStyles.hero },
-          h('h2', { style: pageStyles.title }, status?.displayName ?? 'FRP 远程'),
+          h('h2', { style: pageStyles.title }, 'FRP 远程'),
+          // 副标题：设置页「显示名称」，可自定义；为空或与标题相同时不显示
+          status?.displayName && status.displayName !== 'FRP 远程'
+            ? h('span', { style: { ...pageStyles.key, fontSize: 12, wordBreak: 'break-all' } }, status.displayName)
+            : null,
           h('span', { style: pageStyles.dot(frpc.state) }),
           h('span', { style: styles.badge(frpc.state) }, frpc.state ?? 'stopped'),
           h('div', { style: { flex: 1 } }),
@@ -879,7 +838,7 @@ window.__ModuleLoader__.load({
         notice ? h('div', { style: pageStyles.notice }, notice) : null,
         error ? h('div', { style: pageStyles.fail }, `lastError: ${error}`) : null,
 
-        // 公网地址（就地可改，不用去设置页）
+        // 公网地址（随机子域，只读展示；改地址去设置页）
         h(
           'div',
           { style: styles.card },
@@ -909,55 +868,6 @@ window.__ModuleLoader__.load({
             { style: { ...styles.mono, fontSize: 14, wordBreak: 'break-all', marginBottom: 8 } },
             publicUrl || '（未配置）',
           ),
-          h(
-            'div',
-            { style: styles.row },
-            h('input', {
-              style: { ...styles.input, ...styles.mono, flex: 1 },
-              value: urlDraft,
-              placeholder: 'https://dsh.chenz.vip',
-              title: '公网地址：填什么这里就显示什么',
-              onChange: (e) => {
-                urlDirty.current = true;
-                setUrlDraft(e.target.value);
-              },
-            }),
-            h(
-              'button',
-              {
-                style: { ...styles.btn, ...styles.primary },
-                disabled: busy === 'address',
-                onClick: saveAddress,
-              },
-              busy === 'address' ? '保存中…' : '保存地址',
-            ),
-          ),
-          h(
-            'div',
-            { style: styles.sub },
-            '想用短域名就填 https://dsh.chenz.vip（VPS 上 Caddy 要有该站点的证书与 frps 的 customDomains 匹配）；留空则回退到下面的域名。',
-          ),
-          cfg.mode === 'customDomains'
-            ? h(
-                'div',
-                { style: styles.row },
-                h('input', {
-                  style: { ...styles.input, ...styles.mono, flex: 1 },
-                  value: domainDraft,
-                  placeholder: 'home.dsh.chenz.vip',
-                  title: 'frps customDomains：App 实际连的域名',
-                  onChange: (e) => {
-                    domainDirty.current = true;
-                    setDomainDraft(e.target.value);
-                  },
-                }),
-                h(
-                  'button',
-                  { style: styles.btn, disabled: busy === 'address', onClick: saveAddress },
-                  '保存域名',
-                ),
-              )
-            : null,
           cfg.domainSuffix
             ? h(
                 'div',
@@ -989,7 +899,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { style: styles.sub },
-            'frps 地址可以是域名（如 dsh.chenz.vip），frpc 会自己解析；改完在设置页保存并重启隧道。',
+            'frps 地址可以是域名（如 dsh.chenz.vip），frpc 会自己解析；公网地址由泛域名后缀自动生成，换域名后重启隧道生效。',
           ),
         ),
 

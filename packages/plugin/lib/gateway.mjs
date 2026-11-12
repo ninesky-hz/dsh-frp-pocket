@@ -218,13 +218,12 @@ function handshakePageHtml() {
 </head><body><p>正在进入 DSH… | Entering DSH…</p></body></html>`;
 }
 
-function handshakeBlockedPageHtml() {
-  return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>DSH</title>
-<style>body{font-family:-apple-system,sans-serif;background:#0f1115;color:#e5e7eb;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;padding:24px;text-align:center;line-height:1.6}
-a{color:#60a5fa}</style></head><body><div>
-<p><b>浏览器没有保存登录会话 | Browser did not keep the session</b></p>
-<p style="color:#9aa4b2;font-size:13px">请用同一浏览器重新打开，或换用 Safari/Chrome 最新版。<br>Reopen in the same browser, or use an up-to-date Safari/Chrome.</p>
-<p><a href="/?${HANDSHAKE_RETRY_PARAM}=1">重试 | Retry</a></p></div></body></html>`;
+/** 自动重连页：清掉注入计数再试一次，用户不用点任何东西。 */
+function handshakeRetryPageHtml() {
+  return `<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="0;url=/?${HANDSHAKE_RETRY_PARAM}=1"><title>DSH</title>
+<style>body{font-family:-apple-system,sans-serif;background:#0f1115;color:#9aa4b2;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}</style>
+</head><body><p>正在重新连接 DSH… | Reconnecting…</p></body></html>`;
 }
 
 /* ------------------------------------------------------------------ *
@@ -253,17 +252,27 @@ export function loopbackAuthority(headers, upstream) {
 function stripDesktopMarkers(path) {
   const q = path.indexOf('?');
   if (q < 0) return path;
-  const base = path.slice(0, q);
   const params = new URLSearchParams(path.slice(q + 1));
-  for (const key of [...params.keys()]) if (key.startsWith('dsh-desktop-')) params.delete(key);
+  let changed = false;
+  for (const key of [...params.keys()]) {
+    if (key.startsWith('dsh-desktop-')) {
+      params.delete(key);
+      changed = true;
+    }
+  }
+  // 没有任何要删的标记时必须原样返回：重新序列化会把 DSH 的组合式插件路径
+  // （/plugins/??@scope/pkg/client.js&rev=…）里的 ? @ / 全部转义，上游直接 404。
+  if (!changed) return path;
   const qs = params.toString();
-  return qs ? `${base}?${qs}` : base;
+  return qs ? `${path.slice(0, q)}?${qs}` : path.slice(0, q);
 }
 
 function stripQueryParam(path, name) {
   const q = path.indexOf('?');
   if (q < 0) return path;
   const params = new URLSearchParams(path.slice(q + 1));
+  // 同上：没有这个参数就别动原始查询串。
+  if (!params.has(name)) return path;
   params.delete(name);
   const qs = params.toString();
   return qs ? `${path.slice(0, q)}?${qs}` : path.slice(0, q);
@@ -384,6 +393,8 @@ export function createGateway({
   if (!upstream || !upstream.port) throw new Error('gateway: upstream port required');
   const limiter = createRateLimiter(rateLimit ?? {});
   const handshake = createHandshakeTracker();
+  // 自动重连次数：连续 3 次仍拿不到会话 cookie 就放行给上游，不再拦人
+  const retries = createHandshakeTracker({ max: 3, windowMs: 10 * 60_000 });
   const startedAt = Date.now();
   let wsClients = 0;
   const probeUpstream = createUpstreamProbe(upstream);
@@ -594,10 +605,22 @@ export function createGateway({
       handshake.record(ip);
       handshake.prune();
     }
-    if (!didInjectToken && String(req.headers.cookie ?? '').includes(DSH_AUTH_COOKIE)) handshake.clear(ip);
+    if (!didInjectToken && String(req.headers.cookie ?? '').includes(DSH_AUTH_COOKIE)) {
+      handshake.clear(ip);
+      retries.clear(ip);
+    }
     if (handshakeOver && isHtmlRequest(req)) {
-      htmlResponse(res, 503, handshakeBlockedPageHtml(), { 'x-frp-pocket-handshake': 'blocked' });
-      return;
+      // 注入 token 若干次仍没看到 DSH 的会话 cookie：多半是浏览器/WebView 首屏时序问题
+      // （真 Chromium 也会这样），直接 503 会把人挡在门外。改为自动重连一次；
+      // 连续多次仍不行就清计数放行，交给上游自己的登录页，不再拦。
+      if (!retries.exhausted(ip)) {
+        retries.record(ip);
+        handshake.clear(ip);
+        htmlResponse(res, 200, handshakeRetryPageHtml(), { 'x-frp-pocket-handshake': 'retry' });
+        return;
+      }
+      retries.clear(ip);
+      handshake.clear(ip);
     }
 
     const proxyReq = http.request(

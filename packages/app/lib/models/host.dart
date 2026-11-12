@@ -65,19 +65,21 @@ class Host {
     this.lastSeenAt,
   });
 
-  /// 新建一台主机（本地 id 自动生成）。
+  /// 新建一台主机。带服务端 hostId 时直接用它当本地 id：
+  /// 同一台机子重复扫码/重装后扫码都会覆盖同一条，而不是越加越多。
   factory Host.create({
     required String name,
     required String url,
     String pin = '',
     String hostId = '',
   }) {
+    final sid = hostId.trim();
     return Host(
-      id: newHostLocalId(),
+      id: sid.isNotEmpty ? sid : newHostLocalId(),
       name: name,
       url: normalizeUrl(url),
       pin: pin.trim(),
-      hostId: hostId.trim(),
+      hostId: sid,
     );
   }
 

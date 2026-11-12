@@ -1,0 +1,73 @@
+[
+  {
+    "id": "analyze",
+    "cmd": "cd packages/app && flutter analyze",
+    "expect": ["e3"]
+  },
+  {
+    "id": "tests",
+    "cmd": "cd packages/app && flutter test",
+    "expect": ["e3"]
+  },
+  {
+    "id": "apk-exists-and-size",
+    "cmd": "node -e \"const fs=require('fs');const p='packages/app/build/app/outputs/flutter-apk/app-release.apk';if(!fs.existsSync(p))throw new Error('missing '+p);const s=fs.statSync(p).size;if(s<=31457280)throw new Error('APK too small: '+s);console.log(p+' '+s+' bytes')\"",
+    "expect": ["e4"]
+  },
+  {
+    "id": "file-dsh-api-class",
+    "file": "packages/app/lib/services/dsh_api.dart",
+    "contains": "class DshApi",
+    "expect": ["e1"]
+  },
+  {
+    "id": "file-dsh-api-ensure-auth",
+    "file": "packages/app/lib/services/dsh_api.dart",
+    "contains": "Future<void> ensureAuth(Host host)",
+    "expect": ["e1"]
+  },
+  {
+    "id": "file-dsh-api-list-sessions",
+    "file": "packages/app/lib/services/dsh_api.dart",
+    "contains": "Future<List<SessionSummary>> listSessions(Host host)",
+    "expect": ["e1"]
+  },
+  {
+    "id": "file-session-summary",
+    "file": "packages/app/lib/models/session_summary.dart",
+    "contains": "factory SessionSummary.fromJson",
+    "expect": ["e1"]
+  },
+  {
+    "id": "file-sessions-screen",
+    "file": "packages/app/lib/screens/host_sessions_screen.dart",
+    "contains": "class HostSessionsScreen extends StatefulWidget",
+    "expect": ["e1"]
+  },
+  {
+    "id": "hosts-screen-opens-sessions",
+    "cmd": "node -e \"const fs=require('fs');const t=fs.readFileSync('packages/app/lib/screens/hosts_screen.dart','utf8');if(t.includes('HostWebviewScreen('))throw new Error('hosts_screen still pushes HostWebviewScreen');if(!t.includes('HostSessionsScreen(host: host)'))throw new Error('hosts_screen does not push HostSessionsScreen');console.log('hosts_screen -> HostSessionsScreen ok')\"",
+    "expect": ["e2"]
+  },
+  {
+    "id": "sessions-screen-full-panel",
+    "file": "packages/app/lib/screens/host_sessions_screen.dart",
+    "contains": "HostWebviewScreen(host: widget.host)",
+    "expect": ["e2"]
+  },
+  {
+    "id": "test-four-cases",
+    "cmd": "node -e \"const fs=require('fs');const t=fs.readFileSync('packages/app/test/host_sessions_screen_test.dart','utf8');for(const k of ['有数据时渲染两张卡片','空列表显示','错误态显示带 code','完整面板'])if(!t.includes(k))throw new Error('missing case: '+k);console.log('4 screen cases present')\"",
+    "expect": ["e3"]
+  },
+  {
+    "id": "test-parsing-cases",
+    "cmd": "node -e \"const fs=require('fs');const t=fs.readFileSync('packages/app/test/session_summary_test.dart','utf8');for(const k of ['完整 JSON','缺 title','未命名会话','updatedAt 是字符串毫秒','result.ok:false'])if(!t.includes(k))throw new Error('missing case: '+k);console.log('parsing cases present')\"",
+    "expect": ["e3"]
+  },
+  {
+    "id": "report-files",
+    "cmd": "node -e \"const fs=require('fs');const b='.agi/subagents/5d0b4890-d91c-4ad6-9fee-18ccd4724196/';for(const f of ['outcome.md','checks.json'])if(!fs.existsSync(b+f))throw new Error('missing '+b+f);console.log('report files ok')\"",
+    "expect": ["e5"]
+  }
+]

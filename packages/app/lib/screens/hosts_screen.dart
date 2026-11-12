@@ -9,7 +9,7 @@ import '../services/probe.dart';
 import '../services/scan_parser.dart';
 import '../widgets/host_card.dart';
 import 'host_edit_screen.dart';
-import 'host_webview_screen.dart';
+import 'host_sessions_screen.dart';
 import 'scanner_screen.dart';
 import 'settings_screen.dart';
 
@@ -72,9 +72,11 @@ class _HostsScreenState extends State<HostsScreen> {
     await _probeAll();
   }
 
-  Future<void> _openWebView(Host host) async {
+  /// 点主机默认进原生会话列表（只调 HTTP，不加载网页）；
+  /// 整条前端链坏掉时这里还能用，完整面板在会话页右上角。
+  Future<void> _openHost(Host host) async {
     await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(builder: (_) => HostWebviewScreen(host: host)),
+      MaterialPageRoute<void>(builder: (_) => HostSessionsScreen(host: host)),
     );
     if (!mounted) return;
     await _probeOne(host);
@@ -259,7 +261,7 @@ class _HostsScreenState extends State<HostsScreen> {
                     host: host,
                     result: _results[host.id],
                     probing: _probing.contains(host.id),
-                    onTap: () => _openWebView(host),
+                    onTap: () => _openHost(host),
                     onMenu: () => _showActions(host),
                     onLongPress: () => _showActions(host),
                   ),

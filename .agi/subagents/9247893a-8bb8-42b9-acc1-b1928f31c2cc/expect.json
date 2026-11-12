@@ -1,0 +1,26 @@
+{
+  "worker": "9247893a-8bb8-42b9-acc1-b1928f31c2cc",
+  "declaredAt": "2026-11-12T11:58:49.643Z",
+  "items": [
+    {
+      "id": "e1",
+      "text": "上滑到顶会请求 beforeSeq 页并合并到列表头部，测试证明合并后顺序正确且不重复"
+    },
+    {
+      "id": "e2",
+      "text": "workspace/follow 的 upsert/remove/order/archived/pinned 帧按增量方式应用，测试逐帧验证状态机"
+    },
+    {
+      "id": "e3",
+      "text": "assistant-stream 的 text-delta 会逐字累积进草稿气泡，durable assistant/message 到达后草稿被定稿替换且不重复"
+    },
+    {
+      "id": "e4",
+      "text": "代码里不存在「收到任何 workspace 帧就整表重拉」的逻辑"
+    },
+    {
+      "id": "e5",
+      "text": "flutter analyze No issues、flutter test 全绿且用例数 >= 93、arm64 APK 构建成功"
+    }
+  ]
+}

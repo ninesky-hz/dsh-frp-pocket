@@ -143,4 +143,40 @@ void main() {
     expect(saved.pin, 'scan1234');
     expect(saved.hostId, 'scan-1a2b3c4d');
   });
+
+  testWidgets('同一台主机重复扫码：只保留一条，名字随副标题更新', (tester) async {
+    await _pumpApp(tester);
+
+    Future<void> addFromScan(String name) async {
+      final payload = parseScanPayload(
+        'dshfrp://add?url=https%3A%2F%2Fpqw8t9.dsh.chenz.vip'
+        '&pin=kADUqUf5bvsH&name=${Uri.encodeQueryComponent(name)}'
+        '&hostId=host-8630811a',
+      );
+      expect(payload, isNotNull);
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator).first);
+      unawaited(
+        navigator.push<Host>(
+          MaterialPageRoute<Host>(builder: (_) => HostEditScreen(prefill: payload)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '保存'));
+      await tester.pumpAndSettle();
+    }
+
+    await addFromScan('FRP 远程 · 家里');
+    await addFromScan('FRP 远程 · 工作室');
+
+    // 名字就地更新，不留旧条目，也不会多出第二条。
+    expect(find.text('FRP 远程 · 工作室'), findsOneWidget);
+    expect(find.text('FRP 远程 · 家里'), findsNothing);
+
+    final reloaded = HostStore();
+    await reloaded.load();
+    final sameHost = reloaded.hosts.where((h) => h.hostId == 'host-8630811a').toList();
+    expect(sameHost.length, 1, reason: '同一 hostId 不应重复入库');
+    expect(sameHost.single.name, 'FRP 远程 · 工作室');
+    expect(sameHost.single.id, 'host-8630811a', reason: '本地 id 直接用服务端 hostId，才能覆盖更新');
+  });
 }

@@ -1,0 +1,26 @@
+{
+  "worker": "5d0b4890-d91c-4ad6-9fee-18ccd4724196",
+  "declaredAt": "2026-11-12T11:09:33.211Z",
+  "items": [
+    {
+      "id": "e1",
+      "text": "packages/app/lib/services/dsh_api.dart、lib/models/session_summary.dart、lib/screens/host_sessions_screen.dart 三个新文件存在，DshApi 含 ensureAuth 与 listSessions"
+    },
+    {
+      "id": "e2",
+      "text": "hosts_screen.dart 打开主机的目标已改为 HostSessionsScreen，HostWebviewScreen 仍可从会话页进入"
+    },
+    {
+      "id": "e3",
+      "text": "flutter analyze 无 issue 且 flutter test 全绿，新增用例覆盖正常列表/空列表/错误重试/跳完整面板"
+    },
+    {
+      "id": "e4",
+      "text": "flutter build apk --release --target-platform android-arm64 成功，app-release.apk 存在且大于 30 MiB"
+    },
+    {
+      "id": "e5",
+      "text": "已有 .agi/subagents/<session>/outcome.md 与 checks.json，每条验收都有对应检查项"
+    }
+  ]
+}
