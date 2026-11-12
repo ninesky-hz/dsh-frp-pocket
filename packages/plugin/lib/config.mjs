@@ -76,9 +76,14 @@ export function generateHostId(displayName) {
  * frps 没配 subDomainHost 时用 customDomains 也能对外暴露（契约 §6.2）。
  */
 export function normalizeDomains(value) {
-  if (!Array.isArray(value)) return [];
+  // 允许 CLI `config set frp.customDomains "a.com, b.com"`：字符串按逗号/空白拆开
+  const list = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(/[,\s]+/).filter(Boolean)
+      : [];
   const out = [];
-  for (const item of value) {
+  for (const item of list) {
     const host = String(item ?? '')
       .trim()
       .toLowerCase()

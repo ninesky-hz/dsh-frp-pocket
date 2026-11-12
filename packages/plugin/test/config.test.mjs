@@ -14,6 +14,7 @@ import {
   paths,
   pinCookieValue,
   redactConfig,
+  normalizeDomains,
   FRP_STATES,
 } from '../lib/config.mjs';
 import { makeHome } from './helpers.mjs';
@@ -103,4 +104,15 @@ test('slugify / pinCookieValue / redactConfig', () => {
 
 test('状态枚举与默认状态文件', () => {
   assert.deepEqual(FRP_STATES, ['running', 'starting', 'stopped', 'error']);
+});
+
+test('normalizeDomains：字符串/数组都能收，非法项被丢掉', () => {
+  assert.deepEqual(normalizeDomains('https://Home.DSH.chenz.vip/, studio.dsh.chenz.vip:443'), [
+    'home.dsh.chenz.vip',
+    'studio.dsh.chenz.vip',
+  ]);
+  assert.deepEqual(normalizeDomains(['a.b', 'bad_domain!', 'a.b', 42]), ['a.b']);
+  assert.deepEqual(normalizeDomains(undefined), []);
+  // 最多 5 个
+  assert.equal(normalizeDomains(['a1.b', 'a2.b', 'a3.b', 'a4.b', 'a5.b', 'a6.b']).length, 5);
 });
