@@ -1,15 +1,18 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/host.dart';
+import '../models/session_groups.dart';
+import '../models/session_row_state.dart';
+import '../models/session_search.dart';
 import '../models/session_summary.dart';
 import '../models/workspace_view_state.dart';
 import '../services/dsh_api.dart';
 import '../services/dsh_remote.dart';
-import '../services/probe.dart';
+import '../services/seen_store.dart';
 import '../utils/time_format.dart';
-import '../widgets/status_dot.dart';
 import 'host_webview_screen.dart';
 import 'session_chat_screen.dart';
 
@@ -29,8 +32,15 @@ class HostSessionsScreen extends StatefulWidget {
     required this.host,
     this.api,
     this.remote,
+    this.seenStore,
+    this.initialGrouped,
     this.pollInterval = const Duration(seconds: 8),
   });
+
+  /// 列表「按工作区分组」偏好的 SharedPreferences key（全局，不按 host 分）。
+  ///
+  /// 公开出来是为了让测试直接断言写入的那条记录，不必猜字符串。
+  static const String groupedPrefsKey = 'dsh_frp.grouped';
 
   final Host host;
 
@@ -42,6 +52,15 @@ class HostSessionsScreen extends StatefulWidget {
   @visibleForTesting
   final DshRemote? remote;
 
+  /// 已读水位存储注入用；为空时自己建一个（懒取 SharedPreferences）。
+  @visibleForTesting
+  final SeenStore? seenStore;
+
+  /// 分组视图的初始值注入用；为空时启动后从 SharedPreferences 读
+  /// [groupedPrefsKey]（读不到就保持默认的分组视图）。
+  @visibleForTesting
+  final bool? initialGrouped;
+
   /// 兜底轮询间隔；传 `Duration.zero` 关闭（测试里用）。
   @visibleForTesting
   final Duration pollInterval;
@@ -50,7 +69,8 @@ class HostSessionsScreen extends StatefulWidget {
   State<HostSessionsScreen> createState() => _HostSessionsScreenState();
 }
 
-class _HostSessionsScreenState extends State<HostSessionsScreen> {
+class _HostSessionsScreenState extends State<HostSessionsScreen>
+    with WidgetsBindingObserver {
   late final bool _ownsApi = widget.api == null;
   late final DshApi _api = widget.api ?? DshApi();
 
@@ -61,6 +81,7 @@ class _HostSessionsScreenState extends State<HostSessionsScreen> {
   late final bool _ownsRemote = widget.remote == null && _remote != null;
 
   StreamSubscription<DshStreamFrame>? _liveSub;
+  StreamSubscription<DshLinkState>? _linkSub;
   Timer? _pollTimer;
 
   /// `session/list` 给的最新快照，按 sessionId 存。
@@ -76,17 +97,162 @@ class _HostSessionsScreenState extends State<HostSessionsScreen> {
   bool _requesting = false;
   bool _refreshing = false;
 
+  /// 本机已读水位（sessionId → epoch 毫秒）。行标记由它 + 会话快照算出来，
+  /// 不是存下来的状态，所以下拉刷新 / live 帧重建时会自动重算。
+  Map<String, int> _seen = const <String, int>{};
+
+  late final SeenStore _seenStore = widget.seenStore ?? SeenStore();
+
+  /// 是否按工作区分组渲染。默认开；启动时再被本机偏好覆盖。
+  late bool _grouped = widget.initialGrouped ?? true;
+
+  /// 折叠起来的组 id（内存态即可：折叠是一次浏览手势，不值得落盘）。
+  ///
+  /// 用组 id 而不是下标：工作区增删/重排后，折叠状态仍然跟着同一个组走。
+  final Set<String> _collapsed = <String>{};
+
+  /// 是否处于搜索态（AppBar 换成输入框）。纯 UI 状态，不落盘、不进 `_sessions`。
+  bool _searching = false;
+
+  /// 当前搜索词原文（未分词）。过滤时每次现算 token，不缓存第二份真相。
+  String _query = '';
+
+  /// 搜索框控制器。生命周期跟 State 一致，必须在 [dispose] 里释放。
+  final TextEditingController _searchController = TextEditingController();
+
+  /// 「回到前台」「链路恢复」这两条路触发的立即刷新，与上一次之间至少隔这么久。
+  static const Duration refreshBudget = Duration(seconds: 10);
+
+  /// 最近一次成功/失败刷新的时间戳，用来给「回到前台」「链路恢复」去抖，
+  /// 免得一次恢复连刷好几次（轮询 + 生命周期 + 链路三条路都会调到这里）。
+  DateTime? _lastRefreshAt;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_loadGrouped());
     _load();
     _startLive();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 手机被锁屏两小时再回来，界面上还是两小时前的列表。轮询定时器在后台
+    // 会被系统掐掉，所以回到前台要主动拉一次，而不是等下一个 30s 周期。
+    if (state == AppLifecycleState.resumed) _refreshIfStale();
+  }
+
+  /// 距上次刷新超过 [refreshBudget] 才真去拉。
+  ///
+  /// 三个触发点（生命周期恢复、链路回到 online、用户手动）经常挨在一起发生，
+  /// 不去抖会连续打三次 `session/list`。
+  void _refreshIfStale() {
+    if (!mounted) return;
+    final now = DateTime.now();
+    final last = _lastRefreshAt;
+    if (last != null && now.difference(last) < refreshBudget) return;
+    _lastRefreshAt = now;
+    unawaited(_refreshQuietly());
+  }
+
+  /// 读本机的分组偏好。读不到（首次启动、存储损坏、测试环境没有插件）就
+  /// 保持默认的分组视图：这是纯展示偏好，不能因为它弹错或白屏。
+  Future<void> _loadGrouped() async {
+    if (widget.initialGrouped != null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getBool(HostSessionsScreen.groupedPrefsKey);
+      if (!mounted || stored == null || stored == _grouped) return;
+      setState(() {
+        _grouped = stored;
+      });
+    } catch (_) {
+      // 忽略：用默认值继续。
+    }
+  }
+
+  /// 分组 / 平铺切换：先改内存态立刻重绘，再后台落盘。
+  void _toggleGrouped() {
+    final next = !_grouped;
+    setState(() {
+      _grouped = next;
+    });
+    unawaited(_persistGrouped(next));
+  }
+
+  Future<void> _persistGrouped(bool value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(HostSessionsScreen.groupedPrefsKey, value);
+    } catch (_) {
+      // 写失败只影响下次启动的默认视图，本轮已经生效。
+    }
+  }
+
+  /// 折叠 / 展开一个组。
+  void _toggleCollapsed(String groupId) {
+    setState(() {
+      if (!_collapsed.remove(groupId)) _collapsed.add(groupId);
+    });
+  }
+
+  /// 读本机已读水位。失败已经在 [SeenStore] 里降级成空表，这里不再弹错。
+  Future<void> _loadSeen() async {
+    final seen = await _seenStore.loadSeen(widget.host.id);
+    if (!mounted || _sameSeen(_seen, seen)) return;
+    setState(() {
+      _seen = seen;
+    });
+  }
+
+  static bool _sameSeen(Map<String, int> left, Map<String, int> right) {
+    if (left.length != right.length) return false;
+    for (final entry in left.entries) {
+      if (right[entry.key] != entry.value) return false;
+    }
+    return true;
+  }
+
+  /// 点开会话时立刻把水位推到「现在」：本行标记当帧消失，不必等写盘完成。
+  ///
+  /// 内存态同步更新（同一个事件循环里就 setState），落盘用 `unawaited` 在后台
+  /// 跟随——导航不能被一次 SharedPreferences 写拖慢，写失败也只影响下次启动的
+  /// 未读判定（[SeenStore.markSeen] 自己吞掉异常）。
+  ///
+  /// 从聊天页返回后若服务端 `updatedAt` 已经前进（停留期间有新消息），水位就
+  /// 落后了，这一行会重新算成未读——这正是想要的行为。
+  void _markSeen(SessionSummary session) {
+    final epochMs = DateTime.now().millisecondsSinceEpoch;
+    final previous = _seen[session.sessionId];
+    if (previous == null || previous < epochMs) {
+      setState(() {
+        _seen = <String, int>{..._seen, session.sessionId: epochMs};
+      });
+      unawaited(
+        _seenStore.markSeen(widget.host.id, session.sessionId, epochMs),
+      );
+    }
+  }
+
+  /// 这一行此刻的标记状态。
+  ///
+  /// `hasPending` 恒为 false：我们还没有发送队列。以后接「发起新会话」的乐观
+  /// 操作时，把本地的 pendingSessionIds 传进来即可，优先级已经写在
+  /// [sessionRowStateOf] 里，渲染侧不用改。
+  SessionRowState _rowStateOf(SessionSummary session) => sessionRowStateOf(
+    session: session,
+    seenAt: SeenStore.seenOf(_seen, session.sessionId),
+    hasPending: false, // TODO(pending): 发送队列落地后接本地 pending 集合
+  );
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     unawaited(_liveSub?.cancel());
+    unawaited(_linkSub?.cancel());
     _pollTimer?.cancel();
+    _searchController.dispose();
     if (_ownsRemote) _remote?.dispose();
     if (_ownsApi) _api.dispose();
     super.dispose();
@@ -117,6 +283,11 @@ class _HostSessionsScreenState extends State<HostSessionsScreen> {
         debugPrint('HostSessions: workspace/follow 出错 $error');
       },
     );
+    // 链路从断到通，说明断线期间 `$events` 的增量帧全丢了（它不重放）。
+    // 这时候必须整表重拉一次，否则列表停在断线前的样子。
+    _linkSub = remote.linkStates.listen((state) {
+      if (state == DshLinkState.online) _refreshIfStale();
+    });
     if (widget.pollInterval > Duration.zero) {
       _pollTimer = Timer.periodic(widget.pollInterval, (_) {
         unawaited(_refreshQuietly());
@@ -129,6 +300,16 @@ class _HostSessionsScreenState extends State<HostSessionsScreen> {
     if (!mounted) return;
     if (!_workspace.apply(frame)) return;
     final next = _composeSessions();
+    // 平铺模式只看会话列表本身：顺序/成员没变就不重建（与加分组之前一致）。
+    // 分组模式还多依赖工作区本身（组头标题、路径、分组边界），会话快照没变
+    // 也要重建，否则组头会一直停在上一次布局上。
+    if (_grouped) {
+      setState(() {
+        _sessions = next;
+        _error = null;
+      });
+      return;
+    }
     if (_error == null && _sameSessions(_sessions, next)) return;
     setState(() {
       _sessions = next;
@@ -142,7 +323,13 @@ class _HostSessionsScreenState extends State<HostSessionsScreen> {
   /// 保证「HTTP 通就能出列表」这条底线不被 WS 拖累。
   List<SessionSummary> _composeSessions() {
     final ordered = _workspace.orderedSessionIds;
-    if (ordered.isEmpty) return _cache.values.toList(growable: false);
+    if (ordered.isEmpty) {
+      // 工作区状态还没到：退回快照原顺序，但仍要尊重「用户刚归档」这条本地
+      // 乐观标记，否则点了归档的行会在下一次重建时闪回来。
+      return _cache.values
+          .where((session) => !_workspace.isArchived(session.sessionId))
+          .toList(growable: false);
+    }
     final listed = ordered.toSet();
     final result = <SessionSummary>[
       for (final id in ordered) _cache[id] ?? _placeholderFor(id),
@@ -170,6 +357,9 @@ class _HostSessionsScreenState extends State<HostSessionsScreen> {
   Future<void> _load() async {
     if (_requesting) return;
     _requesting = true;
+    // 下拉刷新也把本地水位重新读一遍：别的入口（以后可能有）改了已读状态，
+    // 这一页刷新后要跟着变。
+    unawaited(_loadSeen());
     setState(() {
       _loading = true;
       _error = null;
@@ -210,6 +400,7 @@ class _HostSessionsScreenState extends State<HostSessionsScreen> {
   Future<void> _refreshQuietly() async {
     if (_refreshing || _requesting || _loading) return;
     _refreshing = true;
+    _lastRefreshAt = DateTime.now();
     try {
       final sessions = await _api.listSessions(widget.host);
       if (!mounted) return;
@@ -273,6 +464,10 @@ class _HostSessionsScreenState extends State<HostSessionsScreen> {
   }
 
   Future<void> _openSession(SessionSummary session) async {
+    // 先把水位推到「现在」再进页：标记当帧消失，用户不会看到一串点了还在的红点。
+    // 这一步是同步的（落盘异步跟随），所以 push 就是点击后的第一个导航动作。
+    _markSeen(session);
+    if (!mounted) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => SessionChatScreen(
@@ -283,7 +478,314 @@ class _HostSessionsScreenState extends State<HostSessionsScreen> {
       ),
     );
     if (!mounted) return;
+    // 返回时静默刷新一次：若停留期间该会话的 updatedAt 前进了，水位落后，
+    // 这一行会重新算成未读（不要在这时再打一次 markSeen，否则永远不提醒）。
     unawaited(_refreshQuietly());
+  }
+
+  // ------------------------------------------------------------- 行操作
+
+  /// 「⋯」入口：底部动作表，顺序按「最常用 → 最不可逆」排。
+  Future<void> _showSessionActions(SessionSummary session) async {
+    final pinned = _workspace.isPinned(session.sessionId);
+    final action = await showModalBottomSheet<_SessionAction>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              ListTile(
+                leading: Icon(
+                  pinned ? Icons.push_pin : Icons.push_pin_outlined,
+                ),
+                title: Text(pinned ? '取消置顶' : '置顶'),
+                onTap: () =>
+                    Navigator.of(sheetContext).pop(_SessionAction.togglePin),
+              ),
+              ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('重命名'),
+                onTap: () =>
+                    Navigator.of(sheetContext).pop(_SessionAction.rename),
+              ),
+              ListTile(
+                leading: const Icon(Icons.archive_outlined),
+                title: const Text('归档'),
+                subtitle: const Text('4 秒内可以撤销'),
+                onTap: () =>
+                    Navigator.of(sheetContext).pop(_SessionAction.archive),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case _SessionAction.togglePin:
+        await _togglePin(session);
+      case _SessionAction.rename:
+        await _renameSession(session);
+      case _SessionAction.archive:
+        await _archiveSession(session);
+    }
+  }
+
+  /// 置顶 / 取消置顶。
+  ///
+  /// 先改本地集合（顺序立刻变），再用 RPC 返回的权威集合对齐——那份列表就是
+  /// 服务端刚算出来的全量 `pinnedSessionIds`，不是自己拼的；随后到达的
+  /// `pinned` 帧值相同，不会再多触发一次重建。
+  Future<void> _togglePin(SessionSummary session) async {
+    final id = session.sessionId;
+    final remote = _remote;
+    final messenger = ScaffoldMessenger.of(context);
+    if (remote == null) {
+      messenger.showSnackBar(const SnackBar(content: Text('当前连接不支持置顶')));
+      return;
+    }
+    final wasPinned = _workspace.isPinned(id);
+    _setPinned(id, pinned: !wasPinned);
+    try {
+      final ids = wasPinned
+          ? await remote.unpinSession(id)
+          : await remote.pinSession(id);
+      if (!mounted) return;
+      _applyPinnedIds(ids);
+    } catch (error) {
+      if (!mounted) return;
+      _setPinned(id, pinned: wasPinned);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            '${wasPinned ? '取消置顶' : '置顶'}失败：${_describeActionError(error)}',
+          ),
+        ),
+      );
+    }
+  }
+
+  /// 归档：本地先移除（行立刻消失），再用 SnackBar 给 4 秒撤销窗口。
+  ///
+  /// 请求**当场发出去**，不等窗口结束：撤销是否命中取决于用户在这 4 秒里点
+  /// 没点，而不是请求发没发完——慢网下两者并不同步，串行化会让撤销变得不可靠。
+  /// 窗口结束（超时/滑走/被新提示顶掉）即认为归档完成，随后的 `archived` 帧
+  /// 会把它落成权威状态。
+  Future<void> _archiveSession(SessionSummary session) async {
+    final id = session.sessionId;
+    final remote = _remote;
+    final messenger = ScaffoldMessenger.of(context);
+    if (remote == null) {
+      messenger.showSnackBar(const SnackBar(content: Text('当前连接不支持归档')));
+      return;
+    }
+
+    _setArchived(id, archived: true);
+    // 同一时刻只留一条归档提示：旧的那条被顶掉 = 它的窗口已结束，视为完成。
+    messenger.hideCurrentSnackBar();
+
+    final Future<List<String>?> request = () async {
+      try {
+        // 运行中的会话要连带停活，否则留下一个看不见却还在烧 token 的后台 turn。
+        return await remote.archiveSession(id, stopActivity: session.running);
+      } catch (error) {
+        debugPrint('HostSessions: 归档失败 $error');
+        return null;
+      }
+    }();
+
+    var undone = false;
+    final bar = messenger.showSnackBar(
+      SnackBar(
+        content: Text('已归档「${session.title}」'),
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: '撤销',
+          onPressed: () {
+            undone = true;
+            unawaited(_undoArchive(id, request));
+          },
+        ),
+      ),
+    );
+
+    await bar.closed;
+    if (undone || !mounted) return;
+    final ids = await request;
+    if (!mounted || ids != null) return;
+    // 服务端其实没归档成功：把行放回来，别让用户以为归档了。
+    _setArchived(id, archived: false);
+    messenger.showSnackBar(const SnackBar(content: Text('归档失败，已恢复会话')));
+  }
+
+  /// 4 秒窗口内点了撤销：先等归档请求落地，再发 unarchive。
+  ///
+  /// 必须等：慢网下 unarchive 可能比 archive 先到服务端，最后仍是归档态。
+  Future<void> _undoArchive(
+    String sessionId,
+    Future<List<String>?> archived,
+  ) async {
+    final remote = _remote;
+    final messenger = ScaffoldMessenger.of(context);
+    final ids = await archived;
+    if (!mounted) return;
+    if (ids == null) {
+      // 归档本身没成功：撤销等于「把行放回来」，不必再发一次 unarchive。
+      _setArchived(sessionId, archived: false);
+      return;
+    }
+    _setArchived(sessionId, archived: false); // 先放回，不等第二次网络往返
+    if (remote == null) return;
+    try {
+      await remote.unarchiveSession(sessionId);
+    } catch (error) {
+      if (!mounted) return;
+      _setArchived(sessionId, archived: true);
+      messenger.showSnackBar(
+        SnackBar(content: Text('撤销归档失败：${_describeActionError(error)}')),
+      );
+    }
+  }
+
+  /// 重命名：弹窗预填当前标题，成功后就地替换这一行的标题（不整表重拉）。
+  Future<void> _renameSession(SessionSummary session) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final submitted = await showDialog<String>(
+      context: context,
+      builder: (_) => _RenameDialog(initialTitle: session.title),
+    );
+    final title = submitted?.trim() ?? '';
+    if (!mounted || title.isEmpty || title == session.title) return;
+
+    final remote = _remote;
+    if (remote == null) {
+      messenger.showSnackBar(const SnackBar(content: Text('当前连接不支持重命名')));
+      return;
+    }
+    try {
+      final saved = await remote.renameSession(session.sessionId, title);
+      if (!mounted) return;
+      _replaceTitle(session.sessionId, saved);
+    } catch (error) {
+      if (!mounted) return;
+      // 失败必须出声：`session/agent-busy` 会在这里翻成中文提示。
+      messenger.showSnackBar(
+        SnackBar(content: Text(_describeActionError(error))),
+      );
+    }
+  }
+
+  /// 本地乐观改归档状态并重排列表（不碰 `_cache`，也不重拉 `session/list`）。
+  void _setArchived(String sessionId, {required bool archived}) {
+    if (!mounted) return;
+    _workspace.markArchived(sessionId, archived: archived);
+    setState(() {
+      _sessions = _composeSessions();
+    });
+  }
+
+  /// 本地乐观改置顶状态并重排列表。
+  void _setPinned(String sessionId, {required bool pinned}) {
+    if (!mounted) return;
+    _workspace.markPinned(sessionId, pinned: pinned);
+    setState(() {
+      _sessions = _composeSessions();
+    });
+  }
+
+  /// 用服务端返回的全量置顶集合对齐本地状态。
+  void _applyPinnedIds(List<String> ids) {
+    if (!mounted) return;
+    _workspace.apply(
+      WorkspaceFrame(type: WorkspaceFrameType.pinned, pinnedSessionIds: ids),
+    );
+    setState(() {
+      _sessions = _composeSessions();
+    });
+  }
+
+  /// 就地换标题：`_cache` 与当前列表都改，后续重排/刷新拿到的也是新标题。
+  void _replaceTitle(String sessionId, String title) {
+    final cached = _cache[sessionId];
+    if (cached != null) _cache[sessionId] = cached.withTitle(title);
+    setState(() {
+      _sessions = <SessionSummary>[
+        for (final item in _sessions)
+          item.sessionId == sessionId ? item.withTitle(title) : item,
+      ];
+    });
+  }
+
+  /// 行操作失败时的提示：把 RPC code 翻成用户能懂的一句话。
+  ///
+  /// `session/agent-busy` 只给一个 code（`details.reason` 是写给程序看的），
+  /// 原样弹出来等于没说，所以这里点名「被子代理占用」。
+  static String _describeActionError(Object error) {
+    if (error is DshApiException) {
+      if (error.code == 'session/agent-busy') {
+        return '这个会话正被子代理占用，暂时不能改名';
+      }
+      final detail = error.message.trim();
+      if (detail.isEmpty) return '操作失败（${error.code}）';
+      return '操作失败（${error.code}）：$detail';
+    }
+    return '操作失败：$error';
+  }
+
+  // ------------------------------------------------------------- 本地搜索
+
+  /// 进入搜索态：每次都从空查询开始，不继承上次的搜索词。
+  void _startSearch() {
+    _searchController.clear();
+    setState(() {
+      _searching = true;
+      _query = '';
+    });
+  }
+
+  /// 退出搜索态：清空输入并立刻恢复全量列表。
+  ///
+  /// 只清搜索词与搜索态，不动 `_sessions`——它一直是全量。
+  void _cancelSearch() {
+    _searchController.clear();
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _searching = false;
+      _query = '';
+    });
+  }
+
+  void _onQueryChanged(String value) {
+    if (value == _query) return;
+    setState(() {
+      _query = value;
+    });
+  }
+
+  /// 渲染前的那一道筛：`_sessions` 本身不动。
+  ///
+  /// 非搜索态直接返回原列表（同一个实例，零开销）；搜索态按标题 + cwd 过滤。
+  /// live 帧与三态标记仍然按全量算，过滤只决定「这一帧显示谁」。
+  List<SessionSummary> get _visibleSessions =>
+      _searching ? filterSessions(_sessions, _query) : _sessions;
+
+  /// 搜索态下的标题输入框：无边框、autofocus；回车只是收起键盘（过滤是即时的，
+  /// 不需要「提交」这一步），关掉键盘才能完整看到结果列表。
+  Widget _buildSearchField() {
+    return TextField(
+      key: const ValueKey<String>('search-field'),
+      controller: _searchController,
+      autofocus: true,
+      textInputAction: TextInputAction.search,
+      onChanged: _onQueryChanged,
+      onSubmitted: (_) => FocusScope.of(context).unfocus(),
+      decoration: const InputDecoration(
+        hintText: '搜索标题或路径',
+        border: InputBorder.none,
+      ),
+    );
   }
 
   @override
@@ -292,15 +794,42 @@ class _HostSessionsScreenState extends State<HostSessionsScreen> {
     final title = host.name.trim().isEmpty ? host.displayHost : host.name;
     return Scaffold(
       appBar: AppBar(
-        title: Text(title),
-        actions: <Widget>[
-          TextButton.icon(
-            onPressed: _openFullPanel,
-            icon: const Icon(Icons.web_asset_outlined, size: 18),
-            label: const Text('完整面板'),
-          ),
-          const SizedBox(width: 8),
-        ],
+        // 搜索态就把标题整体换成输入框：AppBar 只有一行，不另起一条工具条。
+        title: _searching ? _buildSearchField() : Text(title),
+        actions: _searching
+            ? <Widget>[
+                TextButton(
+                  key: const ValueKey<String>('search-cancel'),
+                  onPressed: _cancelSearch,
+                  child: const Text('取消'),
+                ),
+                const SizedBox(width: 8),
+              ]
+            : <Widget>[
+                IconButton(
+                  key: const ValueKey<String>('toggle-search'),
+                  onPressed: _startSearch,
+                  tooltip: '搜索会话',
+                  icon: const Icon(Icons.search),
+                ),
+                // 图标/提示词都描述「点下去会发生什么」：分组态提供平铺入口，反之亦然。
+                IconButton(
+                  key: const ValueKey<String>('toggle-grouped'),
+                  onPressed: _toggleGrouped,
+                  tooltip: _grouped ? '平铺显示' : '按工作区分组',
+                  icon: Icon(
+                    _grouped
+                        ? Icons.view_list_outlined
+                        : Icons.view_module_outlined,
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _openFullPanel,
+                  icon: const Icon(Icons.web_asset_outlined, size: 18),
+                  label: const Text('完整面板'),
+                ),
+                const SizedBox(width: 8),
+              ],
       ),
       body: RefreshIndicator(
         onRefresh: _load,
@@ -321,23 +850,170 @@ class _HostSessionsScreenState extends State<HostSessionsScreen> {
         child: _ErrorState(message: error, onRetry: _load),
       );
     }
-    if (_sessions.isEmpty) {
-      return const _ScrollableMessage(child: _EmptyState());
+    final visible = _visibleSessions;
+    if (visible.isEmpty) {
+      // 两个空态必须分开：搜索没命中 ≠ 这台主机没有会话。前者是「换个词再试」，
+      // 后者是「去宿主建一个」，给同一句文案会把用户带到错误的方向。
+      return _ScrollableMessage(
+        child: _searching ? const _NoMatchState() : const _EmptyState(),
+      );
+    }
+    return _grouped ? _buildGroupedList(visible) : _buildFlatList(visible);
+  }
+
+  /// 平铺模式：与加分组之前**逐字一致**的列表。
+  ///
+  /// 抽成方法只是为了让 [build] 里按 [_grouped] 二选一，widget 树本身没有变化：
+  /// 同样的 `ListView.builder`、同样的 padding、同样的 `ValueKey(sessionId)`，
+  /// 所以原有测试与滚动行为都不受影响。
+  ///
+  /// [sessions] 是**已过滤**的可见列表（非搜索态就是 `_sessions` 本身）。
+  Widget _buildFlatList(List<SessionSummary> sessions) {
+    return ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(top: 12, bottom: 24),
+      itemCount: sessions.length,
+      itemBuilder: (context, index) => _buildSessionCard(sessions[index]),
+    );
+  }
+
+  /// 分组模式：组头 + 组内卡片摊平成一条懒加载列表。
+  ///
+  /// 折叠只影响这一条列表的成员：组头永远在，组内卡片在有折叠标记时整段跳过。
+  /// [sessions] 是已过滤的列表：`groupSessions` 会剔除空组，所以搜索后
+  /// 「一个成员都没剩下的工作区」不会留下孤零零的组头。
+  Widget _buildGroupedList(List<SessionSummary> sessions) {
+    final groups = groupSessions(
+      sessions: sessions,
+      workspaces: _workspace.workspaces,
+      pinnedSessionIds: _workspace.pinnedSessionIds.toSet(),
+    );
+    final items = <_GroupedItem>[];
+    for (final group in groups) {
+      final collapsed = _collapsed.contains(group.id);
+      items.add(_GroupHeaderItem(group: group, collapsed: collapsed));
+      if (collapsed) continue;
+      for (final session in group.sessions) {
+        items.add(_GroupSessionItem(session: session));
+      }
     }
     return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.only(top: 12, bottom: 24),
-      itemCount: _sessions.length,
+      itemCount: items.length,
       itemBuilder: (context, index) {
-        final session = _sessions[index];
-        return _SessionCard(
-          // key 绑 sessionId：静默刷新时就地换内容，不整条重建。
-          key: ValueKey<String>(session.sessionId),
-          session: session,
-          onTap: () => unawaited(_openSession(session)),
-          onOpen: () => unawaited(_openSession(session)),
-        );
+        final item = items[index];
+        return switch (item) {
+          _GroupHeaderItem(:final group, :final collapsed) => _GroupHeader(
+            key: ValueKey<String>('group-header.${group.id}'),
+            group: group,
+            collapsed: collapsed,
+            onToggle: () => _toggleCollapsed(group.id),
+          ),
+          _GroupSessionItem(:final session) => _buildSessionCard(session),
+        };
       },
+    );
+  }
+
+  /// 一行卡片：两种模式共用，连同 key 与四个回调，行为不可能分叉。
+  Widget _buildSessionCard(SessionSummary session) {
+    return _SessionCard(
+      // key 绑 sessionId：静默刷新时就地换内容，不整条重建。
+      key: ValueKey<String>(session.sessionId),
+      session: session,
+      rowState: _rowStateOf(session),
+      pinned: _workspace.isPinned(session.sessionId),
+      onTap: () => unawaited(_openSession(session)),
+      onOpen: () => unawaited(_openSession(session)),
+      onMore: () => unawaited(_showSessionActions(session)),
+    );
+  }
+}
+
+/// 分组列表摊平后的一项：要么是组头，要么是某组里的卡片。
+///
+/// 摊平成一个列表（而不是嵌套的 Column/ListView）是为了保住
+/// `ListView.builder` 的惰性：组多、会话多时也不会一次性建满。
+sealed class _GroupedItem {
+  const _GroupedItem();
+}
+
+class _GroupHeaderItem extends _GroupedItem {
+  const _GroupHeaderItem({required this.group, required this.collapsed});
+
+  final SessionGroup group;
+  final bool collapsed;
+}
+
+class _GroupSessionItem extends _GroupedItem {
+  const _GroupSessionItem({required this.session});
+
+  final SessionSummary session;
+}
+
+/// 组头：标题 + 会话数、路径小字、折叠箭头，整行可点。
+///
+/// 标题和数量合并在**同一个** `Text` 里（`项目 A · 2`）而不是两个相邻 Text：
+/// 列表里已经存在大量同名文本（卡片标题、菜单项），独立的精确标题节点会和
+/// 它们撞成同一个可查找文本；一行紧凑写法既省横向空间，也不会让读屏/测试
+/// 把「组头」误认成「卡片」。
+class _GroupHeader extends StatelessWidget {
+  const _GroupHeader({
+    super.key,
+    required this.group,
+    required this.collapsed,
+    required this.onToggle,
+  });
+
+  final SessionGroup group;
+  final bool collapsed;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onToggle,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 16, 8),
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    '${group.title} · ${group.sessions.length}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (group.path.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 2),
+                    Text(
+                      group.path,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              collapsed ? Icons.chevron_right : Icons.expand_more,
+              size: 20,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -392,6 +1068,46 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
+/// 搜索态专用空态：**只**表示「这次搜索没命中」。
+///
+/// 和 [_EmptyState]（这台主机真的没有会话）必须是两套文案：前者引导换关键词，
+/// 后者引导去宿主建会话。混用会把用户带到错误的方向。
+class _NoMatchState extends StatelessWidget {
+  const _NoMatchState();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(
+            Icons.search_off,
+            size: 56,
+            color: theme.colorScheme.outline,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            '没有匹配的会话',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '试试更短的关键词，或换个路径片段',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ErrorState extends StatelessWidget {
   const _ErrorState({required this.message, required this.onRetry});
 
@@ -435,13 +1151,23 @@ class _SessionCard extends StatelessWidget {
   const _SessionCard({
     super.key,
     required this.session,
+    required this.rowState,
+    required this.pinned,
     required this.onTap,
     required this.onOpen,
+    required this.onMore,
   });
 
   final SessionSummary session;
+
+  /// 行尾标记三态。同一行最多一个：pending > running > unread > none。
+  final SessionRowState rowState;
+
+  /// 是否置顶：决定右上角小图钉，也决定「⋯」菜单里的文案。
+  final bool pinned;
   final VoidCallback onTap;
   final VoidCallback onOpen;
+  final VoidCallback onMore;
 
   @override
   Widget build(BuildContext context) {
@@ -500,12 +1226,24 @@ class _SessionCard extends StatelessWidget {
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
-                      StatusDot(
-                        status: running ? ProbeStatus.online : null,
-                        size: 8,
-                      ),
-                      if (statusText.isNotEmpty) ...<Widget>[
+                      // 置顶是个「我看得见的状态」，不能只靠菜单文案暗示。
+                      if (pinned) ...<Widget>[
+                        Icon(
+                          Icons.push_pin,
+                          size: 12,
+                          color: theme.colorScheme.primary,
+                        ),
+                        const SizedBox(width: 4),
+                      ],
+                      // 行尾三选一：running / unread / none。none 不占位。
+                      if (rowState != SessionRowState.none) ...<Widget>[
+                        _RowStateMarker(
+                          state: rowState,
+                          sessionId: session.sessionId,
+                        ),
                         const SizedBox(width: 6),
+                      ],
+                      if (statusText.isNotEmpty) ...<Widget>[
                         Text(
                           statusText,
                           style: theme.textTheme.labelSmall?.copyWith(
@@ -515,10 +1253,21 @@ class _SessionCard extends StatelessWidget {
                       ],
                     ],
                   ),
-                  IconButton(
-                    onPressed: onOpen,
-                    tooltip: '打开会话',
-                    icon: const Icon(Icons.chat_bubble_outline, size: 20),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      IconButton(
+                        onPressed: onOpen,
+                        tooltip: '打开会话',
+                        icon: const Icon(Icons.chat_bubble_outline, size: 20),
+                      ),
+                      // 入口做成按钮而不是长按：长按没有可见提示，用户找不到。
+                      IconButton(
+                        onPressed: onMore,
+                        tooltip: '更多操作',
+                        icon: const Icon(Icons.more_horiz, size: 20),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -526,6 +1275,100 @@ class _SessionCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// 行尾标记：三态互斥，同一行最多画一个。
+///
+/// - `running`：橙色实心点（运行中的会话不该被「未读」提示抢走注意力）；
+/// - `unread`：主题色实心小圆点；
+/// - `none`：零尺寸占位，布局上不占位；
+/// - `pending`：本地未完成的乐观操作（当前没有发送队列，暂不可达）。
+///
+/// 刻意**不做无限动画**（旋转/呼吸）：列表页被 `pumpAndSettle` 驱动的测试会很
+/// 难收敛，静态圆点已经能表达状态，动效留给以后有设计稿再上。
+class _RowStateMarker extends StatelessWidget {
+  const _RowStateMarker({
+    required this.state,
+    required this.sessionId,
+  });
+
+  final SessionRowState state;
+  final String sessionId;
+
+  @override
+  Widget build(BuildContext context) {
+    if (state == SessionRowState.none) return const SizedBox.shrink();
+    final color = switch (state) {
+      SessionRowState.pending => const Color(0xFFF59E0B),
+      SessionRowState.running => const Color(0xFFF59E0B),
+      SessionRowState.unread => Theme.of(context).colorScheme.primary,
+      SessionRowState.none => Colors.transparent,
+    };
+    return Container(
+      // key 带 sessionId 和状态名：widget 测试能精确定位某一行是哪种标记。
+      key: ValueKey<String>('row-state.$sessionId.${state.name}'),
+      width: 8,
+      height: 8,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    );
+  }
+}
+
+/// 「⋯」菜单里的三项动作。
+///
+/// 用具名枚举而不是裸字符串：switch 少写一项时分析器会直接报错。
+enum _SessionAction { togglePin, rename, archive }
+
+/// 重命名弹窗：让它自己持有 `TextEditingController`。
+///
+/// 为什么不在调用方建 controller：`showDialog` 的 future 在 pop 的瞬间就完成，
+/// 但弹窗的退出动画还会再重建一次 `TextField`；调用方那时已经 dispose，
+/// 就会炸「A TextEditingController was used after being disposed」。
+/// 谁持有谁释放，随弹窗一起销毁才安全。
+class _RenameDialog extends StatefulWidget {
+  const _RenameDialog({required this.initialTitle});
+
+  /// 预填的当前标题。
+  final String initialTitle;
+
+  @override
+  State<_RenameDialog> createState() => _RenameDialogState();
+}
+
+class _RenameDialogState extends State<_RenameDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialTitle,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop(_controller.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('重命名会话'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        maxLength: 120,
+        textInputAction: TextInputAction.done,
+        decoration: const InputDecoration(labelText: '会话标题'),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('保存')),
+      ],
     );
   }
 }

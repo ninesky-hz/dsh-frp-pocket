@@ -207,7 +207,7 @@ ChatMessage? chatMessageOf(SessionLogEvent event) {
       if (texts.isEmpty && notes.isEmpty) return null;
       final body = texts.join('\n\n');
       return ChatMessage(
-        key: _keyOf(event, body),
+        key: _assistantRowKey(event, body),
         role: ChatRole.assistant,
         text: body,
         seq: event.seq,
@@ -253,6 +253,18 @@ String _keyOf(SessionLogEvent event, String body) {
   if (seq != null) return 'seq:$seq';
   final stamp = event.time?.millisecondsSinceEpoch ?? 0;
   return 'evt:$stamp:${body.hashCode}';
+}
+
+/// 助手消息的行身份：`row:m<turn>.<step>`，与流式草稿的 key 一致。
+///
+/// 定稿到达时 key 不变，列表项被复用（只换内容），不重建、不闪、不丢滚动。
+/// 事件里没有 turn/step 时才退回 seq 方案。
+String _assistantRowKey(SessionLogEvent event, String body) {
+  final data = event.data;
+  final turn = asInt(data['turn']);
+  final step = asInt(data['step']);
+  if (turn != null && step != null) return 'row:m$turn.$step';
+  return _keyOf(event, body);
 }
 
 void _addNote(List<String> notes, String note) {

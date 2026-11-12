@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:dsh_frp_app/models/host.dart';
+import 'package:dsh_frp_app/models/host_event.dart';
 import 'package:dsh_frp_app/models/session_event.dart';
 import 'package:dsh_frp_app/models/session_summary.dart';
 import 'package:dsh_frp_app/screens/session_chat_screen.dart';
@@ -60,9 +61,13 @@ class _FakeRemote extends DshRemote {
 
   final StreamController<DshStreamFrame> frames =
       StreamController<DshStreamFrame>.broadcast();
+  final StreamController<DshHostEvent> hostEvents =
+      StreamController<DshHostEvent>.broadcast();
   final List<String> prompts = <String>[];
   final List<String> cancelled = <String>[];
   final List<int> throughSeqs = <int>[];
+  final List<String> approvals = <String>[];
+  final List<Map<String, Object?>> answers = <Map<String, Object?>>[];
 
   /// 让 `prompt()` 变成可挂起的：验证「发送中」状态时用。
   Completer<String>? gate;
@@ -77,6 +82,35 @@ class _FakeRemote extends DshRemote {
   @override
   Stream<DshStreamFrame> followSession(String sessionId, {int? maxMessages}) {
     return frames.stream;
+  }
+
+  /// 这批用例都在「已连上」的前提下断言发送行为；链路状态机本身由
+  /// `dsh_link_state_test.dart` 覆盖，这里只把假件钉在 online，免得发送按钮
+  /// 因为初始 offline 被禁用而改变既有断言的语义。
+  @override
+  DshLinkState get linkState => DshLinkState.online;
+
+  @override
+  Stream<DshHostEvent> followEvents() => hostEvents.stream;
+
+  @override
+  Future<void> respondApproval(
+    String eventId, {
+    required bool approve,
+    Map<String, Object?>? value,
+  }) async {
+    approvals.add('$eventId:${approve ? 'approve' : 'reject'}');
+  }
+
+  @override
+  Future<void> answerQuestion(
+    String eventId,
+    List<Map<String, Object?>> answers,
+  ) async {
+    this.answers.add(<String, Object?>{
+      'eventId': eventId,
+      'answers': answers,
+    });
   }
 
   @override
@@ -98,7 +132,11 @@ class _FakeRemote extends DshRemote {
   }
 
   @override
-  Future<String> prompt(String sessionId, String text) async {
+  Future<String> prompt(
+    String sessionId,
+    String text, {
+    String? requestId,
+  }) async {
     prompts.add(text);
     if (failPrompts > 0) {
       failPrompts -= 1;
@@ -106,7 +144,7 @@ class _FakeRemote extends DshRemote {
     }
     final pending = gate;
     if (pending != null) return pending.future;
-    return 'req-${prompts.length}';
+    return requestId ?? 'req-${prompts.length}';
   }
 
   @override
@@ -149,6 +187,7 @@ Future<void> _openSnapshot(WidgetTester tester, _FakeRemote remote) async {
 Future<void> _disposeChat(WidgetTester tester, _FakeRemote remote) async {
   await tester.pumpWidget(const SizedBox());
   await remote.frames.close();
+  await remote.hostEvents.close();
 }
 
 void main() {
@@ -332,6 +371,100 @@ void main() {
     expect(find.textContaining('调用 ops_bash'), findsOneWidget);
     // 折叠行只有一行：reasoning 与 tool-call 拼在同一条里。
     expect(find.text('思考 · 调用 ops_bash'), findsOneWidget);
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('审批请求出现卡片，点通过后卡片消失', (tester) async {
+    final remote = await _pumpChat(tester);
+    await _openSnapshot(tester, remote);
+
+    remote.hostEvents.add(
+      const DshHostEventApproval(
+        eventId: 'evt-a',
+        agentId: 'session-abc',
+        request: <String, Object?>{
+          'toolName': 'bash',
+          'command': 'rm -rf build',
+          'reason': '需要清理构建目录',
+        },
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('approval-card-evt-a')), findsOneWidget);
+    expect(find.text('需要你确认 · bash'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('approval-approve-evt-a')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(find.byKey(const Key('approval-card-evt-a')), findsNothing);
+    expect(remote.approvals, <String>['evt-a:approve']);
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('cancel 帧让卡片立即消失且不弹提示', (tester) async {
+    final remote = await _pumpChat(tester);
+    await _openSnapshot(tester, remote);
+
+    remote.hostEvents.add(
+      const DshHostEventApproval(
+        eventId: 'evt-a',
+        agentId: 'session-abc',
+        request: <String, Object?>{'toolName': 'bash'},
+      ),
+    );
+    await tester.pump();
+    expect(find.byKey(const Key('approval-card-evt-a')), findsOneWidget);
+
+    remote.hostEvents.add(const DshHostEventCancel(eventId: 'evt-a'));
+    await tester.pump();
+
+    expect(find.byKey(const Key('approval-card-evt-a')), findsNothing);
+    expect(find.byType(SnackBar), findsNothing);
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('提问卡多选后发送 answers', (tester) async {
+    final remote = await _pumpChat(tester);
+    await _openSnapshot(tester, remote);
+
+    remote.hostEvents.add(
+      DshHostEventQuestion(
+        eventId: 'evt-q',
+        agentId: 'session-abc',
+        request: const <String, Object?>{
+          'questions': <Object?>[
+            <String, Object?>{
+              'id': 'q1',
+              'question': '选哪些？',
+              'options': <Object?>['A', 'B'],
+              'multiSelect': true,
+            },
+          ],
+        },
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('选哪些？'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('question-option-evt-q-q1-A')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('question-option-evt-q-q1-B')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('question-send-evt-q')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(find.byKey(const Key('question-card-evt-q')), findsNothing);
+    expect(remote.answers, hasLength(1));
+    final sent =
+        remote.answers.single['answers']! as List<Map<String, Object?>>;
+    expect(sent.single['id'], 'q1');
+    expect(sent.single['selected'], <String>['A', 'B']);
 
     await _disposeChat(tester, remote);
   });

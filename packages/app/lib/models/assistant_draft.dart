@@ -55,6 +55,15 @@ class AssistantDraft {
 
   /// 这个 attempt 开始时会话已经写到第几号事件；用来和 durable 定稿对账。
   final int startedAfterSeq;
+
+  /// 与 durable 定稿共用的行身份：`row:m<turn>.<step>`。
+  ///
+  /// 流式气泡和随后到达的 `assistant/message` 必须用**同一个** key，否则
+  /// 定稿落地时 Flutter 会把旧项销毁、新建一个，表现为每轮回答结束闪一下，
+  /// 长会话里还会带一下滚动位置。turn/step 缺失时才退回 attemptId。
+  String get rowKey => turn == 0 && step == 0
+      ? 'draft:$attemptId'
+      : 'row:m$turn.$step';
   int revision;
 
   final SplayTreeMap<int, DraftBlock> blocks = SplayTreeMap<int, DraftBlock>();

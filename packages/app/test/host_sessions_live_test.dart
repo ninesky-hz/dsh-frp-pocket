@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dsh_frp_app/models/host.dart';
 import 'package:dsh_frp_app/models/session_event.dart';
 import 'package:dsh_frp_app/models/session_summary.dart';
+import 'package:dsh_frp_app/models/workspace_view_state.dart';
 import 'package:dsh_frp_app/screens/host_sessions_screen.dart';
 import 'package:dsh_frp_app/screens/session_chat_screen.dart';
 import 'package:dsh_frp_app/services/dsh_api.dart';
@@ -90,7 +91,7 @@ SessionSummary _summary({
 }
 
 void main() {
-  testWidgets('workspace 变化时就地更新卡片，点卡片进原生聊天页', (tester) async {
+  testWidgets('workspace 增量就地更新卡片，不整表重拉，点卡片进原生聊天页', (tester) async {
     final api = _FakeApi(<SessionSummary>[
       _summary(title: '会话 A', running: false),
     ]);
@@ -114,32 +115,82 @@ void main() {
     expect(find.text('会话 A'), findsOneWidget);
     expect(find.text('运行中'), findsNothing);
 
+    final callsAfterFirstLoad = api.calls;
+    expect(callsAfterFirstLoad, 1);
     final before = tester.element(
       find.byKey(const ValueKey<String>('session-1')),
     );
 
-    // 服务端状态变了：title + running 都不同，同一条 sessionId。
-    api.sessions = <SessionSummary>[
-      _summary(title: '会话 A 改过名', running: true),
-    ];
+    // 1) baseline 与快照内容一致：列表不变、更不重拉。
     remote.workspaces.add(
-      const DshStreamFrame(kind: DshFrameKind.workspacePatch),
+      DshStreamFrame(
+        kind: DshFrameKind.workspaceBaseline,
+        workspaceFrame: WorkspaceFrame(
+          type: WorkspaceFrameType.baseline,
+          workspaces: <WorkspaceEntry>[
+            const WorkspaceEntry(
+              workspaceId: 'w1',
+              title: 'dsh-frp-pocket',
+              path: r'D:\Ai-Project\dsh-frp-pocket',
+              sessionIds: <String>['session-1'],
+            ),
+          ],
+        ),
+      ),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 16));
 
-    expect(api.calls, greaterThanOrEqualTo(2));
-    expect(find.text('会话 A 改过名'), findsOneWidget);
-    expect(find.text('运行中'), findsOneWidget);
-
-    // 「就地更新」：key 没变的卡片复用同一个 Element，不整页重建。
-    final after = tester.element(
-      find.byKey(const ValueKey<String>('session-1')),
+    expect(api.calls, callsAfterFirstLoad);
+    expect(
+      identical(
+        tester.element(find.byKey(const ValueKey<String>('session-1'))),
+        before,
+      ),
+      isTrue,
+      reason: '工作区帧不该把已有卡片整页重建',
     );
-    expect(identical(before, after), isTrue);
+
+    // 2) 工作区里多出一个快照还没有的会话：用工作区信息占位，就地插到列表里。
+    remote.workspaces.add(
+      DshStreamFrame(
+        kind: DshFrameKind.workspaceBaseline,
+        workspaceFrame: WorkspaceFrame(
+          type: WorkspaceFrameType.baseline,
+          workspaces: <WorkspaceEntry>[
+            const WorkspaceEntry(
+              workspaceId: 'w1',
+              title: 'dsh-frp-pocket',
+              path: r'D:\Ai-Project\dsh-frp-pocket',
+              sessionIds: <String>['session-1'],
+            ),
+            const WorkspaceEntry(
+              workspaceId: 'w2',
+              title: '另一个项目',
+              path: r'D:\Ai-Project\other',
+              sessionIds: <String>['session-2'],
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    expect(api.calls, callsAfterFirstLoad, reason: 'workspace 帧一律不重拉列表');
+    expect(find.text('会话 A'), findsOneWidget);
+    expect(find.text('另一个项目'), findsOneWidget);
+    expect(
+      identical(
+        tester.element(find.byKey(const ValueKey<String>('session-1'))),
+        before,
+      ),
+      isTrue,
+      reason: '「就地更新」：key 没变的卡片复用同一个 Element',
+    );
 
     // 点卡片 → push 原生聊天页（只构造 widget，不挂载路由，避免真连流）。
-    await tester.tap(find.text('会话 A 改过名'));
+    await tester.tap(find.text('另一个项目'));
     await tester.pump();
 
     expect(observer.pushed, isNotEmpty);

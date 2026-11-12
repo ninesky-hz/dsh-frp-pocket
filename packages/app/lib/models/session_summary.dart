@@ -52,6 +52,18 @@ class SessionSummary {
   /// goal 阶段（`running | blocked | done` 等），没有 goal 时为 null。
   final String? goalPhase;
 
+  /// 只换标题的浅拷贝：重命名成功后**就地**替换这一行，不整表重拉。
+  SessionSummary withTitle(String title) => SessionSummary(
+    sessionId: sessionId,
+    title: title,
+    cwd: cwd,
+    running: running,
+    agentAvailable: agentAvailable,
+    updatedAt: updatedAt,
+    tokens: tokens,
+    goalPhase: goalPhase,
+  );
+
   /// `projections.values` 这一层在不同 DSH 版本里可能被省略，两种都认。
   static Map<String, Object?> _projectionValues(Map<String, Object?> json) {
     final projections = _asMap(json['projections']);

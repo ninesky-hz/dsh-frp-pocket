@@ -255,6 +255,28 @@ class WorkspaceViewState {
 
   bool isPinned(String sessionId) => _pinned.contains(sessionId);
 
+  /// 用户主动归档/撤销后的**本地乐观标记**：先让界面立刻改对，不等回帧。
+  ///
+  /// 为什么可以这么写：`archived` / `pinned` 帧是**全量替换**语义，服务端
+  /// 一发帧就会把这两个集合整体覆盖成权威值，乐观值最多只活到下一次同类帧，
+  /// 不需要额外的「过期/对齐」逻辑。失败时由调用方用同一个方法回滚。
+  void markArchived(String sessionId, {required bool archived}) {
+    if (archived) {
+      _archived.add(sessionId);
+    } else {
+      _archived.remove(sessionId);
+    }
+  }
+
+  /// 用户主动置顶/取消置顶后的本地乐观标记（同 [markArchived] 的取舍）。
+  void markPinned(String sessionId, {required bool pinned}) {
+    if (pinned) {
+      _pinned.add(sessionId);
+    } else {
+      _pinned.remove(sessionId);
+    }
+  }
+
   /// 这一帧状态里是否提到过这个会话（含归档）。用于判断某条 `session/list`
   /// 结果是不是「状态机还不知道归属」的额外会话。
   bool mentions(String sessionId) {
