@@ -32,3 +32,11 @@
 - 该目录下的 `config.json`（DSH_HOME 版）才是插件真实配置；插件以 symlink 装进 `profiles/desktop/node_modules/dsh-frp-pocket → D:\Ai-Project\dsh-frp-pocket\packages\plugin`，改仓库源码即改插件源码。
 - 插件进程内 `current` 是内存缓存（`lib/index.js:79`），**改磁盘后必须重载插件**才生效；已加 `liveConfig()` 按 mtime+size 对账消除这个坑（需重载一次才启用）。
 - RPC（`/dsh-frp-pocket/<endpoint>`）走 DSH 内部 connection.rpc，`127.0.0.1:3081` 直连会 401（网关只管浏览器会话），别指望 curl 调它。
+
+## 泛域名（2026-11-12 落地，已验证）
+- frps 的 HTTPS vhost router 只认**已加载**的 customDomains：改完 /opt/frp-bridge/frpc-bridge.toml 必须 `systemctl restart frpc-bridge` 并确认 MainPID / ActiveEnterTimestamp 变了。只看 toml 会误判（踩过：服务 12:39 起，15:57 的 restart 没换进程 → 443 报 `tlsv1 unrecognized name` alert 112）。
+- 泛域名证书只能走 DNS-01（RFC 8555 不允许 wildcard 用 HTTP-01/TLS-ALPN-01）。阿里云 AccessKey 放 /etc/caddy/alidns.env（chmod 600，Ali_Key/Ali_Secret），acme.sh dns_ali 签 `*.SUFFIX` + `SUFFIX`，Caddy 用 `tls /path/fullchain.pem /path/privkey.pem` 载入（不用重编 Caddy）。
+- Caddyfile 里有 `admin off` → `caddy reload` 必然 connection refused，一律 `systemctl restart caddy`。
+- 验证顺序：① 9443 直连 Caddy 看证书 ② 443 经 frps 看 SNI 路由 ③ 公网 `curl "https://D/?pin=PIN"` 看 303 + Set-Cookie frp_auth ④ 带 cookie 打 /frp-pocket/api/health 应 200。
+- DSH 主进程里的插件代码是**加载时快照**：改 packages/plugin/{lib,client} 后必须重启 DSH 才生效；重启前面板/health 会继续显示旧地址（这是这次 health 里 publicUrl 仍是 home.dsh.chenz.vip 的原因，不是配置错）。
+- 家里 frpc 是 type=http（走 frps vhostHTTPPort=80），TLS 由 VPS 的 frpc-bridge（type=https，customDomains 含 `*.dsh.chenz.vip`）在 443 终止后转 Caddy 9443；换域名后家里隧道必须重启（面板「重启隧道」或 restart-tunnel 脚本），VPS bridge 不用动。

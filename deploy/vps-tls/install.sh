@@ -17,21 +17,30 @@
 #   --domains 支持逗号分隔多个：'dsh.chenz.vip,home.dsh.chenz.vip,studio.dsh.chenz.vip'
 #   ⚠ 每个域名都要先有指向本机的 DNS A 记录，否则 ACME 会持续失败重试。
 #
+# 泛域名模式（插件自动掷 6 位随机子域时用这个）：
+#   bash acme-wildcard.sh --suffix dsh.chenz.vip      # 先签 *.dsh.chenz.vip（DNS-01）
+#   bash install.sh --wildcard dsh.chenz.vip --token '<frps token>' --caddy-tar ... --frp-tar ...
+#   桥接收 "*.dsh.chenz.vip"，Caddy 站点写 "*.dsh.chenz.vip, dsh.chenz.vip"；
+#   插件掷出 ab12cd.dsh.chenz.vip 立刻可用（泛解析 A 记录本来就在，不用再动 DNS）。
+#
 # 可重复执行：已安装的二进制、配置、systemd unit 都会覆盖为当前参数，
 # 证书与日志目录保留（不会重复签发）。
 set -euo pipefail
 
 TOKEN=''
 DOMAINS='dsh.chenz.vip'
+WILDCARD=''
 CADDY_TAR='/tmp/caddy.tar.gz'
 FRP_TAR=''
 CADDY_BIN='/usr/local/bin/caddy'
 FRPC_BIN='/opt/frp-bridge/frpc'
+CERT_DIR='/etc/caddy/certs'
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --token) TOKEN="${2:-}"; shift 2 ;;
     --domains) DOMAINS="${2:-}"; shift 2 ;;
+    --wildcard) WILDCARD="${2:-}"; shift 2 ;;
     --caddy-tar) CADDY_TAR="${2:-}"; shift 2 ;;
     --frp-tar) FRP_TAR="${2:-}"; shift 2 ;;
     -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
@@ -54,6 +63,23 @@ for d in "${DOMAIN_ARR[@]}"; do
   CLEAN+=("$d")
 done
 [ "${#CLEAN[@]}" -gt 0 ] || { echo "没有有效域名" >&2; exit 2; }
+
+# 泛域名模式：桥接只需要收一条 "*.suffix"（frp 的通配匹配任意子域），
+# Caddy 站点写成 "*.suffix, suffix" 并改用手工签好的泛域名证书（DNS-01 签的）。
+BRIDGE_DOMAINS=("${CLEAN[@]}")
+SITE_NAMES=("${CLEAN[@]}")
+if [ -n "$WILDCARD" ]; then
+  case "$WILDCARD" in
+    *[!a-z0-9.-]*) echo "泛域名后缀不合法: $WILDCARD" >&2; exit 2 ;;
+  esac
+  BRIDGE_DOMAINS=("*.${WILDCARD}")
+  SITE_NAMES=("*.${WILDCARD}" "${WILDCARD}")
+  if [ ! -f "$CERT_DIR/fullchain.pem" ] || [ ! -f "$CERT_DIR/privkey.pem" ]; then
+    echo "泛域名模式需要 $CERT_DIR/{fullchain,privkey}.pem" >&2
+    echo "先执行：bash acme-wildcard.sh --suffix $WILDCARD" >&2
+    exit 2
+  fi
+fi
 
 echo "== 0/7 前置检查 =="
 . /etc/os-release 2>/dev/null || true
@@ -92,7 +118,7 @@ echo "== 4/7 写 frpc 桥配置 =="
 # 注意：不能用 paste -sd ', ' —— paste 会把 ", " 当成「分隔符轮换序列」，
 # 三个域名会生成 `"a","b" "c"`（缺逗号），frpc 直接解析失败。
 DOMAIN_TOML=''
-for d in "${CLEAN[@]}"; do
+for d in "${BRIDGE_DOMAINS[@]}"; do
   if [ -z "$DOMAIN_TOML" ]; then DOMAIN_TOML="\"$d\""; else DOMAIN_TOML="$DOMAIN_TOML, \"$d\""; fi
 done
 cat > /opt/frp-bridge/frpc-bridge.toml <<EOF
@@ -136,14 +162,9 @@ echo "== 5/7 写 Caddyfile =="
 	}
 }
 
-(dsh_site) {
+# 站点内容片段：TLS 交给外层（自动 ACME 或手工泛域名证书）
+(dsh_site_body) {
 	bind 127.0.0.1
-	tls {
-		issuer acme {
-			# 80 被 frps 的 vhostHTTPPort 占用，只能走 TLS-ALPN-01
-			disable_http_challenge
-		}
-	}
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:80 {
 		header_up Host {host}
@@ -161,10 +182,30 @@ echo "== 5/7 写 Caddyfile =="
 		}
 	}
 }
+
+# 单域名：Caddy 自己用 TLS-ALPN-01 签（80 口被 frps 的 vhostHTTPPort 占着）
+(dsh_site) {
+	import dsh_site_body
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+}
 EOF
-  for d in "${CLEAN[@]}"; do
-    printf '\n%s {\n\timport dsh_site\n}\n' "$d"
-  done
+  if [ -n "$WILDCARD" ]; then
+    # 泛域名：用 acme-wildcard.sh 经阿里云 DNS-01 签好的证书，一次覆盖所有随机子域
+    SITE_LIST=''
+    for d in "${SITE_NAMES[@]}"; do
+      if [ -z "$SITE_LIST" ]; then SITE_LIST="$d"; else SITE_LIST="$SITE_LIST, $d"; fi
+    done
+    printf '\n%s {\n\ttls %s/fullchain.pem %s/privkey.pem\n\timport dsh_site_body\n}\n' \
+      "$SITE_LIST" "$CERT_DIR" "$CERT_DIR"
+  else
+    for d in "${SITE_NAMES[@]}"; do
+      printf '\n%s {\n\timport dsh_site\n}\n' "$d"
+    done
+  fi
 } > /etc/caddy/Caddyfile
 
 "$CADDY_BIN" validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null

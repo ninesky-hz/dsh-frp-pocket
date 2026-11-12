@@ -1,5 +1,9 @@
 # VPS 部署物（frps + Caddy）
 
+> 两套拓扑并存：下面 1–77 行是**早期**「Caddy 直接收 443」的版本；当前实装是
+> `deploy/vps-tls/`（frps 占 443、`frpc-bridge` 把 TLS 交给本机 Caddy 9443），
+> 泛域名做法见文末「泛域名」。
+
 一台 VPS 同时服务两台 PC：`frps` 收隧道，`Caddy` 收 HTTPS。
 
 ```
@@ -75,3 +79,52 @@ sudo systemctl start frps
 - `frps.toml` 含 token，安装脚本设成 `0640 root:frp`；**不要**提交真实 token 到仓库。
 - 云厂商安全组只放 80/443/7000；8080、7500 一律不放。
 - 换 token = 两台 PC 都要改，改完 `systemctl restart frps`。
+
+## 泛域名（`*.dsh.chenz.vip`）：随机 6 位子域
+
+实装（2026-11-12 验证通过）：`frps` 用 `vhostHTTPSPort=443`；VPS 上的 `frpc-bridge`
+（`type=https`、`customDomains = ["*.dsh.chenz.vip", "dsh.chenz.vip"]`）把 443 的 TLS 字节
+接到本机 Caddy `9443`，Caddy 用泛域名证书终止后反代回 frps 的 `vhostHTTPPort`。
+家里 PC 的 frpc 用 `type=http` 声明 `<随机>.dsh.chenz.vip`，域名随面板点一下就换。
+
+### 泛域名证书需要什么
+
+泛域名**不能**用 HTTP-01 / TLS-ALPN-01（RFC 8555 不允许），必须 DNS-01：
+
+1. 一个能写 `_acme-challenge` TXT 的 DNS API 凭据 —— 阿里云 AccessKey（建议只授 DNS 权限）。
+2. 凭据放 VPS：`/etc/caddy/alidns.env`，两行 `Ali_Key=` / `Ali_Secret=`，`chmod 600`。
+3. 签证书（acme.sh + `dns_ali`）：
+   ```bash
+   bash /root/acme-wildcard.sh --suffix dsh.chenz.vip --server letsencrypt
+   ```
+   产出 `/etc/caddy/certs/fullchain.pem`、`privkey.pem`（`root:caddy 0640`，目录 `root:caddy 0755`）。
+4. Caddy 载入（不重编 Caddy）：
+   ```
+   *.dsh.chenz.vip, dsh.chenz.vip {
+       tls /etc/caddy/certs/fullchain.pem /etc/caddy/certs/privkey.pem
+       import dsh_site_body
+   }
+   ```
+5. 续期：acme.sh 自带 cron（`51 2,8,14,20 * * *`），
+   `--reloadcmd "systemctl restart caddy 2>/dev/null || true"`。
+
+### 换域名后要重启什么
+
+| 改了什么 | 要重启 |
+| --- | --- |
+| 本机 `customDomains` / `publicUrl`（面板「换个随机域名」） | 面板「重启隧道」（重写 `frpc.toml` 并重拉 frpc） |
+| VPS `/opt/frp-bridge/frpc-bridge.toml` 的 `customDomains` | `systemctl restart frpc-bridge`（**只改文件不生效**） |
+| `/etc/caddy/Caddyfile` | `systemctl restart caddy`（`admin off`，`caddy reload` 必失败） |
+
+### 验证
+
+```bash
+# 1) Caddy 是否已拿泛域名证书
+echo | openssl s_client -connect 127.0.0.1:9443 -servername anything.dsh.chenz.vip 2>/dev/null | grep 'subject='
+# 2) frps 的 SNI 路由认不认这个子域
+#    报 alert 112 "unrecognized name" = bridge 没真正重启（进程还是旧的）
+echo | openssl s_client -connect 127.0.0.1:443 -servername anything.dsh.chenz.vip 2>/dev/null | grep 'subject='
+# 3) 公网：无 PIN 401；?pin= 303 发 frp_auth cookie
+curl -sS -o /dev/null -w '%{http_code}\n' 'https://anything.dsh.chenz.vip/frp-pocket/api/health'
+curl -sS -o /dev/null -D - 'https://anything.dsh.chenz.vip/?pin=PIN' | grep -E 'HTTP/|set-cookie'
+```

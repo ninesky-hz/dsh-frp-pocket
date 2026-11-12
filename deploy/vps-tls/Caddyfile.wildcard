@@ -1,0 +1,43 @@
+{
+	# 只绑回环：公网流量一律经 frps(443) 进来
+	admin off
+	https_port 9443
+	http_port 9080
+	auto_https disable_redirects
+	servers {
+		trusted_proxies static 127.0.0.1/32
+		# 关 HTTP/3：避免 Alt-Svc 暴露内部端口，且 h3 走 UDP 过不了 frp 的 TCP 隧道
+		protocols h1 h2
+	}
+	log {
+		level WARN
+	}
+}
+
+# 站点内容（与证书来源无关）
+(dsh_site_body) {
+	bind 127.0.0.1
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:80 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+		flush_interval -1
+	}
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+	}
+	log {
+		output file /var/log/caddy/dsh-access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
+
+# 泛域名站点：一张 *.dsh.chenz.vip 证书覆盖所有随机子域（含 home. / studio.）。
+# 证书由 acme-wildcard.sh 经阿里云 DNS-01 签出并自动续期（通配符不能走 HTTP-01/TLS-ALPN-01）。
+*.dsh.chenz.vip, dsh.chenz.vip {
+	tls /etc/caddy/certs/fullchain.pem /etc/caddy/certs/privkey.pem
+	import dsh_site_body
+}

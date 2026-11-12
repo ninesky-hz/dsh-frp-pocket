@@ -119,6 +119,31 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * 6 位随机子域，字符集与 lib/config.mjs 的 generateSubdomain 一致
+     * （去掉易混的 0/o/1/l/i）。浏览器端自己掷，不跨包 import。
+     */
+    function randomSubdomain(len = 6) {
+      const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+      const limit = 256 - (256 % alphabet.length);
+      let out = '';
+      const cryptoApi = globalThis.crypto;
+      if (cryptoApi?.getRandomValues) {
+        const buf = new Uint8Array(len * 3);
+        while (out.length < len) {
+          cryptoApi.getRandomValues(buf);
+          for (const byte of buf) {
+            if (byte >= limit) continue;
+            out += alphabet[byte % alphabet.length];
+            if (out.length === len) break;
+          }
+        }
+        return out;
+      }
+      while (out.length < len) out += alphabet[Math.floor(Math.random() * alphabet.length)];
+      return out;
+    }
+
     function FrpPocketSection({ rpcCall }) {
       const [status, setStatus] = useState(null);
       const [error, setError] = useState(null);
@@ -150,6 +175,8 @@ window.__ModuleLoader__.load({
           mode: value.config?.frp?.mode ?? 'subdomain',
           subdomain: value.config?.frp?.subdomain ?? '',
           customDomains: (value.config?.frp?.customDomains ?? []).join(', '),
+          domainSuffix: value.config?.frp?.domainSuffix ?? '',
+          autoDomain: value.config?.frp?.autoDomain === true,
           remotePort: String(value.config?.frp?.remotePort ?? 0),
           publicUrl: value.config?.frp?.publicUrl ?? '',
           enabled: value.config?.frp?.enabled !== false,
@@ -208,6 +235,8 @@ window.__ModuleLoader__.load({
                   .split(/[,\s]+/)
                   .map((d) => d.trim())
                   .filter(Boolean),
+                domainSuffix: form.domainSuffix.trim(),
+                autoDomain: form.autoDomain === true,
                 remotePort: Number(form.remotePort) || 0,
                 publicUrl: form.publicUrl.trim(),
               },
@@ -487,18 +516,69 @@ window.__ModuleLoader__.load({
               )
             : form.mode === 'customDomains'
               ? h(
-                  Field,
-                  { label: '完整域名' },
-                  h('input', {
-                    style: styles.input,
-                    placeholder: 'home.dsh.example.com',
-                    value: form.customDomains,
-                    onChange: (e) => setForm({ ...form, customDomains: e.target.value }),
-                  }),
+                  React.Fragment,
+                  null,
+                  h(
+                    Field,
+                    { label: '完整域名' },
+                    h('input', {
+                      style: styles.input,
+                      placeholder: 'home.dsh.example.com',
+                      value: form.customDomains,
+                      onChange: (e) => setForm({ ...form, customDomains: e.target.value }),
+                    }),
+                    h(
+                      'div',
+                      { style: styles.hint },
+                      'frps 没配 subDomainHost 时用这个；多个域名用逗号分隔。',
+                    ),
+                  ),
+                  h(
+                    Field,
+                    { label: '域名后缀（泛域名）' },
+                    h('input', {
+                      style: styles.input,
+                      placeholder: 'dsh.chenz.vip',
+                      value: form.domainSuffix,
+                      onChange: (e) => setForm({ ...form, domainSuffix: e.target.value }),
+                    }),
+                    h(
+                      'div',
+                      { style: styles.hint },
+                      '填已有泛解析的域名后缀（如 dsh.chenz.vip，要求 VPS 上备着 *.dsh.chenz.vip 证书）。开启下面的开关后，插件会自己掷一个 6 位子域，不用再手工起名。',
+                    ),
+                  ),
                   h(
                     'div',
-                    { style: styles.hint },
-                    'frps 没配 subDomainHost 时用这个；多个域名用逗号分隔。',
+                    { style: styles.row },
+                    h(
+                      'label',
+                      { style: { ...styles.sub, display: 'flex', alignItems: 'center', gap: 6 } },
+                      h('input', {
+                        type: 'checkbox',
+                        checked: form.autoDomain,
+                        onChange: (e) => setForm({ ...form, autoDomain: e.target.checked }),
+                      }),
+                      '自动生成 6 位随机域名',
+                    ),
+                    h('div', { style: { flex: 1 } }),
+                    h(
+                      'button',
+                      {
+                        style: styles.btn,
+                        disabled: !form.domainSuffix.trim(),
+                        onClick: () => {
+                          const suffix = form.domainSuffix
+                            .trim()
+                            .replace(/^https?:\/\//, '')
+                            .replace(/^\*\./, '')
+                            .split('/')[0];
+                          const host = `${randomSubdomain()}.${suffix}`;
+                          setForm({ ...form, customDomains: host, publicUrl: `https://${host}`, autoDomain: true });
+                        },
+                      },
+                      '换一个随机域名',
+                    ),
                   ),
                 )
               : h(
@@ -724,6 +804,34 @@ window.__ModuleLoader__.load({
         }
       };
 
+      /** 泛域名：掷一个 6 位子域并落盘；frpc 重启后才会用新域名建隧道。 */
+      const rotateDomain = async () => {
+        const frp = status?.config?.frp ?? {};
+        const suffix = String(frp.domainSuffix ?? '').trim();
+        if (!suffix) {
+          setError('先在设置页填「域名后缀（泛域名）」，例如 dsh.chenz.vip');
+          return;
+        }
+        const host = `${randomSubdomain()}.${suffix}`;
+        setBusy('address');
+        setError(null);
+        try {
+          const value = await call('config.save', {
+            config: { frp: { customDomains: [host], publicUrl: `https://${host}`, autoDomain: true } },
+          });
+          urlDirty.current = false;
+          domainDirty.current = false;
+          setStatus(value);
+          setUrlDraft(value.config?.frp?.publicUrl ?? '');
+          setDomainDraft((value.config?.frp?.customDomains ?? []).join(', '));
+          setNotice(`已换到 ${host}，重启隧道后生效 | restart to apply`);
+        } catch (err) {
+          setError(err?.message ?? String(err));
+        } finally {
+          if (mounted.current) setBusy('');
+        }
+      };
+
       const copy = async (text) => {
         try {
           if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
@@ -847,6 +955,22 @@ window.__ModuleLoader__.load({
                   'button',
                   { style: styles.btn, disabled: busy === 'address', onClick: saveAddress },
                   '保存域名',
+                ),
+              )
+            : null,
+          cfg.domainSuffix
+            ? h(
+                'div',
+                { style: styles.row },
+                h(
+                  'div',
+                  { style: { ...styles.sub, flex: 1, margin: 0 } },
+                  `泛域名 ${cfg.domainSuffix} · ${cfg.autoDomain ? '随机子域已开启' : '随机子域未开启'}（换域名要重启隧道）`,
+                ),
+                h(
+                  'button',
+                  { style: styles.btn, disabled: busy === 'address', onClick: rotateDomain },
+                  '换个随机域名',
                 ),
               )
             : null,

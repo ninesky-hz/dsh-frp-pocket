@@ -17,15 +17,14 @@
 
 # 只有下面列出的域名在 VPS 上终止 TLS。
 # 同一个 frps 上其他域名的 SNI 仍由 frps 按 Host 直接透传给各自客户端，不受影响（§"为什么安全"）。
-(dsh_site) {
+#
+# 站点内容拆成两段片段：
+#   dsh_site_body —— bind/encode/反代/头/日志，与证书来源无关
+#   dsh_site      —— 单域名场景，Caddy 自己用 TLS-ALPN-01 签
+# 泛域名场景（插件掷随机子域）用 dsh_site_body + `tls /etc/caddy/certs/...`，
+# 证书由 acme-wildcard.sh 经阿里云 DNS-01 签出（通配符不能走 HTTP-01/TLS-ALPN-01）。
+(dsh_site_body) {
 	bind 127.0.0.1
-	tls {
-		issuer acme {
-			# 80 端口被 frps 的 vhostHTTPPort 占用，HTTP-01 拿不到；
-			# TLS-ALPN-01 走 443 → frps https 透传 → 本机，能正常签发。
-			disable_http_challenge
-		}
-	}
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:80 {
 		# 必须保留手机请求的 Host：frps vhost 靠 Host 选客户端，
@@ -47,6 +46,17 @@
 	}
 }
 
+(dsh_site) {
+	import dsh_site_body
+	tls {
+		issuer acme {
+			# 80 端口被 frps 的 vhostHTTPPort 占用，HTTP-01 拿不到；
+			# TLS-ALPN-01 走 443 → frps https 透传 → 本机，能正常签发。
+			disable_http_challenge
+		}
+	}
+}
+
 # 一个域名一段。新增电脑（如工作室）时：先加 DNS A 记录，再在这里加一段并 reload。
 dsh.chenz.vip {
 	import dsh_site
@@ -58,4 +68,11 @@ dsh.chenz.vip {
 # }
 # studio.dsh.chenz.vip {
 # 	import dsh_site
+# }
+
+# 泛域名模式：插件自动掷 6 位子域时把上面几段替换成这一段
+# （证书先由 acme-wildcard.sh --suffix dsh.chenz.vip 签出来，通配符只能 DNS-01）：
+# *.dsh.chenz.vip, dsh.chenz.vip {
+# 	tls /etc/caddy/certs/fullchain.pem /etc/caddy/certs/privkey.pem
+# 	import dsh_site_body
 # }

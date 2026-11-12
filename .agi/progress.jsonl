@@ -25,3 +25,20 @@
 {"ts":"2026-11-12T06:00:20Z","event":"milestone","detail":{"m":"App 保存丢失修复 + APK","worker":"a110c8ef","verify":"analyze clean; flutter test 44/44; apk 36141046 bytes"}}
 {"ts":"2026-11-12T06:00:30Z","event":"note","detail":{"m":"config.json 曾被 PS Get-Content/Set-Content 按 ANSI 读写导致 mojibake 并被重置为默认；已用 UTF8-no-BOM 从 backup 恢复并改为域名；后续写该文件一律 [IO.File]+UTF8Encoding($false)"}}
 {"ts":"2026-11-12T06:02:04.150Z","event":"goal-revised","detail":{"session":"a110c8ef","from":1,"to":1,"digestChanged":true}}
+{"ts":"2026-11-12T07:44:44.802Z","event":"wake-stale","detail":{"session":"a110c8ef","gapSeconds":6161,"thresholdSeconds":3600}}
+{"ts":"2026-11-12T07:47:20.828Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-12T07:49:48.096Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-12T07:52:29.148Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-12T07:55:34.046Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-12T07:59:10.741Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-12T08:02:15.031Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-12T08:04:12.994Z","kind":"done","item":"泛域名证书","detail":"acme.sh dns_ali 签 *.dsh.chenz.vip 成功，Caddy 已加载，443 SNI 返回泛域名证书"}
+{"ts":"2026-11-12T08:04:12.994Z","kind":"done","item":"bridge 通配","detail":"frpc-bridge.toml customDomains=[\"*.dsh.chenz.vip\",\"dsh.chenz.vip\"]，真重启后 443 SNI pqw8t9 正常"}
+{"ts":"2026-11-12T08:04:12.994Z","kind":"done","item":"端到端","detail":"https://pqw8t9.dsh.chenz.vip ?pin= → 303+frp_auth；带 cookie /frp-pocket/api/health → 200 ok"}
+{"ts":"2026-11-12T08:04:12.994Z","kind":"note","item":"未生效项","detail":"DSH 进程仍跑旧插件代码，面板/health 的 publicUrl 仍是 home.dsh.chenz.vip，需重启 DSH 才刷新"}
+{"ts":"2026-11-12T08:33:36.857Z","kind":"check","item":"DSH 未重启","detail":"node 主进程创建于 13:41:10；publicUrl 仍 home.dsh.chenz.vip → 旧插件代码。重启后应变为 pqw8t9"}
+{"ts":"2026-11-12T08:33:36.857Z","kind":"done","item":"deploy/README","detail":"补「泛域名」一节：DNS-01 前提、acme.sh 命令、Caddy tls 文件、换域名重启矩阵、4 步验证"}
+{"ts":"2026-11-12T08:33:36.857Z","kind":"done","item":"临时件清理","detail":"删除 restart-tunnel.tmp.mjs（根目录与 packages/plugin 各一份）"}
+{"ts":"2026-11-12T08:33:36.857Z","kind":"state","item":"剩余唯一外部动作","detail":"用户重启 DSH → 面板/health 显示 pqw8t9；之后换域名走「换个随机域名」+「重启隧道」"}
+{"ts":"2026-11-12T08:50:13.675Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-12T09:20:00Z","kind":"verify","item":"重启后公网验收","detail":"DSH 重启(GUI 53409)；当前 frpc 认领 pqw8t9.dsh.chenz.vip：?pin=303 → 过渡页200/363B → 200/50523B DeepSeek Harness；health dsh.reachable=true port=53409；通配证书 CN=*.dsh.chenz.vip 至 2027-02-10；home.dsh.chenz.vip 现 404（PC 不再认领该名）——403/503 类阻塞页为 handshake 限速，带 ?frp-pocket-retry=1 可自恢复"}

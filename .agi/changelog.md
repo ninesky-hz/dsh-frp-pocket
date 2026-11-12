@@ -28,3 +28,11 @@
 - 新增 `packages/app/test/hosts_flow_test.dart`（手动添加 + 扫码预填两条链路，断言 pop、列表出现、`dsh_frp.hosts.v1` 持久化可读回）。
 - 实测：`config.json` 的 `frp.serverAddr=dsh.chenz.vip` → `frpc.toml` 同步 → 13:57:10 `login to server success` + `start proxy success`；`https://home.dsh.chenz.vip/frp-pocket/api/health` 返回 401（网关正常响应，需 PIN）。
 - 复验：插件 `node --test` 31/31；App `flutter analyze` 无问题、`flutter test` 44/44；APK 36141046 字节。
+
+## 2026-11-12 泛域名自动随机域名
+- packages/plugin/lib/config.mjs：新增 normalizeDomainSuffix() / generateSubdomain()；frp 增加 domainSuffix、autoDomain；normalizeConfig 在 autoDomain 且无域名时生成 6 位随机子域，publicUrl 缺省由首域名推导。loadConfig 会把归一化差异落盘 → 随机域名只生成一次。
+- packages/plugin/client/index.js：randomSubdomain()（加密随机 + 拒绝采样）；设置页新增「域名后缀」「自动生成 6 位随机域名」「换一个随机域名」；面板公网地址卡片新增泛域名状态行与「换个随机域名」（rotateDomain 只 patch customDomains/publicUrl/autoDomain）。
+- packages/plugin/test/config.test.mjs：+5 条用例（生成字符集/唯一性、后缀归一化、autoDomain 幂等与手填优先、publicUrl 推导）。node --test → 35/35。
+- deploy/vps-tls/acme-wildcard.sh（新）：acme.sh + dns_ali 签泛域名并安装到 /etc/caddy/certs，reloadcmd 用 systemctl restart caddy。
+- deploy/vps-tls/install.sh：新增 --wildcard SUFFIX；Caddyfile 片段拆为 (dsh_site_body) + (dsh_site)。
+- deploy/vps-tls/Caddyfile.wildcard（新）：可直接部署的泛域名版 Caddyfile。

@@ -75,6 +75,37 @@ export function generateHostId(displayName) {
  * 自有域名归一化：去掉协议/路径/端口，转小写，只留合法主机名，去重，最多 5 个。
  * frps 没配 subDomainHost 时用 customDomains 也能对外暴露（契约 §6.2）。
  */
+/** 域名后缀归一化：只留 host 部分，不接受协议/路径/端口。 */
+export function normalizeDomainSuffix(value) {
+  const host = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^\*\./, '')
+    .split('/')[0]
+    .split(':')[0];
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host)) return '';
+  return host.length <= 253 ? host : '';
+}
+
+/**
+ * 6 位随机子域（泛域名场景）：去掉易混字符 0/o/1/l/i，只留 a-z + 2-9，
+ * 用来拼 `<随机>.dsh.chenz.vip`，用户不用手工起名。
+ */
+export function generateSubdomain(len = 6) {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+  const limit = 256 - (256 % alphabet.length); // 拒绝采样，避免取模偏置
+  let out = '';
+  while (out.length < len) {
+    for (const byte of randomBytes(len * 2)) {
+      if (byte >= limit) continue;
+      out += alphabet[byte % alphabet.length];
+      if (out.length === len) break;
+    }
+  }
+  return out;
+}
+
 export function normalizeDomains(value) {
   // 允许 CLI `config set frp.customDomains "a.com, b.com"`：字符串按逗号/空白拆开
   const list = Array.isArray(value)
@@ -122,6 +153,9 @@ export function defaultConfig(displayName) {
       subdomain: slugify(name),
       // 自有域名模式：直接写 customDomains，不依赖 frps 的 subDomainHost
       customDomains: [],
+      // 泛域名：填一次后缀（如 dsh.chenz.vip），autoDomain 打开后自动生成 6 位随机子域
+      domainSuffix: '',
+      autoDomain: false,
       remotePort: 0,
       publicUrl: '',
     },
@@ -160,6 +194,16 @@ export function normalizeConfig(raw) {
   const mode = frp.mode === 'remotePort' ? 'remotePort' : frp.mode === 'customDomains' ? 'customDomains' : 'subdomain';
   const transport = frp.transport === 'tls' ? 'tls' : 'tcp';
 
+  // 泛域名模式：后缀给了、又还没有域名 → 生成一个 6 位随机子域（落盘后固定，不会每次读都变）
+  const domainSuffix = normalizeDomainSuffix(frp.domainSuffix);
+  const autoDomain = bool(frp.autoDomain, false);
+  let customDomains = normalizeDomains(frp.customDomains);
+  let publicUrl = str(frp.publicUrl).trim().replace(/\/+$/, '');
+  if (autoDomain && domainSuffix && customDomains.length === 0) {
+    customDomains = [`${generateSubdomain()}.${domainSuffix}`];
+  }
+  if (!publicUrl && customDomains.length > 0) publicUrl = `https://${customDomains[0]}`;
+
   return {
     schema: CONFIG_SCHEMA,
     hostId,
@@ -180,9 +224,11 @@ export function normalizeConfig(raw) {
       transport,
       mode,
       subdomain: (str(frp.subdomain) || slugify(displayName)).replace(/[^A-Za-z0-9-]/g, '').slice(0, 63) || 'host',
-      customDomains: normalizeDomains(frp.customDomains),
+      customDomains,
+      domainSuffix,
+      autoDomain,
       remotePort: intIn(frp.remotePort, 0, 65535, 0),
-      publicUrl: str(frp.publicUrl).trim().replace(/\/+$/, ''),
+      publicUrl,
     },
     frpcPath: str(src.frpcPath).trim(),
     updatedAt: Number.isFinite(src.updatedAt) ? src.updatedAt : Date.now(),
