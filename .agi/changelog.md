@@ -12,3 +12,10 @@
 - F4 死 pid 不回收 / status 误报 → `reconcileInner` + 进程表认领 + 停前核实身份（`lib/frpc.mjs:256/302/334/494/542/798`）
 - Lead 侧：`scripts/smoke-local.sh` 改用真实 `serve` 子命令（原 `--gateway-only` 不存在），网关段先切 frpc 上游；`scripts/check.sh` → ALL CHECKS PASSED
 - 2026-11-12: 初始化 git 仓库并推送 origin/main（commit 8be9e29，120 文件）；新增 .gitattributes（sh/toml 强制 LF，ps1 CRLF）
+
+## 2026-11-12 · VPS 侧 TLS 前置（共用 frps 场景）
+- 新增 `deploy/vps-tls/`：`install.sh`（幂等）、`Caddyfile`、`frpc-bridge.toml.example`
+- Caddy 只听 `127.0.0.1:9443`，`protocols h1 h2`，`disable_http_challenge`（80 被 frps 占用）
+- 本机 frpc 桥 `type=https` + `customDomains`，把 443 上的指定 SNI 接到 Caddy —— **不改 frps.toml**
+- 插件新增 `frp.mode=customDomains`
+- 文档：新增 `docs/VPS-TLS.md`（含真机实测表）；ARCHITECTURE/VPS/PC-SETUP/CONTRACT/README 同步
