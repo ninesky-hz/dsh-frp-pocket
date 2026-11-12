@@ -11,3 +11,4 @@
 - F3 frpc 输出不落盘 → `frpc.log` 1 MiB 轮转保留 256 KiB，status 输出 logPath
 - F4 死 pid 不回收 / status 误报 → `reconcileInner` + 进程表认领 + 停前核实身份（`lib/frpc.mjs:256/302/334/494/542/798`）
 - Lead 侧：`scripts/smoke-local.sh` 改用真实 `serve` 子命令（原 `--gateway-only` 不存在），网关段先切 frpc 上游；`scripts/check.sh` → ALL CHECKS PASSED
+- 2026-11-12: 初始化 git 仓库并推送 origin/main（commit 8be9e29，120 文件）；新增 .gitattributes（sh/toml 强制 LF，ps1 CRLF）

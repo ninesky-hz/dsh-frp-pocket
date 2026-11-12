@@ -38,6 +38,7 @@ window.__ModuleLoader__.load({
         fontSize: 13,
       },
       mono: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 },
+      hint: { color: 'var(--dsw-alias-label-secondary, #6b7280)', fontSize: 12, flexBasis: '100%' },
       btn: {
         padding: '6px 12px',
         borderRadius: 6,
@@ -148,6 +149,7 @@ window.__ModuleLoader__.load({
           transport: value.config?.frp?.transport ?? 'tcp',
           mode: value.config?.frp?.mode ?? 'subdomain',
           subdomain: value.config?.frp?.subdomain ?? '',
+          customDomains: (value.config?.frp?.customDomains ?? []).join(', '),
           remotePort: String(value.config?.frp?.remotePort ?? 0),
           publicUrl: value.config?.frp?.publicUrl ?? '',
           enabled: value.config?.frp?.enabled !== false,
@@ -202,6 +204,10 @@ window.__ModuleLoader__.load({
                 transport: form.transport,
                 mode: form.mode,
                 subdomain: form.subdomain.trim(),
+                customDomains: form.customDomains
+                  .split(/[,\s]+/)
+                  .map((d) => d.trim())
+                  .filter(Boolean),
                 remotePort: Number(form.remotePort) || 0,
                 publicUrl: form.publicUrl.trim(),
               },
@@ -460,6 +466,7 @@ window.__ModuleLoader__.load({
                 onChange: (e) => setForm({ ...form, mode: e.target.value }),
               },
               h('option', { value: 'subdomain' }, 'subdomain（泛解析）'),
+              h('option', { value: 'customDomains' }, 'customDomains（自有域名）'),
               h('option', { value: 'remotePort' }, 'remotePort（固定端口）'),
             ),
           ),
@@ -473,15 +480,31 @@ window.__ModuleLoader__.load({
                   onChange: (e) => setForm({ ...form, subdomain: e.target.value }),
                 }),
               )
-            : h(
-                Field,
-                { label: '远程端口' },
-                h('input', {
-                  style: { ...styles.input, maxWidth: 120 },
-                  value: form.remotePort,
-                  onChange: (e) => setForm({ ...form, remotePort: e.target.value }),
-                }),
-              ),
+            : form.mode === 'customDomains'
+              ? h(
+                  Field,
+                  { label: '完整域名' },
+                  h('input', {
+                    style: styles.input,
+                    placeholder: 'home.dsh.example.com',
+                    value: form.customDomains,
+                    onChange: (e) => setForm({ ...form, customDomains: e.target.value }),
+                  }),
+                  h(
+                    'div',
+                    { style: styles.hint },
+                    'frps 没配 subDomainHost 时用这个；多个域名用逗号分隔。',
+                  ),
+                )
+              : h(
+                  Field,
+                  { label: '远程端口' },
+                  h('input', {
+                    style: { ...styles.input, maxWidth: 120 },
+                    value: form.remotePort,
+                    onChange: (e) => setForm({ ...form, remotePort: e.target.value }),
+                  }),
+                ),
           h(
             Field,
             { label: '公网地址' },

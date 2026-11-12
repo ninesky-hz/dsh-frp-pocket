@@ -79,6 +79,9 @@ export function buildFrpcToml(cfg) {
   ];
   if (frp.mode === 'remotePort') {
     lines.push(`remotePort = ${Number(frp.remotePort) || 0}`);
+  } else if (frp.mode === 'customDomains') {
+    const domains = Array.isArray(frp.customDomains) ? frp.customDomains : [];
+    lines.push(`customDomains = [${domains.map((d) => tomlString(d)).join(', ')}]`);
   } else {
     lines.push(`subdomain = ${tomlString(frp.subdomain)}`);
   }
@@ -649,6 +652,12 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
       // 还没填 frps 地址：契约要求 enabled=true 时不阻塞网关，这里给可读的 error
       setState('stopped', 'frp_not_configured');
       log.warn?.('frpc: 未配置 frp.serverAddr，隧道不启动 | frp_not_configured');
+      return { ok: false, error: 'frp_not_configured' };
+    }
+    if (cfg.frp.mode === 'customDomains' && !(cfg.frp.customDomains ?? []).length) {
+      // 选了自有域名却没填：frpc 会因为 customDomains 为空直接失败，先拦下来
+      setState('stopped', 'frp_not_configured');
+      log.warn?.('frpc: 暴露方式为 customDomains 但没填域名 | frp_not_configured');
       return { ok: false, error: 'frp_not_configured' };
     }
     const bin = spawnOverride

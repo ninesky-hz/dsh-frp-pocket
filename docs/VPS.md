@@ -2,6 +2,11 @@
 
 从一台空 VPS 到「域名能访问」。全程约 10 分钟 + DNS 生效时间。
 
+> **本文假设 80/443 归本项目独占。** 如果这台 VPS 上已经有 frps 在给别的站点做转发
+> （例如 immich / HA / esxi 共用一台），不要按本文改 `frps.toml` —— 请看
+> [VPS-TLS.md](VPS-TLS.md)：那套方案在**不动 frps 配置**的前提下，用「回环 Caddy + 本机 frpc 桥」
+> 拿到同样的效果（已实测）。
+
 占位符：`VPS_IP`（VPS 公网 IP）、`dsh.example.com`（你的域名）、`FRP_TOKEN`（机器间 token）。
 
 ## 0. 准备

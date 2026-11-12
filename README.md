@@ -26,16 +26,34 @@
 
 ## 快速开始（详见 docs/）
 
+两条路，按 VPS 现状选：
+
+**A. VPS 上已经有一台在跑业务的 frps（当前现状，`118.178.127.39` / `dsh.chenz.vip`）**
+
 ```bash
-# 1) VPS：frps + Caddy（域名 home.dsh.example.com / studio.dsh.example.com 解析到 VPS）
-sudo bash deploy/install-vps.sh --domain dsh.example.com --token 'FRP_TOKEN'
+# 1) VPS：加一个只听回环的 Caddy 做 TLS + 一个本机 frpc 桥（不动 frps.toml）
+scp caddy.tar.gz frp_0.72.0_linux_amd64.tar.gz deploy/vps-tls/install.sh root@VPS:/tmp/
+ssh root@VPS 'bash /tmp/install.sh --token "FRP_TOKEN" --domains "dsh.chenz.vip,home.dsh.chenz.vip,studio.dsh.chenz.vip" \
+  --caddy-tar /tmp/caddy.tar.gz --frp-tar /tmp/frp_0.72.0_linux_amd64.tar.gz'
 
-# 2) 每台 PC：装插件（本地路径安装，示例）
+# 2) 每台 PC：装插件 → 设置页「暴露方式」选 customDomains，域名填 home.dsh.chenz.vip
 dsh plugin --profile desktop add -w D:/Ai-Project/dsh-frp-pocket/packages/plugin
-#    设置 → 远程访问：填 frps 地址/token/子域名 → 开启隧道 → 扫码
 
-# 3) 手机：装 packages/app 构建的 APK → 扫码或手填 → 打开
+# 3) 手机：装 APK → 扫码或手填 https://home.dsh.chenz.vip → 输 PIN
 ```
+
+细节与实测记录：[docs/VPS-TLS.md](docs/VPS-TLS.md)。
+
+**B. 专用 VPS，从零部署（80/443 归本项目独占）**
+
+```bash
+sudo bash deploy/install-vps.sh --domain dsh.example.com --token 'FRP_TOKEN'
+```
+
+细节：[docs/VPS.md](docs/VPS.md)。
+
+> 插件的「暴露方式」有三种：`customDomains`（frps 不用配域名，**共用 frps 用这个**）、
+> `subdomain`（frps 要配 `subDomainHost`）、`remotePort`（仅排障）。见 [docs/PC-SETUP.md](docs/PC-SETUP.md) §3。
 
 手机端安装包直接下（**[Releases · v0.1.0](https://github.com/ninesky-hz/dsh-frp-pocket/releases/tag/v0.1.0)**，按 ABI 拆分）：
 

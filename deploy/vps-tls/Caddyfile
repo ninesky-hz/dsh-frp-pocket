@@ -1,0 +1,61 @@
+{
+	# 只监听回环：外部流量一律由 frps(443) 送进来，Caddy 不直接对公网开端口。
+	admin off
+	https_port 9443
+	http_port 9080
+	auto_https disable_redirects
+	servers {
+		trusted_proxies static 127.0.0.1/32
+		# 关掉 HTTP/3：否则响应头会 advertise Alt-Svc: h3=":9443"，
+		# 把内部端口暴露给手机，且 h3 走 UDP 会绕过 frps 的 TCP 隧道。
+		protocols h1 h2
+	}
+	log {
+		level WARN
+	}
+}
+
+# 只有下面列出的域名在 VPS 上终止 TLS。
+# 同一个 frps 上其他域名的 SNI 仍由 frps 按 Host 直接透传给各自客户端，不受影响（§"为什么安全"）。
+(dsh_site) {
+	bind 127.0.0.1
+	tls {
+		issuer acme {
+			# 80 端口被 frps 的 vhostHTTPPort 占用，HTTP-01 拿不到；
+			# TLS-ALPN-01 走 443 → frps https 透传 → 本机，能正常签发。
+			disable_http_challenge
+		}
+	}
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:80 {
+		# 必须保留手机请求的 Host：frps vhost 靠 Host 选客户端，
+		# dsh-frp-pocket 网关也靠 Host 做 loopback authority 改写。
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+		# WebSocket 长连接不要缓冲
+		flush_interval -1
+	}
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+	}
+	log {
+		output file /var/log/caddy/dsh-access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
+
+# 一个域名一段。新增电脑（如工作室）时：先加 DNS A 记录，再在这里加一段并 reload。
+dsh.chenz.vip {
+	import dsh_site
+}
+
+# 需要多台电脑各一个域名时，把注释去掉（前提：DNS A 记录已存在，否则 ACME 会一直重试失败）：
+# home.dsh.chenz.vip {
+# 	import dsh_site
+# }
+# studio.dsh.chenz.vip {
+# 	import dsh_site
+# }

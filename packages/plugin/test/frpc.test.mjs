@@ -1,4 +1,4 @@
-﻿// frpc：TOML 生成 + 二进制解析顺序 + 生命周期（F1/F2/F3/F4）
+// frpc：TOML 生成 + 二进制解析顺序 + 生命周期（F1/F2/F3/F4）
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
@@ -76,6 +76,18 @@ test('frpc.toml（remotePort 模式）：写 remotePort、不写 subdomain', () 
   assert.ok(toml.includes('remotePort = 26081'), toml);
   assert.ok(!toml.includes('subdomain'), toml);
   assert.ok(toml.includes('transport.tls.enable = false'), toml);
+});
+
+test('frpc.toml（customDomains 模式）：写 customDomains、不写 subdomain/remotePort', () => {
+  const toml = buildFrpcToml(
+    baseCfg({ mode: 'customDomains', customDomains: ['home.dsh.example.com', 'dsh.example.com'] }),
+  );
+  assert.ok(
+    toml.includes('customDomains = ["home.dsh.example.com", "dsh.example.com"]'),
+    toml,
+  );
+  assert.ok(!toml.includes('subdomain ='), toml);
+  assert.ok(!toml.includes('remotePort'), toml);
 });
 
 test('frpc.toml：token 含引号/反斜杠时仍生成合法 TOML 字符串', () => {

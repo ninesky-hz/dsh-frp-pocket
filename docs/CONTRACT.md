@@ -62,8 +62,9 @@ dsh-frp-pocket/
     "serverPort": 7000,
     "authToken": "FRP_TOKEN",        // frps 的 auth.token
     "transport": "tcp",              // tcp | tls（tls 对应 frpc transport.tls.enable=true）
-    "mode": "subdomain",             // subdomain | remotePort
-    "subdomain": "home",             // mode=subdomain 时使用
+    "mode": "subdomain",             // subdomain | customDomains | remotePort
+    "subdomain": "home",             // mode=subdomain 时使用（frps 需配 subDomainHost）
+    "customDomains": ["home.dsh.example.com"], // mode=customDomains 时使用；1–5 个完整主机名
     "remotePort": 0,                 // mode=remotePort 时使用（frps allowPorts 内）
     "publicUrl": "https://home.dsh.example.com"
   },
@@ -147,6 +148,9 @@ localPort = 3081
 subdomain = "home"
 # 或 customDomains = ["home.dsh.example.com"] / remotePort = 3xxxx
 ```
+
+- 三种互斥写法：`subdomain`（需 frps `subDomainHost`）、`customDomains = [...]`（1–5 个完整主机名，frps 无需任何域名配置）、`remotePort`（需 `allowPorts`）。
+- `mode=customDomains` 但域名列表为空时按 `frp_not_configured` 处理（frpc 会因空数组直接失败，先拦下来），不 spawn。
 
 - 生命周期：`start()` 幂等；崩溃 3 秒退避重启（上限 5 次/分钟）；`stop()` 杀进程树；状态写 `state.json` 并暴露在 `/health`。
 - 二进制解析顺序：`config.frpcPath` → 插件 `bin/frpc[.exe]` → `PATH` 的 `frpc`；都没有则 `frp.state="error"`，`lastError="frpc_not_found"`，**不阻塞网关**。

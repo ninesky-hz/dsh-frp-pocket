@@ -71,6 +71,28 @@ export function generateHostId(displayName) {
   return `${slugify(displayName)}-${randomBytes(4).toString('hex')}`;
 }
 
+/**
+ * 自有域名归一化：去掉协议/路径/端口，转小写，只留合法主机名，去重，最多 5 个。
+ * frps 没配 subDomainHost 时用 customDomains 也能对外暴露（契约 §6.2）。
+ */
+export function normalizeDomains(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const item of value) {
+    const host = String(item ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .split('/')[0]
+      .split(':')[0];
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host)) continue;
+    if (host.length > 253) continue;
+    if (!out.includes(host)) out.push(host);
+    if (out.length >= 5) break;
+  }
+  return out;
+}
+
 // ---------- 默认值与归一化 ----------
 
 export function defaultConfig(displayName) {
@@ -93,6 +115,8 @@ export function defaultConfig(displayName) {
       transport: 'tcp',
       mode: 'subdomain',
       subdomain: slugify(name),
+      // 自有域名模式：直接写 customDomains，不依赖 frps 的 subDomainHost
+      customDomains: [],
       remotePort: 0,
       publicUrl: '',
     },
@@ -128,7 +152,7 @@ export function normalizeConfig(raw) {
   const displayName = (str(src.displayName, base.displayName).trim() || base.displayName).slice(0, 40);
   const hostId = /^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(str(src.hostId)) ? src.hostId : generateHostId(displayName);
   const pin = isValidPin(auth.pin) ? auth.pin : generatePin();
-  const mode = frp.mode === 'remotePort' ? 'remotePort' : 'subdomain';
+  const mode = frp.mode === 'remotePort' ? 'remotePort' : frp.mode === 'customDomains' ? 'customDomains' : 'subdomain';
   const transport = frp.transport === 'tls' ? 'tls' : 'tcp';
 
   return {
@@ -151,6 +175,7 @@ export function normalizeConfig(raw) {
       transport,
       mode,
       subdomain: (str(frp.subdomain) || slugify(displayName)).replace(/[^A-Za-z0-9-]/g, '').slice(0, 63) || 'host',
+      customDomains: normalizeDomains(frp.customDomains),
       remotePort: intIn(frp.remotePort, 0, 65535, 0),
       publicUrl: str(frp.publicUrl).trim().replace(/\/+$/, ''),
     },
