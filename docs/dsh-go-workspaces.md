@@ -159,14 +159,20 @@ goal: SessionGoal.fromJson(values['goal']),
 | 宿主事件流 | `$events` | `{"args":{}}` | 连接建立时 mux 自动打开（`mux.dart:13,42`） |
 | 标题补读 | `session/projections` | `{'request': {'sessionId': id}}` | `_readTitles`（`sessions_state.dart:395-409`） |
 
-`session/list` 的封装只有一行（`packages/dsh_client/lib/src/session_api.dart:326-333`），并且明确「不翻页、含 archived 与 subagent」：
+`session/list` 的封装（`packages/dsh_client/lib/src/session_api.dart:326-333`）明确「不翻页、含 archived 与 subagent」：
 
 ```dart
 /// `session/list`: every stored session, newest first, *including archived
 /// and subagent sessions*. Filter archived ones with [watchWorkspaces].
 Future<List<SessionSummary>> listSessions() async {
+  final read = tryBackgroundListRead(BackgroundListKind.sessions);
+  if (read != null) return (await read) as List<SessionSummary>;
   final value = asMapOrEmpty(await rpc.call('session/list', {'_request': <String, Object?>{}}));
+  return asListOrEmpty(value['items']).map(SessionSummary.fromJson).toList(growable: false);
+}
 ```
+
+`tryBackgroundListRead` 是一个旁路：宿主可把 list 的 IO/解压/JSON 放到别的 isolate（`session_api.dart:255-258` 的注释），拿不到就走主路。
 
 `workspace/follow` 更简单（`session_api.dart:898-900`）——**没有参数，每个代际都以 baseline 重开**：
 
@@ -228,11 +234,15 @@ void _onFrame(WorkspaceUpdate update) {
 另外有一个隐藏帧：宿主在**访问权限变化**时给非 owner peer 发 `type: 'replace'`，客户端在 `workspaces_api.dart:186-194` 把它**翻译成 baseline**：
 
 ```dart
+// packages/dsh_client/lib/src/workspaces_api.dart:186-194
 WorkspaceBaseline? workspaceReplaceFrame(WorkspaceUpdate update) {
-  final raw = update is UnknownWorkspaceUpdate ? update.raw : null;
-  if (raw == null || raw['type'] != 'replace') return null;
-  final value = asMapOrEmpty(raw['value']);
-  return WorkspaceBaseline(/* items / archivedSessionIds / pinnedSessionIds */);
+  if (update is! UnknownWorkspaceUpdate || update.raw['type'] != 'replace') return null;
+  final value = asMapOrEmpty(update.raw['value']);
+  return WorkspaceBaseline(
+    asListOrEmpty(value['items']).map(Workspace.fromJson).toList(growable: false),
+    asStringList(value['archivedSessionIds']),
+    asStringList(value['pinnedSessionIds']),
+  );
 }
 ```
 
@@ -407,13 +417,14 @@ _debounce = Timer(const Duration(milliseconds: 400), () {
 排序键只有两种（`drawer_view_state.dart:677-683`）：
 
 ```dart
-final keyOf = (SessionSummary s) => view.sort == DrawerSort.created
-    ? (createdAt[s.sessionId] ?? s.updatedAt)
-    : s.updatedAt;
-items.sort((a, b) {
-  final byKey = keyOf(b).compareTo(keyOf(a));       // 新的在上
-  return byKey != 0 ? byKey : a.sessionId.compareTo(b.sessionId);  // 稳定兜底
-});
+// app/lib/state/drawer_view_state.dart:677-683
+DateTime keyOf(SessionSummary s) =>
+    view.sort == DrawerSort.created ? (createdAt[s.sessionId] ?? s.updatedAt) : s.updatedAt;
+final sorted = [...sessions]
+  ..sort((a, b) {
+    final byKey = keyOf(b).compareTo(keyOf(a));      // 新的在上
+    return byKey != 0 ? byKey : a.sessionId.compareTo(b.sessionId);  // 稳定兜底
+  });
 ```
 
 `DrawerSort.created` 需要「会话创建时间」，宿主不给，客户端用 `sessionCreatedProvider.notifier.ensure(ids)` **按需批量补**（`drawer_list.dart:67-75`），补不到就退回 `updatedAt`。
@@ -445,12 +456,16 @@ _visible() => cache.derive(_rows().where((s) =>
 - 筛选是本地交集（`drawer_view_state.dart:564-569`）：
 
 ```dart
+// app/lib/state/drawer_view_state.dart:564-569
 final members = workspace?.sessionIds.toSet();
+final archived = registryCurrent && registry.ready ? registry.archivedSessionIds.toSet() : const <String>{};
 final inScope = [
   for (final s in all)
     if (!archived.contains(s.sessionId) && (members == null || members.contains(s.sessionId))) s,
 ];
 ```
+
+注意 `registry.ready` 这个前置条件：**工作区注册表还没到 baseline 时，archived 视为空集**（`const <String>{}`）——而不是「全部已归档」或「全部未归档」。上面 `:562-563` 的注释也提醒：选中工作区但成员还没到时，宁可等也不要闪一下全量列表。
 
 - **工作区切换器不隐藏空工作区**：`workspaceSections` 不做计数过滤（`workspaces_state.dart:415-438`），计数为 0 时显示「暂无对话」（`workspace_actions.dart:57`）。
 - **抽屉里的文件夹**在「已选中某个工作区」（`scoped == true`）且成员为空时**隐藏**（`drawer_view_state.dart:714`：`if (members.isEmpty && scoped) continue;`）。

@@ -138,3 +138,90 @@ worker 第一版只判断「text 非空」就上屏，直接把 `[MNEMON] …`�
 教训：把协议实测结论「口头」交给 worker 不够——它测不出这个，因为假 fixture 里
 没有注入消息。**涉及真实数据形状的坑，要由 Lead 在验收时打开真实样本核对，或者
 把样本直接写进测试 fixture。**
+## 聊天列表「翻页不跳」的正确结构（2026-11-12，来自 docs/dsh-go-chat.md 3.2/3.3）
+
+- dsh-Go 不用 reverse 列表，用 CustomScrollView + center: _centerKey + anchor；历史段是 SliverList 倒序索引（split-1-i），当前段正序。
+  原理：在 center sliver 之前插入内容只影响正方向 extent，视口像素不动 —— 结构性保证，不需要事后补偿。
+- 锚点取「运行中轮次之前最后一个稳定行」，排除流式行（key 会在 d<attemptId> 与 m<turn>.<step> 之间切换）。
+- 万一需要修正：自定义 ScrollPosition.applyContentDimensions 里 correctBy(correction) 后 return false，同一 layout 重试，
+  Flutter 不会把修正外传成滚动事件 → 不打断拖拽/惯性、不抖动。
+- 我们当前实现（reverse: true + maxScrollExtent 差值补偿）能达到 90% 效果但会在惯性中被插页时抖一下；
+  结构升级是一次独立重构（自定义 sliver 索引映射 + ScrollPosition 覆盖），不要与功能改动混在一批。
+
+## 草稿与定稿必须共用同一个列表 key（2026-11-12，待修）
+
+- dsh-Go：`AssistantChatItem.key => rowKey ?? id`，草稿与定稿共享 `rowKey = m<turn>.<step>`（transcript.dart:692）。
+  这样流式结束、定稿替换时 Element 复用，不闪烁、不重建、不丢滚动位置。
+- 我们当前：草稿 key = `draft:<attemptId>`（session_chat_screen.dart:595），durable key = `seq:<seq>`（session_event.dart:251 _keyOf）。
+  两者不同 → 定稿到达时列表项 key 变化 → Flutter 销毁旧 Element 新建 → 闪一下、可能跳位。
+- 修法：durable `assistant/message` 的 data 里有 `turn` 与 `step` 字段（dsh-Go models.dart:1341-1342 `asInt(data['turn'])`），
+  把两边 key 统一为 `row:m<turn>.<step>`；缺失 turn/step 时回退 `seq:<seq>` 与 `draft:<attemptId>`。
+- 注意：用户消息仍用 `seq:<seq>`（没有 turn/step 语义，且不会与草稿冲突）。
+
+## 审批/提问链路契约（2026-11-12 定稿，来自 dsh-Go session_api.dart:723 + models.dart:1941-1961）
+
+三种 waterfall 帧在 `$events` 流上，**不进 `session/page` 历史**：
+
+```json
+{"type":"waterfall","event":"approval/request","eventId":"evt-…","agentId":"…","request":{…}}
+{"type":"waterfall","event":"user-questions/request","eventId":"evt-…","agentId":"…","request":{…}}
+{"type":"cancel","eventId":"evt-…"}
+```
+
+答复用 unary RPC `$events/result`，request 是 `{clientId, eventId, outcome}`：
+
+| 场景 | outcome |
+| --- | --- |
+| 审批通过 | `{"kind":"next"}` |
+| 审批给具体决策 | `{"kind":"result","value":<decision.wire>}` |
+| 拒绝 | `{"kind":"rejected","error":{"name":…,"message":…,"code":?}}` |
+| 回答提问 | `{"kind":"result","value":{"answers":[…]}}` |
+| 提问超时/撤回 | `{"kind":"rejected","error":{"name":"UserQuestionError","code":"ASK_TIMED_OUT"}}` |
+
+两个必须处理的细节：
+1. **clientId 必须用当前这一代的**（`$events` 的 ready 帧给），不是历史值。
+2. **同一 eventId 会在新一代连接上重投**（断线重连后审批卡要重新出现）；调用失败文案含 `identifies no active event stream` 说明那一代已失效，延迟 300ms 重试（最多 2 次）。
+
+客户端还要处理：`cancel` 帧（别的客户端已答复/请求已撤销）→ 卡片立即消失，不要提示用户操作。
+
+## center 结构下，贴底与「插入历史」都不能靠 post-frame（2026-11-12 验证）
+
+- center 结构里 `pixels == 0` 既可能到底也可能在半空，`maxScrollExtent` 不等于可视底部；贴底唯一可靠信号是 `position.extentAfter <= 阈值`。
+- 贴底跟随时若在 post-frame 回调里读 `maxScrollExtent` 再跳，会用到**旧**值：新消息那行还没排完就跳了旧 max，跳完 max 又长大 → 停在半路（实测少 48px）。正解是在 `ScrollPosition.applyContentDimensions` 里 `correctPixels(maxScrollExtent); return false`。
+- 插入历史的位移修正同理：`correctBy(correction); return false` 让 Flutter 同帧重试，不打断拖拽/惯性；用 `jumpTo` 会外传成滚动事件并掐断惯性。
+- 判定「往历史方向插」必须比**最小 seq 变小**，行数变多只说明追加。
+
+## 三态行状态的两个取舍（2026-11-12）
+
+- **`seenAt == null` 也算未读**。dsh-Go 只比「seen 时间戳 < updatedAt」，从没打开过的新会话因此永远是已读——那等于没有提醒。新会话第一次出现在列表里就该有个点。
+- **`_markSeen` 必须同步更新内存态**。第一版写成 `await markSeen` 再 setState，多了一个异步间隙，`host_sessions_live_test.dart` 里单次 `pump()` 的断言就看不到了。改成「setState 当帧生效 + `unawaited` 后台落盘」，视觉立即、持久化跟随。
+- **APK 字节数重复不等于没重编**。三次构建都是 36,666,870B、`libapp.so` 都是 7,078,800B（Dart AOT 快照按页对齐，小改动不改大小）。判定必须解包 `grep` 新符号（这次查到 `dsh_frp.seen.`/`row-state.`），不能看字节数。
+
+## 分组的两个设计判断（2026-11-12）
+
+- **两模式共用 `_buildSessionCard`**：平铺与分组如果各写一份卡片，key、三态标记、四个回调迟早分叉。抽一个函数、差量只在「列表怎么摊平」。
+- **分组列表摊平成单条 `ListView.builder`**，不用嵌套 Column/ListView：组多会话多时仍惰性构建，且组头 key 稳定（`group-header.<groupId>`，groupId 跨帧稳定，不用下标）。
+- **组头文本不能和卡片用同一串**：组头写成 `标题 · 2` 单节点 + path 另一行，否则 `find.text('置顶')` 这类精确断言会撞到组头，把既有测试打翻。
+- **Dart AOT 快照里的中文字符串是 UTF-16LE**：`grep 中文` 永远是 0 命中，要么按 UTF-16LE 搜字节，要么搜 ASCII 标识符。这是验证「APK 到底有没有重编」的唯一可靠手段（字节数已经骗了我们四次）。
+
+## 搜索的两个实现细节（2026-11-12）
+
+- **全角空格必须显式写进分隔符**：Dart 的 `RegExp(r'\s')` 是 ECMAScript 语义，不覆盖 U+3000；中文输入法下 `a　b` 极常见，不加就会把整句当成一个 token，永远搜不到。
+- **haystack 用换行拼接 `title` 与 `cwd`**，不用空格：否则 token 能跨字段拼出假命中（标题尾部 + 路径头部）。
+- **过滤只发生在渲染前**：`_sessions` 全程不动，所以 live 帧增量、静默轮询、下拉刷新、三态已读水位的计算都还是按全量走，搜索不会把「未读」算错。
+
+## AnimatedSize 展开过程中按钮点不到（2026-11-12）
+
+`link-bar` 用 `AnimatedSize(duration:160ms)` 从 0 高展开。widget 测试里 push 状态后只 `pump(200ms)` 就 tap `link-retry`，命中点落到上层 Material —— hitTest 警告 `derived an Offset that would not hit test`，`onPressed` 不触发、`reconnectNow` 调用数为 0。改成 `pumpAndSettle()` 再 tap 即通过。真机上同理：动画未落定时首次点击会丢，160ms 可接受；若日后要严格，可给按钮外层包一层固定高度的占位而不是靠 AnimatedSize。
+
+## 断线发送的产品取舍（2026-11-12）
+
+原来断线时把发送按钮禁用、hint 写「等待连接后发送」，等于让用户重打一遍。改成入队后：断线仍可发送、消息立刻可见（低对比度 + 排队图标），恢复后自动补发。三个必须守住的点：①入队即固定 requestId，重发靠服务端幂等而不是本地去重；②串行 + 失败即停，链路刚恢复时连发会把整队标红；③`sending` 状态不能持久化——重启读回时必须归一为 pending，否则那条永远发不出去。
+
+## 增量流不重放，重连必须整表对账（2026-11-12）
+
+`$events` 的 `api-session/*` 与 `workspace/follow` 都是增量：断线期间服务端发生的 added/removed/status 不会补发。所以「重连成功」不是「状态已同步」——必须再拉一次 `session/list` 整表对账，否则列表停在上次连接时的样子。另外 Android 会在后台掐掉 `Timer.periodic`，只靠轮询兜底不够，得用 `WidgetsBindingObserver` 的 `resumed` 补一刀。两个触发点合并去抖（10s），避免恢复瞬间连打三次。
+
+## 裸 TCP socket 上没有 pong 事件（2026-11-13）
+
+代理层的 `server.on("upgrade", (req, socket, head))` 拿到的 `socket` 是 `net.Socket`。想在这里做 WebSocket 心跳，不能依赖 `socket.on("pong")`——那是 `ws` 库解析完 pong 帧后自己 `emit` 的事件，而 pong 帧会被 `socket.pipe(proxySocket)` 原样转给上游 ws 库，我们这层永远收不到语义事件。唯一可靠的活性信号是 `socket` 上的 `data`（任何字节，包括客户端回的 pong 帧）。凡是「中间层代理 WS + 自己保活」的代码，写完必须问一句：这个事件的 emit 方到底是谁。

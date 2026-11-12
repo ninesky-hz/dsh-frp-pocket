@@ -1,0 +1,133 @@
+[
+  {
+    "id": "unit-session-search",
+    "cmd": "export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && cd packages/app && flutter test test/session_search_test.dart",
+    "expect": ["e1"]
+  },
+  {
+    "id": "unit-and-rule",
+    "file": "packages/app/test/session_search_test.dart",
+    "contains": "多 token 是 AND：只命中一个不算",
+    "expect": ["e1"]
+  },
+  {
+    "id": "unit-ideographic-space",
+    "file": "packages/app/test/session_search_test.dart",
+    "contains": "全角空格分词与半角空格等价",
+    "expect": ["e1"]
+  },
+  {
+    "id": "unit-case-insensitive",
+    "file": "packages/app/test/session_search_test.dart",
+    "contains": "大小写不同的查询结果一致",
+    "expect": ["e1"]
+  },
+  {
+    "id": "pure-functions-api",
+    "file": "packages/app/lib/models/session_search.dart",
+    "contains": "List<SessionSummary> filterSessions(",
+    "expect": ["e1"]
+  },
+  {
+    "id": "host-search-todo",
+    "file": "packages/app/lib/models/session_search.dart",
+    "contains": "TODO(host-search)",
+    "expect": ["e1"]
+  },
+  {
+    "id": "widget-search-flow",
+    "cmd": "export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && cd packages/app && flutter test test/host_sessions_search_test.dart",
+    "expect": ["e2", "e3", "e4"]
+  },
+  {
+    "id": "search-toggle-key",
+    "file": "packages/app/lib/screens/host_sessions_screen.dart",
+    "contains": "ValueKey<String>('toggle-search')",
+    "expect": ["e2"]
+  },
+  {
+    "id": "search-field-key",
+    "file": "packages/app/lib/screens/host_sessions_screen.dart",
+    "contains": "ValueKey<String>('search-field')",
+    "expect": ["e2"]
+  },
+  {
+    "id": "search-cancel-key",
+    "file": "packages/app/lib/screens/host_sessions_screen.dart",
+    "contains": "ValueKey<String>('search-cancel')",
+    "expect": ["e2"]
+  },
+  {
+    "id": "controller-disposed",
+    "file": "packages/app/lib/screens/host_sessions_screen.dart",
+    "contains": "_searchController.dispose();",
+    "expect": ["e2"]
+  },
+  {
+    "id": "empty-group-gone",
+    "file": "packages/app/test/host_sessions_search_test.dart",
+    "contains": "空组必须消失，不留孤立组头",
+    "expect": ["e3"]
+  },
+  {
+    "id": "row-state-kept",
+    "file": "packages/app/test/host_sessions_search_test.dart",
+    "contains": "row-state.s2.unread",
+    "expect": ["e3"]
+  },
+  {
+    "id": "refresh-keeps-query",
+    "file": "packages/app/test/host_sessions_search_test.dart",
+    "contains": "下拉刷新照常工作",
+    "expect": ["e3"]
+  },
+  {
+    "id": "filter-hook-in-body",
+    "file": "packages/app/lib/screens/host_sessions_screen.dart",
+    "contains": "filterSessions(_sessions, _query)",
+    "expect": ["e3"]
+  },
+  {
+    "id": "no-match-text",
+    "file": "packages/app/lib/screens/host_sessions_screen.dart",
+    "contains": "没有匹配的会话",
+    "expect": ["e4"]
+  },
+  {
+    "id": "no-data-text",
+    "file": "packages/app/lib/screens/host_sessions_screen.dart",
+    "contains": "这台主机还没有会话",
+    "expect": ["e4"]
+  },
+  {
+    "id": "two-empty-states-tested",
+    "file": "packages/app/test/host_sessions_search_test.dart",
+    "contains": "expect(find.text('这台主机还没有会话'), findsNothing);",
+    "expect": ["e4"]
+  },
+  {
+    "id": "analyze-clean",
+    "cmd": "export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && cd packages/app && flutter analyze",
+    "expect": ["e5"]
+  },
+  {
+    "id": "full-test-suite",
+    "cmd": "export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && cd packages/app && flutter test",
+    "expect": ["e5"]
+  },
+  {
+    "id": "no-ignore-comments-in-new-files",
+    "cmd": "cd packages/app && ! grep -n '// ignore:' lib/models/session_search.dart test/session_search_test.dart test/host_sessions_search_test.dart",
+    "expect": ["e5"]
+  },
+  {
+    "id": "apk-exists",
+    "cmd": "ls -l packages/app/build/app/outputs/flutter-apk/app-release.apk",
+    "expect": ["e5"]
+  },
+  {
+    "id": "apk-aot-symbols",
+    "cmd": "export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && cd packages/app && rm -rf .tmp-apkchk && mkdir -p .tmp-apkchk && unzip -o -q build/app/outputs/flutter-apk/app-release.apk \"lib/arm64-v8a/libapp.so\" -d .tmp-apkchk && node -e \"const b=require('fs').readFileSync('.tmp-apkchk/lib/arm64-v8a/libapp.so');let ok=true;for(const s of ['搜索标题或路径','没有匹配的会话']){const n=Buffer.from(s,'utf16le');let h=0,i=-1;while((i=b.indexOf(n,i+1))!==-1)h++;console.log(s,'utf16le='+h);if(h===0)ok=false;}for(const s of ['toggle-search','search-field']){const f=b.indexOf(Buffer.from(s,'utf8'))!==-1;console.log(s,'utf8='+f);if(!f)ok=false;}if(!ok)process.exit(1);\" && rm -rf .tmp-apkchk",
+    "expect": ["e5"]
+  }
+]

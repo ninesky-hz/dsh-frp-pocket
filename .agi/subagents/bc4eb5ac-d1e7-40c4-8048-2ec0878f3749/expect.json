@@ -1,0 +1,12 @@
+{
+  "task": "聊天页滚动结构重构：reverse ListView → CustomScrollView(center:) + 双 SliverList",
+  "createdAt": "2026-11-12T21:02+08:00",
+  "baseline": { "tests": 145, "analyze": "no issues", "apkBytes": 36666870 },
+  "expectations": [
+    { "id": "e1", "text": "session_chat_screen.dart 不再用 ListView.builder(reverse: true) 承载消息列表" },
+    { "id": "e2", "text": "消息区改为 CustomScrollView + center 键 + 前后两个 sliver（历史段倒序 / 当前段正序）" },
+    { "id": "e3", "text": "flutter analyze 零 issue；flutter test ≥145 全绿" },
+    { "id": "e4", "text": "新增测试证明「加载更早历史后视口不跳」，并覆盖「贴底时新消息自动贴底」" },
+    { "id": "e5", "text": "未改动 dsh_remote.dart / host_event.dart / session_event.dart / assistant_draft.dart 的现有语义；未加依赖" }
+  ]
+}

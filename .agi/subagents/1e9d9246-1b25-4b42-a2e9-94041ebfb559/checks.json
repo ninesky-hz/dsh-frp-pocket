@@ -1,0 +1,90 @@
+[
+  {
+    "id": "c1",
+    "file": "docs/dsh-go-chat.md",
+    "contains": "## 1. 消息行类型全清单",
+    "expect": ["e1"]
+  },
+  {
+    "id": "c2",
+    "file": "docs/dsh-go-chat.md",
+    "contains": "| 14 | `BackgroundTaskNotice` |",
+    "expect": ["e1"]
+  },
+  {
+    "id": "c3",
+    "file": "docs/dsh-go-chat.md",
+    "contains": "### 2.6 草稿与定稿共享 `rowKey`",
+    "expect": ["e2"]
+  },
+  {
+    "id": "c4",
+    "file": "docs/dsh-go-chat.md",
+    "contains": "_drafts.removeWhere",
+    "expect": ["e2"]
+  },
+  {
+    "id": "c5",
+    "file": "docs/dsh-go-chat.md",
+    "contains": "### 3.2 不是 reverse 列表，而是 center + 双 sliver",
+    "expect": ["e3"]
+  },
+  {
+    "id": "c6",
+    "file": "docs/dsh-go-chat.md",
+    "contains": "correctBy(correction);",
+    "expect": ["e3"]
+  },
+  {
+    "id": "c7",
+    "file": "docs/dsh-go-chat.md",
+    "contains": "contentInsertionConfiguration",
+    "expect": ["e4"]
+  },
+  {
+    "id": "c8",
+    "file": "docs/dsh-go-chat.md",
+    "contains": "MentionPickerController",
+    "expect": ["e4"]
+  },
+  {
+    "id": "c9",
+    "file": "docs/dsh-go-chat.md",
+    "contains": "_KeyMode { send, stopRun, mic, stopVoice }",
+    "expect": ["e4"]
+  },
+  {
+    "id": "c10",
+    "file": "docs/dsh-go-chat.md",
+    "contains": "session/updateQueue",
+    "expect": ["e4"]
+  },
+  {
+    "id": "c11",
+    "file": "docs/dsh-go-chat.md",
+    "contains": "## 6. 差距清单（我们 vs dsh-Go）",
+    "expect": ["e5"]
+  },
+  {
+    "id": "c12",
+    "file": "docs/dsh-go-chat.md",
+    "contains": "### 6.13 其他可后续补的",
+    "expect": ["e5"]
+  },
+  {
+    "id": "c13",
+    "file": "docs/dsh-go-chat.md",
+    "contains": "lib/screens/session_chat_screen.dart",
+    "expect": ["e5"]
+  },
+  {
+    "id": "c14",
+    "note": "文档无 BOM（首字节为 '# d'），UTF-8 中文正常；实测 head -c 3 = 23 20 64",
+    "expect": ["e1"]
+  },
+  {
+    "id": "c15",
+    "note": "参考仓库零改动：未执行 build / git，未写入 D:\\Ai-Project\\_refs\\dsh-Go",
+    "expect": ["e1"]
+  }
+]

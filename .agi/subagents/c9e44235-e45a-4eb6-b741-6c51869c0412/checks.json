@@ -1,0 +1,115 @@
+[
+  {
+    "id": "api-enum",
+    "file": "packages/app/lib/services/dsh_remote.dart",
+    "contains": "enum DshLinkState {",
+    "expect": ["e1"]
+  },
+  {
+    "id": "api-stream",
+    "file": "packages/app/lib/services/dsh_remote.dart",
+    "contains": "Stream<DshLinkState> get linkStates",
+    "expect": ["e1", "e2"]
+  },
+  {
+    "id": "api-failure-limit",
+    "file": "packages/app/lib/services/dsh_remote.dart",
+    "contains": "_linkFailures >= kLinkFailureLimit",
+    "expect": ["e1"]
+  },
+  {
+    "id": "api-dedup-push",
+    "file": "packages/app/lib/services/dsh_remote.dart",
+    "contains": "if (_linkStates.isClosed || _linkState == next) return;",
+    "expect": ["e2"]
+  },
+  {
+    "id": "api-dispose-closes-stream",
+    "file": "packages/app/lib/services/dsh_remote.dart",
+    "contains": "unawaited(_linkStates.close());",
+    "expect": ["e2"]
+  },
+  {
+    "id": "state-machine-tests",
+    "cmd": "export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && cd /d/Ai-Project/dsh-frp-pocket/packages/app && flutter test test/dsh_link_state_test.dart",
+    "expect": ["e1", "e2"]
+  },
+  {
+    "id": "state-test-3-failures",
+    "file": "packages/app/test/dsh_link_state_test.dart",
+    "contains": "连续 3 次失败 → offline",
+    "expect": ["e1"]
+  },
+  {
+    "id": "state-test-push-sequence",
+    "file": "packages/app/test/dsh_link_state_test.dart",
+    "contains": "只在值变化时推送",
+    "expect": ["e2"]
+  },
+  {
+    "id": "bar-text-key",
+    "file": "packages/app/lib/screens/session_chat_screen.dart",
+    "contains": "ValueKey<String>('link-state')",
+    "expect": ["e3"]
+  },
+  {
+    "id": "bar-retry-button",
+    "file": "packages/app/lib/screens/session_chat_screen.dart",
+    "contains": "Key('link-retry')",
+    "expect": ["e3"]
+  },
+  {
+    "id": "bar-online-zero-height",
+    "file": "packages/app/lib/screens/session_chat_screen.dart",
+    "contains": "const SizedBox(width: double.infinity, height: 0)",
+    "expect": ["e3"]
+  },
+  {
+    "id": "bar-amber-color",
+    "file": "packages/app/lib/screens/session_chat_screen.dart",
+    "contains": "const Color(0xFFE8A33D)",
+    "expect": ["e3"]
+  },
+  {
+    "id": "send-gate",
+    "file": "packages/app/lib/screens/session_chat_screen.dart",
+    "contains": "_linkOnline && !_sending && _input.text.trim().isNotEmpty",
+    "expect": ["e4"]
+  },
+  {
+    "id": "hint-swap",
+    "file": "packages/app/lib/screens/session_chat_screen.dart",
+    "contains": "hintText: _linkOnline ? '发消息给这个会话…' : '等待连接后发送'",
+    "expect": ["e4"]
+  },
+  {
+    "id": "bar-widget-tests",
+    "cmd": "export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && cd /d/Ai-Project/dsh-frp-pocket/packages/app && flutter test test/session_chat_link_bar_test.dart",
+    "expect": ["e3", "e4"]
+  },
+  {
+    "id": "analyze",
+    "cmd": "export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && cd /d/Ai-Project/dsh-frp-pocket/packages/app && flutter analyze",
+    "expect": ["e5"]
+  },
+  {
+    "id": "full-test-suite",
+    "cmd": "export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && cd /d/Ai-Project/dsh-frp-pocket/packages/app && flutter test",
+    "expect": ["e5"]
+  },
+  {
+    "id": "apk-strings",
+    "cmd": "export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && cd /d/Ai-Project/dsh-frp-pocket/packages/app && rm -rf .tmp-apkchk && mkdir -p .tmp-apkchk && unzip -o -q build/app/outputs/flutter-apk/app-release.apk \"lib/arm64-v8a/libapp.so\" -d .tmp-apkchk && node -e 'const b=require(\"fs\").readFileSync(\".tmp-apkchk/lib/arm64-v8a/libapp.so\");const cn=[\"正在连接…\",\"连接断开，正在重连…\",\"连接已断开\",\"等待连接后发送\"];const bad=[];for(const s of cn){const n=Buffer.from(s,\"utf16le\");let h=0,i=-1;while((i=b.indexOf(n,i+1))!==-1)h++;if(h<1)bad.push(s);}if(b.indexOf(Buffer.from(\"link-state\",\"utf8\"))===-1)bad.push(\"link-state\");if(bad.length){console.error(\"MISSING \"+bad.join(\",\"));process.exit(1);}console.log(\"OK 4 bar strings utf16le + link-state utf8\");' && rm -rf .tmp-apkchk",
+    "expect": ["e5"]
+  },
+  {
+    "id": "apk-bytes-note",
+    "note": "app-release.apk = 36667422 字节（基线 36667182，+240）；lib/arm64-v8a/libapp.so = 7078800 字节，与基线完全相同 —— 字节数相同不代表没重编，所以 e5 以 apk-strings 的命中为准（4 条中文各 utf16le=1，link-state utf8=true）。",
+    "expect": ["e5"]
+  },
+  {
+    "id": "test-count-note",
+    "note": "flutter test 最终 +207 全绿（新增 dsh_link_state_test 4 条 + session_chat_link_bar_test 4 条；其余用例在并行工作期间由 198 涨到 199，非本任务改动）。三条既有聊天页用例的失败是「假件初值 offline 导致发送按钮禁用」，只在 _FakeRemote/_StreamRemote/_PagingRemote 上加 linkState => online，未删改任何既有断言。",
+    "expect": ["e5"]
+  }
+]

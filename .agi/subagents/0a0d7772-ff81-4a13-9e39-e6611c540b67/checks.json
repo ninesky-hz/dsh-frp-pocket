@@ -1,0 +1,66 @@
+[
+  {
+    "id": "c1-row-state-enum",
+    "file": "packages/app/lib/models/session_row_state.dart",
+    "contains": "enum SessionRowState { pending, running, unread, none }",
+    "expect": ["e1"],
+    "note": "三态（含预留 pending）枚举声明，顺序即优先级"
+  },
+  {
+    "id": "c2-row-state-priority",
+    "cmd": "export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && cd /d/Ai-Project/dsh-frp-pocket/packages/app && flutter test test/session_row_state_test.dart",
+    "expect": ["e1", "e4"],
+    "note": "纯函数优先级：pending>running>unread>none，含「从未看过算未读」与「updatedAt 前进重变未读」"
+  },
+  {
+    "id": "c3-seen-store",
+    "cmd": "export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && cd /d/Ai-Project/dsh-frp-pocket/packages/app && flutter test test/seen_store_test.dart",
+    "expect": ["e2"],
+    "note": "key=dsh_frp.seen.<host>；写入后新实例读回、host 隔离、只前进不回退、坏 JSON 降级空表"
+  },
+  {
+    "id": "c4-seen-widget",
+    "cmd": "export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && cd /d/Ai-Project/dsh-frp-pocket/packages/app && flutter test test/host_sessions_seen_test.dart",
+    "expect": ["e2", "e4"],
+    "note": "widget：三态各渲染一个标记；点开未读消失且落盘；重挂全新 SeenStore 仍未读；返回时 updatedAt 前进则重变未读"
+  },
+  {
+    "id": "c5-analyze",
+    "cmd": "export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && cd /d/Ai-Project/dsh-frp-pocket/packages/app && flutter analyze",
+    "expect": ["e3"],
+    "note": "必须输出 No issues found!，且源码里没有 // ignore 掩盖"
+  },
+  {
+    "id": "c6-full-suite",
+    "cmd": "export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && cd /d/Ai-Project/dsh-frp-pocket/packages/app && flutter test",
+    "expect": ["e3", "e5"],
+    "note": "全量 167 条（基线 148 + 新增 19）全绿，置顶/归档/重命名等旧用例不破"
+  },
+  {
+    "id": "c7-marker-rendered",
+    "file": "packages/app/lib/screens/host_sessions_screen.dart",
+    "contains": "row-state.$sessionId.${state.name}",
+    "expect": ["e4"],
+    "note": "每行标记带 sessionId+状态名 key，widget 测试按 key 定位三态"
+  },
+  {
+    "id": "c8-mark-seen-before-push",
+    "file": "packages/app/lib/screens/host_sessions_screen.dart",
+    "contains": "_markSeen(session);",
+    "expect": ["e2"],
+    "note": "_openSession 在 Navigator.push 之前同步打水位（setState 当帧生效，落盘 unawaited）"
+  },
+  {
+    "id": "c9-pending-slot",
+    "file": "packages/app/lib/screens/host_sessions_screen.dart",
+    "contains": "TODO(pending)",
+    "expect": ["e1"],
+    "note": "pending 本次跳过但留了接入位与注释"
+  },
+  {
+    "id": "c10-no-ignore",
+    "cmd": "cd /d/Ai-Project/dsh-frp-pocket && grep -rn \"ignore:\" packages/app/lib/services/seen_store.dart packages/app/lib/models/session_row_state.dart packages/app/lib/screens/host_sessions_screen.dart | wc -l",
+    "expect": ["e3"],
+    "note": "新增/改动代码里 0 处 // ignore（期望输出 0）"
+  }
+]

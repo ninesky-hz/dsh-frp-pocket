@@ -1,0 +1,55 @@
+[
+  {
+    "id": "e1-no-reverse-listview",
+    "expect": ["e1"],
+    "cmd": "cd /d/Ai-Project/dsh-frp-pocket/packages/app && ! grep -q 'ListView.builder' lib/screens/session_chat_screen.dart && ! grep -q 'reverse: true' lib/screens/session_chat_screen.dart && grep -q 'CustomScrollView(' lib/screens/session_chat_screen.dart && echo OK-e1"
+  },
+  {
+    "id": "e1-structure-file",
+    "file": "packages/app/lib/screens/session_chat_screen.dart",
+    "contains": "CustomScrollView(",
+    "expect": ["e1", "e2"]
+  },
+  {
+    "id": "e2-center-two-slivers",
+    "expect": ["e2"],
+    "cmd": "cd /d/Ai-Project/dsh-frp-pocket/packages/app && [ \"$(grep -c 'SliverList(' lib/screens/session_chat_screen.dart)\" = 2 ] && grep -q 'center: _centerSliverKey' lib/screens/session_chat_screen.dart && grep -q 'anchor: 1,' lib/screens/session_chat_screen.dart && echo OK-e2"
+  },
+  {
+    "id": "e2-center-sliver-key-present",
+    "file": "packages/app/lib/screens/session_chat_screen.dart",
+    "contains": "key: _centerSliverKey,",
+    "expect": ["e2"]
+  },
+  {
+    "id": "e3-analyze-clean-and-tests-green",
+    "expect": ["e3"],
+    "cmd": "cd /d/Ai-Project/dsh-frp-pocket/packages/app && export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && flutter analyze 2>&1 | grep -q 'No issues found!' && out=$(flutter test 2>&1 | tail -3) && echo \"$out\" | grep -q 'All tests passed!' && n=$(echo \"$out\" | grep -oE '\\+[0-9]+' | tail -1 | tr -d '+') && [ \"$n\" -ge 145 ] && echo \"OK-e3 tests=$n\""
+  },
+  {
+    "id": "e4-prepend-no-jump-test",
+    "file": "packages/app/test/session_chat_history_test.dart",
+    "contains": "加载更早历史后视口不跳",
+    "expect": ["e4"]
+  },
+  {
+    "id": "e4-prepend-test-passes",
+    "expect": ["e4"],
+    "cmd": "cd /d/Ai-Project/dsh-frp-pocket/packages/app && export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && flutter test test/session_chat_history_test.dart --plain-name '加载更早历史后视口不跳' 2>&1 | grep -q 'All tests passed!' && echo OK-e4"
+  },
+  {
+    "id": "e4-bottom-pin-test-passes",
+    "expect": ["e4", "e5"],
+    "cmd": "cd /d/Ai-Project/dsh-frp-pocket/packages/app && export PATH=\"/d/Program Files/Flutter/bin:$PATH\" && flutter test test/session_chat_history_test.dart --plain-name '贴底时新消息自动贴底' 2>&1 | grep -q 'All tests passed!' && echo OK-e4b"
+  },
+  {
+    "id": "e5-protected-files-untouched",
+    "expect": ["e5"],
+    "cmd": "cd /d/Ai-Project/dsh-frp-pocket/packages/app && t=$(stat -c%Y lib/screens/session_chat_screen.dart) && for f in lib/services/dsh_remote.dart lib/models/host_event.dart lib/models/session_event.dart lib/models/assistant_draft.dart pubspec.yaml; do [ \"$(stat -c%Y $f)\" -lt \"$t\" ] || exit 1; done && echo OK-e5"
+  },
+  {
+    "id": "e5-apk-built",
+    "expect": ["e3"],
+    "note": "flutter build apk --release --target-platform android-arm64 → 36666870 bytes（build/app/outputs/flutter-apk/app-release.apk，2026-11-12 21:16）。已实测并写入 outcome.md「验证数据」。"
+  }
+]

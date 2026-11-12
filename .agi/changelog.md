@@ -86,3 +86,87 @@
 - 新增 `lib/screens/session_chat_screen.dart`：历史 + 流式追加 + 乐观发送/重试 + 中断 turn。
 - 重写 `lib/screens/host_sessions_screen.dart`：`workspace/follow` 实时 + 8s 兜底轮询，卡片就地更新。
 - 测试 67 → 93。
+
+## 2026-11-12 草稿与定稿共用行 key（消除定稿闪烁）
+
+- `packages/app/lib/models/assistant_draft.dart`：新增 `String get rowKey => turn==0&&step==0 ? 'draft:<attemptId>' : 'row:m<turn>.<step>'`。
+- `packages/app/lib/screens/session_chat_screen.dart:595`：草稿 ChatMessage 改用 `draft.rowKey`。
+- `packages/app/lib/models/session_event.dart`：新增 `_assistantRowKey(event, body)`（读 `data['turn']`/`data['step']`，缺失回退 `seq:<seq>`），`assistant/message` 分支改用它；用户消息仍用 seq key。
+- 新增 `packages/app/test/session_row_key_test.dart` 4 条：草稿 key == 定稿 key、不同轮次 key 不同、缺 turn/step 时回退、用户消息仍 seq。
+- 验证：flutter analyze No issues；flutter test 122 全绿；arm64 APK 36,469,694B。
+
+## 2026-11-12 会话行操作：归档（4 秒撤销）/ 置顶 / 重命名
+
+- `dsh_remote.dart` 新增 5 个 RPC：archiveSession(:327)、unarchiveSession(:344)、pinSession(:355)、unpinSession(:366)、renameSession(:380)。
+- `workspace_view_state.dart` 新增乐观入口 markArchived(:263)、markPinned(:272)——archived/pinned 帧是全量替换，服务端回帧会自动覆盖乐观值。
+- `host_sessions_screen.dart`：行尾「更多操作」→ 三项菜单(:298)、_togglePin(:350)、_archiveSession(:385, 4 秒撤销)、_undoArchive(:435, 先 await archived 防竞态)、_renameSession(:462)、_RenameDialog 自持 controller（避免 disposed 崩溃）。
+- `session_summary.dart` 新增 withTitle(:56)。
+- 测试：test/host_sessions_actions_test.dart 11 条；全量 122 → 133。
+
+## 2026-11-12 审批/提问链路（a9ff7e04 交付 + Lead 修正 wire）
+
+- 新增 `lib/models/host_event.dart`：四类 `$events` 帧解析（ready/emit/waterfall/cancel），审批与提问模型。
+- `lib/services/dsh_remote.dart`：`followEvents()`、`respondApproval/answerQuestion/rejectQuestion`、`_respondHostEvent`（当代 clientId + stale 300ms×2）、`maxMessages` 取代自造 `hintMaxMessages`。
+- `lib/screens/session_chat_screen.dart`：输入框上方审批卡/提问卡、多选与自定义答案、失败保留卡片、cancel 静默移除。
+- **Lead 修正**：审批 outcome 写错。通过必须 `{kind:'result',value:'allowed-once'}`（曾发 `{kind:'next'}` 等于弃权，服务端会继续等其他客户端）；拒绝必须 `{kind:'result',value:'rejected'}`（曾是提问用的 `{kind:'rejected',error}`）。依据 dsh-Go `session_api.dart:679` 与 `models.dart:972-990`。
+- 验证：analyze 零 issue、**145 测试全绿**。
+
+## 2026-11-12 聊天滚动结构重构（BC4EB5AC）
+
+- 消息区：`ListView.builder(reverse: true)` → `CustomScrollView(key: Key("chat-list"), center: _centerSliverKey, anchor: 1)` + 两条 SliverList（历史段倒序 / 当前段正序）。
+- 贴底判定改 `position.extentAfter <= 32`；贴底跟随在自定义 `_ChatScrollPosition.applyContentDimensions` 里 `correctPixels(maxScrollExtent); return false`。
+- 往历史方向插 = 最小 seq 变小（不看行数）；需要修正时用记忆锚点 + `correctBy(correction); return false`，同帧重试、不外传成滚动事件。
+- worker 自测逼出一个真 bug：post-frame 量 maxScrollExtent 会停在半路（少 48px），已改布局阶段修正。
+- 验证：analyze 零 issue、**148 测试全绿**、APK 36,666,870 字节（libapp.so 7,078,800，二进制内含 chat-list/chat-center 符号，确认重编生效）。
+
+## 2026-11-12 会话列表三态行状态
+
+- `lib/models/session_row_state.dart`（新）：`enum SessionRowState { pending, running, unread, none }` + 纯函数 `sessionRowStateOf`。优先级 `pending > running > unread > none`；`seenAt == null`（从未看过）也算未读；`updatedAt == null` 归 none。
+- `lib/services/seen_store.dart`（新）：`dsh_frp.seen.<hostId>` 存 `{sessionId: epochMs}`；`markSeen` 只前进不回退；读失败/JSON 损坏静默降级为空表。
+- `lib/screens/host_sessions_screen.dart`：注入式 `seenStore`、`_seen` 缓存 + `_loadSeen()`、`_markSeen()`（同步 setState、`unawaited` 落盘）、`_rowStateOf()`、`_RowStateMarker`（8px 圆点，key `row-state.<sid>.<state>`）。点开会话前就标记已读，返回列表不再重复打水位（停留期间有新更新会重新变未读）。
+- 验证：analyze 零 issue；`flutter test` 167 全绿（基线 148 + 19）；arm64 APK 36,666,870B，md5 30fa1de4…，解包确认 `libapp.so` 含 `dsh_frp.seen.` 与 `row-state.`。
+
+## 2026-11-12 会话列表按工作区分组
+
+- `lib/models/session_groups.dart`（新）：`SessionGroup`（id/title/path/sessions/pinnedGroup）+ `groupSessions({sessions, workspaces, pinnedSessionIds})`。顺序：置顶组 → 按 workspaces 顺序 → 未分组；空组不产出；组内保持传入顺序。
+- `lib/screens/host_sessions_screen.dart`：`_grouped`（默认 true，可从 `dsh_frp.grouped` 读取、`initialGrouped` 可注入）、`_collapsed` 折叠集合、AppBar `toggle-grouped` 切换按钮、`_buildFlatList()`（与改动前逐字一致）/ `_buildGroupedList()`（组头+卡片摊平成单列表保惰性）、两模式共用 `_buildSessionCard()`、`_GroupHeader`（key `group-header.<id>`）。
+- **修的真实缺陷**：`_applyWorkspaceFrame` 原有「会话列表没变就不 setState」，导致分组视图在 baseline 到达时组头停在「未分组」。改为分组态无条件重建；平铺分支保留原早退，行为不变。
+- 验证：analyze 零 issue；`flutter test` 182 全绿（167 + 15）；APK 36,667,022B；解包 `libapp.so`(7,078,800B) 按 UTF-16LE 命中「未分组/置顶/未命名工作区/按工作区分组/平铺显示」，ASCII 命中 `dsh_frp.grouped`/`group-header.`/`toggle-grouped`。
+
+## 2026-11-12 会话本地搜索
+
+- `lib/models/session_search.dart`（新）：`tokenizeQuery` 按 `[\s\u3000]+` 切分并小写（Dart 的 `\s` 不覆盖全角空格）；`sessionMatches` 对 `title\ncwd` 做 AND 子串匹配；`filterSessions` 空查询原样返回同一实例。
+- `lib/screens/host_sessions_screen.dart`：`_searching`/`_query`/`_searchController`（dispose 释放）、单一过滤入口 `_visibleSessions`、AppBar 搜索态（`toggle-search` / `search-field` / `search-cancel`）、列表构建改为接收已过滤列表（widget 树与 key 不变）。
+- 两种空态分离：搜索无命中 → 「没有匹配的会话」；无数据 → 「这台主机还没有会话」。
+- 宿主 FTS5 的 `session/search` 未接，代码里留 `TODO(host-search)`。
+- 验证：analyze 零 issue；`flutter test` 198 全绿；APK 36,667,182B；解包 UTF-16LE 命中两条空态文案与搜索提示，UTF-8 命中三个 key。
+
+## 2026-11-12 聊天页连接状态条
+
+- `DshRemote` 暴露四态 `DshLinkState{connecting,online,reconnecting,offline}` + `linkStates` 广播流 + `reconnectNow()`；只在状态变化时推送。
+- 聊天页消息区上方 `link-bar`：online 收成 0 高，其余三态露 2px 色条 + 文案，offline 附 `link-retry` 重试。
+- 断线时发送按钮禁用、输入框 hint 改成「等待连接后发送」，已输入内容保留。
+- 新增 `test/dsh_link_state_test.dart`(4) 与 `test/session_chat_link_bar_test.dart`(5)；全量 207 全绿。
+
+## 2026-11-12 离线发送队列（outbox）
+
+- 断线不再拦截发送：`canSend = !_sending && text 非空`，离线时消息入队并以 pending 气泡上屏（key `outbox.<id>`）。
+- `OutboxEntry.create` 入队即固定 `id` 与 `requestId`；`OutboxStore` 落盘到 `dsh_frp.outbox.<hostId>.<sessionId>`，读取时把 `sending` 归一为 `pending`（避免重启卡在发送中）。
+- `DshRemote.prompt(..., {String? requestId})`：补发复用入队时的 requestId，服务端幂等，不会产生两条。
+- `_flushOutbox()`：恢复 online 后串行补发，一条失败即停并标记 failed，点重试复用同一 requestId；`user/message` 回显带 requestId 时顺手摘掉对应队列项作二次保险（拿不到就不猜）。
+- hint 在断线时改为「等待网络恢复后自动发送」；新增 `test/outbox_store_test.dart`(6) 与 `test/session_chat_outbox_test.dart`(6)，全量 219 全绿。
+
+## 2026-11-12 长断线后整表重拉
+
+- `HostSessionsScreen` 加 `WidgetsBindingObserver`：`AppLifecycleState.resumed` 时主动拉一次（轮询定时器在后台会被系统掐掉）。
+- 订阅 `remote.linkStates`：链路从断到通（`online`）时立刻整表重拉——`$events` / `workspace/follow` 的增量帧不重放，断线期间发生的增删会永久丢失。
+- `_refreshIfStale()` + `refreshBudget = 10s` 去抖，三条触发路（生命周期、链路、轮询）不会连打。
+- 新增 `test/host_sessions_refresh_test.dart` 4 条；全量 223 全绿。
+
+## 2026-11-13 修复 WebSocket 心跳误杀长连接
+
+- 症状：App 的 `$events`（`wss://<host>/api/remote.mux`）每 60 秒被网关断开一次，聊天页状态条反复闪「重连中」，断线期间到达的审批帧丢失。
+- 根因：`attachWebSocketHeartbeat(socket)` 里 `socket` 是 `net.Socket`（裸 TCP），它的 `pong` 事件永远不会触发——pong 帧是上游 ws 库解析完才发出的事件，这一层只看得到字节。于是 `misses` 永不清零，`missLimit=2 × 30s` 后无条件 `destroy()`。
+- 修法：改为按字节判活（`socket.on("data")` 重置计数，客户端回的 pong 帧也算流量），`missLimit` 放宽到 10（5 分钟）；`close` 时同时摘掉监听。导出函数以便单测。
+- 新增 `packages/plugin/test/ws-heartbeat.test.mjs` 4 条；插件全量 48 全绿。
+- **需重启 DSH 生效**（插件 host 侧代码在加载时快照）。

@@ -1,0 +1,26 @@
+{
+  "worker": "a9ff7e04-1ca2-47f4-a696-d72289117298",
+  "declaredAt": "2026-11-12T12:39:32.069Z",
+  "items": [
+    {
+      "id": "e1",
+      "text": "DshRemote 新增 $events 订阅：解析 ready/emit/waterfall/cancel 四类帧，并记住当前代的 clientId"
+    },
+    {
+      "id": "e2",
+      "text": "聊天页在收到 approval/request 时显示审批卡（工具名 + 关键参数摘要 + 通过/拒绝），点通过调 $events/result outcome {kind:next}，点拒绝调 {kind:rejected,error}"
+    },
+    {
+      "id": "e3",
+      "text": "聊天页在收到 user-questions/request 时显示提问卡（问题与选项），选择后调 $events/result outcome {kind:result,value:{answers:[…]}}；收到 cancel 帧卡片立即消失"
+    },
+    {
+      "id": "e4",
+      "text": "clientId 用当前代（ready 帧给的）而非历史值；$events/result 失败文案含 'identifies no active event stream' 时延迟 300ms 重试最多 2 次；dsh_remote.dart 里自造的 hintMaxMessages 字段已删除或用官方 maxMessages 替代"
+    },
+    {
+      "id": "e5",
+      "text": "flutter analyze 零 issue，flutter test 全绿且总数 ≥141（133 + 新增 ≥8），arm64 APK 构建成功并记录字节数"
+    }
+  ]
+}

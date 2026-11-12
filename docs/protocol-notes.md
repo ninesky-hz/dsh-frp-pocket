@@ -84,6 +84,32 @@ Cookie: frp_auth=…; dsh-auth-<名>=…
 ```
 另有 `{"type":"error","streamId":…,"error":{…}}` 与 `{"type":"closed","streamId":…,"reason":…}`。
 
+### `assistant-stream` 的 `chunk.index` 是「块下标」，不是帧序号
+
+真机抓包（2026-11-12 20:32，`session/follow` + `assistantStream:true`，一次带思考的回答）：
+
+```
+frame.index=50..62  chunk=reasoning-delta   chunk.index=0     ← 思考块（第 0 块）
+frame.index=63      chunk=block-start       chunk.index=0     ← 思考块收尾
+frame.index=64      chunk=block-end         chunk.index=0
+frame.index=65      chunk=block-start       chunk.index=1     ← 正文块（第 1 块）
+frame.index=66,67   chunk=text-delta        chunk.index=1
+frame.index=68      chunk=block-end         chunk.index=1
+frame.index=69      chunk=usage
+frame.index=70      chunk=finish
+frame.index=71      frame.type=end
+```
+
+两条 index 各管一件事，混淆就会把正文写进思考块：
+
+| 字段 | 含义 | 用途 |
+| --- | --- | --- |
+| `frame.index` | 这条 chunk 帧的**全局序号**（严格 +1） | 帧级去重：`frame.index < nextIndex` 整帧丢弃 |
+| `chunk.index` | 块在本次 attempt 里的**下标**（0=思考，1=正文，工具调用往后排） | 累积目标：把 delta 写进对应的 `DraftBlock` |
+
+`block-start` 带 `blockType`（如 `reasoning`）；`block-end` 带 `block`（成型的 part，可优先于 delta 拼接结果用于定稿）。
+
+
 ### `workspace/follow` 首帧
 ```json
 {"type":"item","streamId":"w1","value":{"type":"baseline","value":{"items":[
