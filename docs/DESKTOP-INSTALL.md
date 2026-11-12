@@ -53,7 +53,7 @@ CLI 用 `DSH_HOME` 指向桌面 profile 用的同一个主目录，就能在插�
 ```bash
 cd D:/Ai-Project/dsh-frp-pocket
 export DSH_HOME="C:/Users/<你>/.dsh"
-node packages/plugin/bin/dsh-frp-pocket.mjs config set frp.serverAddr 118.178.127.39
+node packages/plugin/bin/dsh-frp-pocket.mjs config set frp.serverAddr "$VPS_IP"
 node packages/plugin/bin/dsh-frp-pocket.mjs config set frp.authToken "$FRP_TOKEN"
 node packages/plugin/bin/dsh-frp-pocket.mjs config set frp.mode customDomains
 node packages/plugin/bin/dsh-frp-pocket.mjs config set frp.customDomains home.dsh.chenz.vip

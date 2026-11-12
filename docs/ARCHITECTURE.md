@@ -99,6 +99,18 @@ App 主页每 15 秒（下拉刷新立即）对每台主机做两件事：
 | dsh web | DSH 本体 | 原来的 UI/API/WS | 不知道 frp 存在 |
 | App | `packages/app` | 多主机列表、扫码、WebView 外壳 | 不实现鉴权逻辑（复用网关） |
 
+### 3.1 插件在 DSH UI 里占哪几块
+
+客户端 bundle（`packages/plugin/client/index.js`）只注册槽位，不改路由、不抢 `sidebar.workspaces`：
+
+| 槽位 | 形态 | id / key | 内容 |
+| --- | --- | --- | --- |
+| `sidebar.panellist` | 左侧导航面板图标（list） | `frp-pocket` | 隧道图标，点一下切到主区页面 |
+| `main` | 主区页面（keyed） | `frp-pocket` | 状态圆点+徽章、公网地址（复制/打开）、frps/暴露方式/hostId/网关、PIN（显示/复制）、配对二维码、frpc 启动/停止/重启、日志尾部 |
+| `settings.section` | 设置分节 | `frp-pocket` | 全量配置表单（displayName、网关端口、frps、暴露方式、PIN 管理、连通性测试、保存） |
+
+`sidebar.panellist` 与 `main` 必须同 id，否则点图标切不到页面（`test/manifest.test.mjs` 断言这一点）。主区只读 `status` RPC 并每 5 秒轮询，写操作只有 `frpc.start|stop|restart`；配置写入仍集中在设置页，避免两个入口并发写 `config.json`。
+
 ## 4. 端口清单
 
 | 端口 | 位置 | 绑定 | 公网 | 说明 |

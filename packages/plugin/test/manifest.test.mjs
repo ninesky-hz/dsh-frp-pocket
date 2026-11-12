@@ -28,7 +28,7 @@ test('cordis.patch.yml：插入项 id/name 都是 dsh-frp-pocket', () => {
   assert.match(yml, /^\s*name:\s*dsh-frp-pocket\s*$/m);
 });
 
-test('client bundle：能被 __ModuleLoader__ 加载并注册 settings.section', async () => {
+test('client bundle：能被 __ModuleLoader__ 加载并注册 settings.section + 左侧导航', async () => {
   const src = readFileSync(join(root, 'client', 'index.js'), 'utf8');
   const containers = [];
   const reactStub = {
@@ -55,7 +55,22 @@ test('client bundle：能被 __ModuleLoader__ 加载并注册 settings.section',
     connection: { rpc: { call: async () => ({ ok: false, error: { message: 'stub' } }) } },
     slots: { inject: (_n, fn) => fn(), register: (meta, comp) => registered.push({ meta, comp }) },
   });
-  assert.equal(registered.length, 1);
-  assert.equal(registered[0].meta.name, 'settings.section');
-  assert.equal(typeof registered[0].comp, 'function');
+  assert.equal(registered.length, 3);
+  const bySlot = Object.fromEntries(registered.map((r) => [r.meta.name, r]));
+  assert.deepEqual(
+    Object.keys(bySlot).sort(),
+    ['main', 'settings.section', 'sidebar.panellist'],
+  );
+  // 设置页
+  assert.equal(bySlot['settings.section'].meta.id, 'frp-pocket');
+  assert.equal(typeof bySlot['settings.section'].comp, 'function');
+  // 左侧导航：面板图标 + 主区页面必须用同一个 id，否则点图标切不到页面
+  assert.equal(bySlot['sidebar.panellist'].meta.id, 'frp-pocket');
+  assert.equal(bySlot['sidebar.panellist'].meta.label(), 'FRP 远程');
+  assert.equal(typeof bySlot['sidebar.panellist'].comp, 'function');
+  assert.equal(bySlot.main.meta.key, 'frp-pocket');
+  assert.equal(bySlot.main.meta.key, bySlot['sidebar.panellist'].meta.id);
+  assert.equal(typeof bySlot.main.comp, 'function');
+  // 页面图标要能吃 { size, active } 两个入参（DSH 只传这两个）
+  assert.equal(typeof bySlot['sidebar.panellist'].comp({ size: 18, active: true }), 'object');
 });

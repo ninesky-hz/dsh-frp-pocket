@@ -569,8 +569,266 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // ── 左侧导航入口（sidebar.panellist + main keyed 页面）───────────────
+    const PANEL_ID = 'frp-pocket';
+
+    const pageStyles = {
+      wrap: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 16,
+        padding: '24px 24px 48px',
+        maxWidth: 880,
+        width: '100%',
+        margin: '0 auto',
+        boxSizing: 'border-box',
+        fontSize: 13,
+      },
+      hero: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
+      title: { fontSize: 17, fontWeight: 600, margin: 0 },
+      dot: (state) => ({
+        width: 8,
+        height: 8,
+        borderRadius: 999,
+        display: 'inline-block',
+        background: state === 'running' ? '#10b981' : state === 'error' ? '#ef4444' : '#9ca3af',
+      }),
+      grid: { display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '8px 16px', alignItems: 'baseline' },
+      key: { color: 'var(--dsw-alias-label-secondary, #6b7280)', fontSize: 12, whiteSpace: 'nowrap' },
+      val: { wordBreak: 'break-all' },
+      log: { ...styles.log, maxHeight: 220, overflow: 'auto' },
+      notice: { color: '#047857', fontSize: 12 },
+      fail: { color: '#b91c1c', fontSize: 12 },
+    };
+
+    /** 侧栏面板图标：两个端口 + 中间链路，表示「隧道」。 */
+    function FrpPocketIcon({ size = 18, active }) {
+      const opacity = active ? 1 : 0.7;
+      return h(
+        'svg',
+        { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': 'true' },
+        h('path', {
+          d: 'M8.6 12a4.4 4.4 0 0 1 4.4-4.4h2.6',
+          stroke: 'currentColor',
+          strokeWidth: 1.7,
+          strokeLinecap: 'round',
+          opacity,
+        }),
+        h('path', {
+          d: 'M15.4 12a4.4 4.4 0 0 1-4.4 4.4H8.4',
+          stroke: 'currentColor',
+          strokeWidth: 1.7,
+          strokeLinecap: 'round',
+          opacity,
+        }),
+        h('circle', { cx: 6.2, cy: 12, r: 1.7, fill: 'currentColor', opacity }),
+        h('circle', { cx: 17.8, cy: 12, r: 1.7, fill: 'currentColor', opacity }),
+      );
+    }
+
+    /** 主区页面：一屏看完隧道是否活着 + 公网地址 + PIN + 配对码 + 起停。 */
+    function FrpPocketPage({ rpcCall }) {
+      const [status, setStatus] = useState(null);
+      const [error, setError] = useState(null);
+      const [notice, setNotice] = useState('');
+      const [busy, setBusy] = useState('');
+      const [showPin, setShowPin] = useState(false);
+      const mounted = useRef(true);
+
+      const call = async (endpoint, payload) => {
+        const res = await rpcCall(endpoint, payload);
+        if (!res?.ok) throw new Error(res?.error?.message ?? `RPC ${endpoint} failed`);
+        return res.value;
+      };
+
+      const load = async () => {
+        try {
+          const value = await call('status', {});
+          if (!mounted.current) return;
+          setStatus(value);
+          setError(null);
+        } catch (err) {
+          if (mounted.current) setError(err?.message ?? String(err));
+        }
+      };
+
+      useEffect(() => {
+        mounted.current = true;
+        load();
+        const timer = setInterval(load, 5000);
+        return () => {
+          mounted.current = false;
+          clearInterval(timer);
+        };
+      }, []);
+
+      const act = async (action) => {
+        setBusy(action);
+        setNotice('');
+        try {
+          await call(`frpc.${action}`, {});
+          await load();
+          if (mounted.current) setNotice(`frpc ${action} 已执行`);
+        } catch (err) {
+          if (mounted.current) setError(err?.message ?? String(err));
+        } finally {
+          if (mounted.current) setBusy('');
+        }
+      };
+
+      const copy = async (text) => {
+        try {
+          if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+          else throw new Error('no clipboard');
+          setNotice('已复制到剪贴板');
+        } catch {
+          setNotice('复制失败，请手动选中复制');
+        }
+      };
+
+      if (error && status === null) {
+        return h(
+          'div',
+          { style: pageStyles.wrap },
+          h('div', { style: pageStyles.fail }, `隧道面板加载失败 | panel failed: ${error}`),
+          h('div', { style: styles.row }, h('button', { style: styles.btn, onClick: load }, '重试')),
+        );
+      }
+
+      const cfg = status?.config?.frp ?? {};
+      const frpc = status?.frpc ?? { state: 'stopped' };
+      const pin = status?.auth?.pin ?? '';
+      const qr = status?.qr ?? null;
+      const domains = cfg.customDomains ?? [];
+      const publicUrl = cfg.publicUrl || (domains[0] ? `https://${domains[0]}` : '');
+      const logs = (frpc.logs ?? status?.logs ?? []).slice(-30);
+
+      return h(
+        'div',
+        { style: pageStyles.wrap },
+        // 头部
+        h(
+          'div',
+          { style: pageStyles.hero },
+          h('h2', { style: pageStyles.title }, status?.displayName ?? 'FRP 远程'),
+          h('span', { style: pageStyles.dot(frpc.state) }),
+          h('span', { style: styles.badge(frpc.state) }, frpc.state ?? 'stopped'),
+          h('div', { style: { flex: 1 } }),
+          h('button', { style: styles.btn, disabled: Boolean(busy), onClick: () => load() }, '刷新'),
+          h('button', { style: styles.btn, disabled: Boolean(busy), onClick: () => act('start') }, '启动'),
+          h('button', { style: styles.btn, disabled: Boolean(busy), onClick: () => act('stop') }, '停止'),
+          h('button', { style: styles.btn, disabled: Boolean(busy), onClick: () => act('restart') }, '重启'),
+        ),
+
+        notice ? h('div', { style: pageStyles.notice }, notice) : null,
+        error ? h('div', { style: pageStyles.fail }, `lastError: ${error}`) : null,
+
+        // 公网地址
+        h(
+          'div',
+          { style: styles.card },
+          h(
+            'div',
+            { style: styles.head },
+            h('h3', { style: styles.title }, '公网地址'),
+            publicUrl
+              ? h(
+                  'div',
+                  { style: styles.row },
+                  h('button', { style: styles.btn, onClick: () => copy(publicUrl) }, '复制'),
+                  h(
+                    'a',
+                    { style: styles.btn, href: publicUrl, target: '_blank', rel: 'noreferrer' },
+                    '打开',
+                  ),
+                )
+              : null,
+          ),
+          publicUrl
+            ? h('div', { style: { ...styles.mono, fontSize: 14, wordBreak: 'break-all' } }, publicUrl)
+            : h('div', { style: styles.sub }, '尚未配置 publicUrl / customDomains —— 到设置页「FRP 远程」里填。'),
+          h(
+            'div',
+            { style: pageStyles.grid },
+            h('div', { style: pageStyles.key }, 'frps'),
+            h('div', { style: pageStyles.val }, `${cfg.serverAddr || '未配置'}:${cfg.serverPort ?? 7000} · ${cfg.transport ?? 'tcp'}`),
+            h('div', { style: pageStyles.key }, '暴露方式'),
+            h('div', { style: pageStyles.val }, `${cfg.mode ?? 'subdomain'}${domains.length ? ` · ${domains.join(', ')}` : ''}`),
+            h('div', { style: pageStyles.key }, 'hostId'),
+            h('div', { style: pageStyles.val }, status?.hostId ?? '—'),
+            h('div', { style: pageStyles.key }, '网关'),
+            h('div', { style: pageStyles.val }, `${status?.gateway?.bind ?? '127.0.0.1'}:${status?.gateway?.port ?? 3081}`),
+          ),
+        ),
+
+        // PIN + 配对
+        h(
+          'div',
+          { style: styles.card },
+          h('h3', { style: styles.title }, '访问 PIN 与配对'),
+          h(
+            'div',
+            { style: styles.row },
+            h('span', { style: { ...styles.mono, fontSize: 15, letterSpacing: 2 } }, showPin ? pin || '—' : '••••••••'),
+            h('button', { style: styles.btn, onClick: () => setShowPin((v) => !v) }, showPin ? '隐藏' : '显示'),
+            h('button', { style: styles.btn, onClick: () => copy(pin) }, '复制 PIN'),
+            h('button', { style: styles.btn, onClick: () => copy(qr?.text ?? '') }, '复制配对串'),
+          ),
+          h(
+            'div',
+            { style: { display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' } },
+            qr?.svg
+              ? h('div', { style: styles.qr, dangerouslySetInnerHTML: { __html: qr.svg } })
+              : h('div', { style: styles.sub }, '二维码不可用（缺少 publicUrl）'),
+            h(
+              'div',
+              { style: { flex: 1, minWidth: 220, display: 'flex', flexDirection: 'column', gap: 6 } },
+              h('div', { style: { ...styles.mono, wordBreak: 'break-all' } }, qr?.text ?? ''),
+              h('div', { style: styles.sub }, '手机 App 扫码即加入这台主机；PIN 换了旧 cookie 立刻失效。'),
+            ),
+          ),
+        ),
+
+        // 日志
+        h(
+          'div',
+          { style: styles.card },
+          h(
+            'div',
+            { style: styles.head },
+            h('h3', { style: styles.title }, 'frpc 日志'),
+            h('span', { style: styles.sub }, `pid=${frpc.pid ?? '—'} · since=${frpc.since ? new Date(frpc.since).toLocaleString() : '—'}`),
+          ),
+          frpc.lastError ? h('div', { style: pageStyles.fail }, `lastError: ${frpc.lastError}`) : null,
+          h('div', { style: pageStyles.log }, logs.length ? logs.join('\n') : '(暂无日志 | no logs yet)'),
+        ),
+      );
+    }
+
     function apply(ctx) {
       const rpcCall = (endpoint, payload, signal) => ctx.connection.rpc.call(CHANNEL, endpoint, payload, signal);
+      // 左侧导航：面板图标 + 主区页面
+      ctx.slots.inject('sidebar.panellist', () =>
+        ctx.slots.register(
+          {
+            name: 'sidebar.panellist',
+            id: PANEL_ID,
+            order: 12,
+            label: () => 'FRP 远程',
+          },
+          FrpPocketIcon,
+        ),
+      );
+      ctx.slots.inject('main', () =>
+        ctx.slots.register(
+          {
+            name: 'main',
+            key: PANEL_ID,
+            inject: () => ({ rpcCall }),
+          },
+          FrpPocketPage,
+        ),
+      );
       ctx.slots.inject('settings.section', () =>
         ctx.slots.register(
           {

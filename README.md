@@ -9,7 +9,7 @@
                                               └─ dsh-frp-pocket 网关(127.0.0.1:3081) → dsh web
 ```
 
-- **宿主插件** `packages/plugin`：DSH 插件。内置 frpc 生命周期管理、PIN 登录网关（含 dsh web launch-token 握手、WebSocket 透传）、移动端适配、`/frp-pocket/api/*` 主机接口、设置页与二维码。
+- **宿主插件** `packages/plugin`：DSH 插件。内置 frpc 生命周期管理、PIN 登录网关（含 dsh web launch-token 握手、WebSocket 透传）、移动端适配、`/frp-pocket/api/*` 主机接口、设置页与二维码、**左侧导航「FRP 远程」面板**（一屏看隧道状态/公网地址/PIN/配对码，含起停按钮）。
 - **手机 App** `packages/app`：Flutter Android。多主机列表、扫码配对、健康探测、WebView 内嵌 DSH 并自动登录。
 - **部署物** `deploy`：VPS 的 frps + Caddy(HTTPS) + systemd，两台 PC 的 frpc 模板与安装脚本。
 - **文档** `docs`：架构契约、VPS 部署、PC 接入、App 安装、排障。
