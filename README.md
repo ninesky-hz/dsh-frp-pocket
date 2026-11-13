@@ -63,7 +63,7 @@ sudo bash deploy/install-vps.sh --domain dsh.example.com --token 'FRP_TOKEN'
 | [`dsh-frp-pocket-v0.1.0-armeabi-v7a.apk`](https://github.com/ninesky-hz/dsh-frp-pocket/releases/download/v0.1.0/dsh-frp-pocket-v0.1.0-armeabi-v7a.apk) | 21.4 MB | 老 32 位机型 |
 | [`dsh-frp-pocket-v0.1.0-x86_64.apk`](https://github.com/ninesky-hz/dsh-frp-pocket/releases/download/v0.1.0/dsh-frp-pocket-v0.1.0-x86_64.apk) | 27.7 MB | 模拟器 / x86 平板 |
 
-源码里也能自己出包：`packages/app/build/app/outputs/flutter-apk/app-{abi}-release.apk`（`bash scripts/build-apk.sh`）。
+源码里也能自己出包：`bash scripts/build-apk.sh --release`，产物自动归档到 `dist/dsh-pocket-<versionName>-<versionCode>.apk`。
 安装：手机点开下载好的 APK（需允许「安装未知来源应用」），或 `adb install -r dsh-frp-pocket-v0.1.0-arm64-v8a.apk`。
 当前 release 包用 debug 签名，自用足够；要长期升级请按 `docs/APP.md` 生成自己的 keystore。
 
@@ -75,7 +75,7 @@ sudo bash deploy/install-vps.sh --domain dsh.example.com --token 'FRP_TOKEN'
 node --test packages/plugin/test/*.test.mjs        # 插件单测
 bash scripts/smoke-local.sh                        # 本地 frps+frpc+网关 冒烟
 cd packages/app && flutter analyze && flutter test # App 检查
-bash scripts/build-apk.sh                          # 产出 debug APK
+bash scripts/build-apk.sh                          # 产出 debug APK 并归档到 dist/dsh-pocket-<ver>-<build>.apk
 ```
 
 ## 许可证

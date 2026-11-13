@@ -83,8 +83,7 @@ class SessionChatScreen extends StatefulWidget {
 class _SessionChatScreenState extends State<SessionChatScreen>
     with WidgetsBindingObserver {
   late final bool _ownsRemote = widget.remote == null;
-  late final DshRemote _remote =
-      widget.remote ?? DshRemote(host: widget.host);
+  late final DshRemote _remote = widget.remote ?? DshRemote(host: widget.host);
 
   /// 中心锚点：`CustomScrollView.center` 指向的那条 sliver。
   ///
@@ -165,7 +164,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       <String, Future<Uint8List>>{};
 
   /// 离线队列条目的缩略图（解码一次，按条目 id 记住）。
-  final Map<String, List<Uint8List>> _outboxThumbs = <String, List<Uint8List>>{};
+  final Map<String, List<Uint8List>> _outboxThumbs =
+      <String, List<Uint8List>>{};
 
   /// 断线时写下的消息：本地队列，既是「待发状态」也是落盘数据的镜像。
   /// 顺序即发送顺序，第一条永远是下一条要发的。
@@ -174,8 +174,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   /// 落盘层；没注入时自己建一个（SharedPreferences 全局单例，不用释放）。
   late final OutboxStore _outboxStore = widget.outboxStore ?? OutboxStore();
   late final DraftStore _draftStore = widget.draftStore ?? DraftStore();
-  late final PendingStore _pendingStore =
-      widget.pendingStore ?? PendingStore();
+  late final PendingStore _pendingStore = widget.pendingStore ?? PendingStore();
 
   /// 草稿写入的防抖闹钟：每敲一个字都写一次盘没必要。
   Timer? _draftTimer;
@@ -344,14 +343,16 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   void _start() {
     if (_disposed) return;
     unawaited(_sub?.cancel());
-    _sub = _remote.followSession(widget.session.sessionId).listen(
-      _onFrame,
-      onError: (Object error) {
-        if (!mounted) return;
-        setState(() => _streaming = false);
-        debugPrint('SessionChat: follow 出错 $error');
-      },
-    );
+    _sub = _remote
+        .followSession(widget.session.sessionId)
+        .listen(
+          _onFrame,
+          onError: (Object error) {
+            if (!mounted) return;
+            setState(() => _streaming = false);
+            debugPrint('SessionChat: follow 出错 $error');
+          },
+        );
     _startEvents();
     _armSnapshotTimeout();
   }
@@ -545,8 +546,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     final answers = <Map<String, Object?>>[];
     for (final question in request.questions) {
       final key = _answerKey(request.eventId, question.id);
-      final picked = (_pickedOptions[key] ?? const <String>{})
-          .toList(growable: false);
+      final picked = (_pickedOptions[key] ?? const <String>{}).toList(
+        growable: false,
+      );
       final custom = _customAnswers[key];
       if (picked.isEmpty && (custom == null || custom.trim().isEmpty)) {
         _toast('请先回答「${question.prompt}」');
@@ -774,7 +776,10 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     }
   }
 
-  Future<void> _loadHistory({required int throughSeq, bool quiet = false}) async {
+  Future<void> _loadHistory({
+    required int throughSeq,
+    bool quiet = false,
+  }) async {
     try {
       final history = await _remote.page(
         widget.session.sessionId,
@@ -815,7 +820,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   static String _describe(Object error) {
     if (error is DshApiException) {
       final detail = error.message.trim();
-      return detail.isEmpty ? '加载失败：${error.code}' : '加载失败：${error.code}\n$detail';
+      return detail.isEmpty
+          ? '加载失败：${error.code}'
+          : '加载失败：${error.code}\n$detail';
     }
     return '加载失败：$error';
   }
@@ -851,7 +858,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   Future<void> _loadSkills() async {
     if (_skillsLoading || _skills != null) return;
     setState(() => _skillsLoading = true);
-    final List<DshSkill> list = await _remote.listSkills(widget.session.sessionId);
+    final List<DshSkill> list = await _remote.listSkills(
+      widget.session.sessionId,
+    );
     if (!mounted) return;
     setState(() {
       _skills = list;
@@ -872,13 +881,14 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   /// 输入框上方的技能补全面板。命中为前缀优先、再按包含；最多列 6 条。
   Widget _buildSkillPanel(ThemeData theme, String query) {
     final List<DshSkill> all = _skills ?? const <DshSkill>[];
-    final List<DshSkill> hits = all.where((DshSkill s) => s.matches(query)).toList()
-      ..sort((DshSkill a, DshSkill b) {
-        final bool pa = a.startsWith(query);
-        final bool pb = b.startsWith(query);
-        if (pa != pb) return pa ? -1 : 1;
-        return a.name.compareTo(b.name);
-      });
+    final List<DshSkill> hits =
+        all.where((DshSkill s) => s.matches(query)).toList()
+          ..sort((DshSkill a, DshSkill b) {
+            final bool pa = a.startsWith(query);
+            final bool pb = b.startsWith(query);
+            if (pa != pb) return pa ? -1 : 1;
+            return a.name.compareTo(b.name);
+          });
     if (hits.isEmpty) return const SizedBox.shrink();
     final List<DshSkill> shown = hits.take(6).toList();
     return Container(
@@ -977,6 +987,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       _attached.add(picked);
       _attachedBytes.add(base64Decode(picked.base64Data));
     });
+    _persistAttachments();
   }
 
   /// 默认选图实现：相册 + 压到 2048 长边、质量 88。
@@ -1005,6 +1016,17 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       _attached.removeAt(index);
       if (index < _attachedBytes.length) _attachedBytes.removeAt(index);
     });
+    _persistAttachments();
+  }
+
+  /// 待发图一变就落盘：返回列表再进来，选好的图得还在。
+  ///
+  /// 文本是敲一个字攒 400ms 写一次，图不用防抖——一次选图/删图本来就只有一下。
+  void _persistAttachments() {
+    if (_disposed) return;
+    unawaited(
+      _draftStore.saveImages(_outboxHostId, _outboxSessionId, _attached),
+    );
   }
 
   /// 把本地气泡里的占位图还原成可发送的 [PromptImage]（重试用）。
@@ -1036,7 +1058,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     // 会话队列里，等上一轮跑完才轮到它；界面上要能看出来，否则用户以为对方
     // 已经在读了，几条消息一口气发完就分不清哪条在处理。
     // 插队（steer）不进队列，所以不置排队标记。
-    final busyBefore = !steer &&
+    final busyBefore =
+        !steer &&
         (_running ||
             _streaming ||
             _pending.any((item) => item.delivery != ChatDelivery.failed));
@@ -1107,7 +1130,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       setState(() {
         final index = _pending.indexWhere((item) => item.localId == localId);
         if (index >= 0) {
-          _pending[index] = _pending[index].copyWith(delivery: ChatDelivery.failed);
+          _pending[index] = _pending[index].copyWith(
+            delivery: ChatDelivery.failed,
+          );
         }
       });
       unawaited(_persistPending());
@@ -1152,10 +1177,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     }
   }
 
-  static bool _sameChildren(
-    List<SessionSummary> a,
-    List<SessionSummary> b,
-  ) {
+  static bool _sameChildren(List<SessionSummary> a, List<SessionSummary> b) {
     if (a.length != b.length) return false;
     for (var i = 0; i < a.length; i++) {
       if (a[i].sessionId != b[i].sessionId ||
@@ -1259,7 +1281,10 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       options = const <PermissionOption>[
         PermissionOption(value: 'read-only', name: 'read-only'),
         PermissionOption(value: 'workspace-write', name: 'workspace-write'),
-        PermissionOption(value: 'danger-full-access', name: 'danger-full-access'),
+        PermissionOption(
+          value: 'danger-full-access',
+          name: 'danger-full-access',
+        ),
       ];
     }
     final picked = await showModalBottomSheet<String>(
@@ -1478,22 +1503,51 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     _draftTimer?.cancel();
     _draftTimer = Timer(const Duration(milliseconds: 400), () {
       if (_disposed) return;
-      unawaited(
-        _draftStore.save(_outboxHostId, _outboxSessionId, _input.text),
-      );
+      unawaited(_draftStore.save(_outboxHostId, _outboxSessionId, _input.text));
     });
   }
 
-  /// 回填上一次离开时没发出去的草稿。
+  /// 回填上一次离开时没发出去的草稿：文本和选好的图都要回来。
   Future<void> _restoreDraft() async {
     final text = await _draftStore.load(_outboxHostId, _outboxSessionId);
-    if (_disposed || !mounted || text.isEmpty) return;
-    // 用户手已经先动了：旧草稿不能盖掉正在打的字。
-    if (_input.text.isNotEmpty) return;
-    _input.value = TextEditingValue(
-      text: text,
-      selection: TextSelection.collapsed(offset: text.length),
+    final images = await _draftStore.loadImages(
+      _outboxHostId,
+      _outboxSessionId,
     );
+    if (_disposed || !mounted) return;
+    // 用户手已经先动了：旧草稿不能盖掉正在打的字、也不能往输入区再塞图。
+    final applyText = text.isNotEmpty && _input.text.isEmpty;
+    final applyImages = images.isNotEmpty && _attached.isEmpty;
+    if (!applyText && !applyImages) return;
+    if (applyText) {
+      _input.value = TextEditingValue(
+        text: text,
+        selection: TextSelection.collapsed(offset: text.length),
+      );
+    }
+    if (applyImages) {
+      final restored = <PromptImage>[];
+      final restoredBytes = <Uint8List>[];
+      for (final image in images) {
+        if (restored.length >= _maxAttachments) break;
+        if (!PromptImage.supportedMediaTypes.contains(image.mediaType)) {
+          continue;
+        }
+        try {
+          restoredBytes.add(base64Decode(image.base64Data));
+        } catch (_) {
+          // 落盘那串 base64 坏了：跳过这张，别让整段草稿回不来。
+          continue;
+        }
+        restored.add(image);
+      }
+      if (restored.isNotEmpty) {
+        setState(() {
+          _attached.addAll(restored);
+          _attachedBytes.addAll(restoredBytes);
+        });
+      }
+    }
   }
 
   /// 回填「已经交给宿主、还没变成历史」的气泡。
@@ -1638,20 +1692,13 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     final snapshot = List<OutboxEntry>.of(_outbox);
     _persistChain = _persistChain
         .then(
-          (_) => _outboxStore.save(
-            _outboxHostId,
-            _outboxSessionId,
-            snapshot,
-          ),
+          (_) => _outboxStore.save(_outboxHostId, _outboxSessionId, snapshot),
         )
         .catchError((Object _) {});
     return _persistChain;
   }
 
-  Future<void> _enqueueOutbox(
-    String text,
-    List<PromptImage> images,
-  ) async {
+  Future<void> _enqueueOutbox(String text, List<PromptImage> images) async {
     var kept = images;
     if (images.isNotEmpty) {
       var chars = 0;
@@ -1731,7 +1778,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     final index = _outbox.indexWhere((item) => item.id == entry.id);
     if (index < 0) return;
     if (!_linkOnline) {
-      _replaceOutbox(entry.copyWith(status: OutboxStatus.pending, clearError: true));
+      _replaceOutbox(
+        entry.copyWith(status: OutboxStatus.pending, clearError: true),
+      );
       unawaited(_persistOutbox());
       return;
     }
@@ -1811,6 +1860,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       _toast('撤回失败：${_permissionErrorText(error)}');
     }
   }
+
   /// 把排队里的这条插到当前轮前面。
   ///
   /// 和发送键长按的插队（`session/prompt` 的 `mode: steer`）不是一回事：那个是
@@ -1847,7 +1897,6 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       _toast('插队失败：${_permissionErrorText(error)}');
     }
   }
-
 
   static String _outboxErrorLabel(Object error) {
     if (error is DshApiException) {
@@ -2102,9 +2151,11 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   ) sync* {
     final sliver = _centerSliverKey.currentContext?.findRenderObject();
     if (sliver is! RenderSliverMultiBoxAdaptor) return;
-    for (RenderBox? child = sliver.firstChild;
-        child != null;
-        child = sliver.childAfter(child)) {
+    for (
+      RenderBox? child = sliver.firstChild;
+      child != null;
+      child = sliver.childAfter(child)
+    ) {
       final data = child.parentData;
       if (data is! SliverMultiBoxAdaptorParentData) continue;
       final index = data.index;
@@ -2128,7 +2179,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       yield (
         key: rows[at].key,
         body: body,
-        offset: layoutOffset + body.localToGlobal(Offset.zero, ancestor: child).dy,
+        offset:
+            layoutOffset + body.localToGlobal(Offset.zero, ancestor: child).dy,
       );
     }
   }
@@ -2137,7 +2189,10 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   ///
   /// 取第一条已经布局的行就够：插入历史对正方向所有行的影响是同一个平移量，
   /// 拿哪条算差额结果都一样。跳过草稿只是因为它的高度每帧都在长。
-  void _rememberPrependAnchor(List<ChatMessage> previousRows, int previousSplit) {
+  void _rememberPrependAnchor(
+    List<ChatMessage> previousRows,
+    int previousSplit,
+  ) {
     if (previousRows.isEmpty) return;
     final draftKeys = <String>{
       for (final draft in _drafts.visibleDrafts) draft.rowKey,
@@ -2165,7 +2220,6 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     }
     return 0;
   }
-
 
   /// 正在流式的草稿：正文随 delta 增长，思考过程折叠成一行。
   List<ChatMessage> get _draftMessages => <ChatMessage>[
@@ -2241,7 +2295,6 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     ..._draftMessages,
   ];
 
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2275,18 +2328,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     final state = _link;
     final (Color color, String label) = switch (state) {
       DshLinkState.online => (theme.colorScheme.primary, ''),
-      DshLinkState.connecting => (
-        const Color(0xFFE8A33D),
-        '正在连接…',
-      ),
-      DshLinkState.reconnecting => (
-        const Color(0xFFE8A33D),
-        '连接断开，正在重连…',
-      ),
-      DshLinkState.offline => (
-        theme.colorScheme.error,
-        '连接已断开',
-      ),
+      DshLinkState.connecting => (const Color(0xFFE8A33D), '正在连接…'),
+      DshLinkState.reconnecting => (const Color(0xFFE8A33D), '连接断开，正在重连…'),
+      DshLinkState.offline => (theme.colorScheme.error, '连接已断开'),
     };
     return AnimatedSize(
       key: const Key('link-bar'),
@@ -2482,7 +2526,10 @@ class _SessionChatScreenState extends State<SessionChatScreen>
                   children: <Widget>[
                     const Icon(AppIcons.sortDown, size: AppIcons.inline),
                     const SizedBox(width: 6),
-                    Text('有新消息', style: Theme.of(context).textTheme.labelMedium),
+                    Text(
+                      '有新消息',
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
                   ],
                 ),
               ),
@@ -2578,7 +2625,6 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     );
   }
 
-
   /// 列表顶部（视觉上最上方）那一条：正在翻更早的历史，或者翻失败了。
   Widget _buildOlderSlot() {
     final theme = Theme.of(context);
@@ -2631,10 +2677,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         shrinkWrap: true,
         padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
         children: <Widget>[
-          for (final request in _approvals.values)
-            _buildApprovalCard(request),
-          for (final request in _questions.values)
-            _buildQuestionCard(request),
+          for (final request in _approvals.values) _buildApprovalCard(request),
+          for (final request in _questions.values) _buildQuestionCard(request),
         ],
       ),
     );
@@ -2777,11 +2821,11 @@ class _SessionChatScreenState extends State<SessionChatScreen>
                         label: Text(option.label),
                         selected:
                             (_pickedOptions[_answerKey(
-                                  request.eventId,
-                                  question.id,
-                                )] ??
-                                const <String>{})
-                            .contains(option.value),
+                                      request.eventId,
+                                      question.id,
+                                    )] ??
+                                    const <String>{})
+                                .contains(option.value),
                         onSelected: busy
                             ? null
                             : (_) => _toggleOption(question, request, option),
@@ -2792,9 +2836,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
               if (question.options.isEmpty || question.allowCustom) ...<Widget>[
                 const SizedBox(height: 6),
                 TextField(
-                  key: Key(
-                    'question-custom-${request.eventId}-${question.id}',
-                  ),
+                  key: Key('question-custom-${request.eventId}-${question.id}'),
                   enabled: !busy,
                   minLines: 1,
                   maxLines: 3,
@@ -2910,7 +2952,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           if (_attached.isNotEmpty) _buildAttachedRow(theme),
-          if (_slashQuery case final String query) _buildSkillPanel(theme, query),
+          if (_slashQuery case final String query)
+            _buildSkillPanel(theme, query),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: <Widget>[
@@ -2938,9 +2981,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
                     }
                   },
                   decoration: InputDecoration(
-                    hintText: _linkOnline
-                        ? '发消息给这个会话…'
-                        : '等待网络恢复后自动发送',
+                    hintText: _linkOnline ? '发消息给这个会话…' : '等待网络恢复后自动发送',
                     isDense: true,
                     filled: true,
                     fillColor: theme.colorScheme.surfaceContainerHighest
@@ -2968,7 +3009,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
                 // 时候。steer 会把这条直接插到正在跑的那一轮前面，而不是
                 // 排到队尾——这是唯一能让「插进去」成立的服务端能力。
                 child: GestureDetector(
-                  onLongPress: canSend ? () => unawaited(_send(steer: true)) : null,
+                  onLongPress: canSend
+                      ? () => unawaited(_send(steer: true))
+                      : null,
                   child: canSend || _sending
                       ? IconButton.filled(
                           key: const Key('chat-send'),

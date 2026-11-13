@@ -5,7 +5,9 @@
 #   bash scripts/build-apk.sh            # debug
 #   bash scripts/build-apk.sh --release  # release（需自备签名）
 #
-# 产物：packages/app/build/app/outputs/flutter-apk/app-<mode>.apk
+# 产物：dist/dsh-pocket-<versionName>-<versionCode>.apk（例 dist/dsh-pocket-1.3.7-22.apk，
+#       版本取自 packages/app/pubspec.yaml 的 `version:`）；原始产物仍留在
+#       packages/app/build/app/outputs/flutter-apk/app-<mode>.apk
 # 退出码：0 成功；1 目录缺失 / flutter 缺失 / 构建失败
 # =============================================================================
 set -euo pipefail
@@ -46,12 +48,32 @@ echo "   工程: $APP_DIR"
 
 APK="$APP_DIR/build/app/outputs/flutter-apk/app-$MODE.apk"
 echo
-if [ -f "$APK" ]; then
-  SIZE="$(du -h "$APK" 2>/dev/null | cut -f1 || echo '?')"
-  echo "APK OK: $APK ($SIZE)"
-  echo "安装: adb install -r \"$APK\""
-else
+if [ ! -f "$APK" ]; then
   echo "ERROR: 构建结束但没找到产物 $APK" >&2
   ls -la "$APP_DIR/build/app/outputs/flutter-apk/" 2>/dev/null || true
   exit 1
 fi
+
+# 归档到 dist/：文件名跟这里已有的历史包一致
+#   dsh-pocket-<versionName>-<versionCode>.apk，例如 dsh-pocket-1.3.4-19.apk
+VERSION_LINE="$(grep -m1 '^version:' "$APP_DIR/pubspec.yaml" | sed 's/^version:[[:space:]]*//')"
+if [ -z "$VERSION_LINE" ]; then
+  echo "ERROR: $APP_DIR/pubspec.yaml 里没读到 version:" >&2
+  exit 1
+fi
+VERSION_NAME="${VERSION_LINE%%+*}"
+VERSION_CODE="${VERSION_LINE#*+}"
+if [ "$VERSION_CODE" = "$VERSION_LINE" ]; then
+  echo "ERROR: pubspec 的 version 缺 +build 号：$VERSION_LINE" >&2
+  exit 1
+fi
+
+DIST_DIR="$ROOT/dist"
+mkdir -p "$DIST_DIR"
+OUT="$DIST_DIR/dsh-pocket-$VERSION_NAME-$VERSION_CODE.apk"
+cp -f "$APK" "$OUT"
+
+SIZE="$(du -h "$OUT" 2>/dev/null | cut -f1 || echo '?')"
+echo "APK OK: $OUT ($SIZE)"
+echo "原始产物: $APK"
+echo "安装: adb install -r \"$OUT\""

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dsh_frp_app/models/dsh_queue.dart';
 import 'package:dsh_frp_app/models/host.dart';
@@ -31,8 +32,10 @@ SessionSummary _session() => const SessionSummary(
 
 /// 发出去之后一直挂着不返回：模拟「上一轮还没跑完，这条在宿主队列里排队」。
 class _HangRemote extends DshRemote {
-  _HangRemote({this.history = const <SessionLogEvent>[], this.queue = const <DshQueuedItem>[]})
-    : super(host: _host);
+  _HangRemote({
+    this.history = const <SessionLogEvent>[],
+    this.queue = const <DshQueuedItem>[],
+  }) : super(host: _host);
 
   final List<SessionLogEvent> history;
   final List<DshQueuedItem> queue;
@@ -68,11 +71,8 @@ class _HangRemote extends DshRemote {
     required int throughSeq,
     int? beforeSeq,
     int maxMessages = 20,
-  }) async => SessionHistory(
-    cursor: throughSeq,
-    records: history,
-    hasMore: false,
-  );
+  }) async =>
+      SessionHistory(cursor: throughSeq, records: history, hasMore: false);
 
   @override
   Future<String> prompt(
@@ -122,10 +122,20 @@ SessionLogEvent _user(int seq, String text, {String? requestId}) {
   );
 }
 
+/// 1×1 透明 PNG：图能不能显示不重要，重要的是「它被记住过」。
+final PromptImage _pendingImage = PromptImage.fromBytes(
+  base64Decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  ),
+  mediaType: 'image/png',
+  name: 'shot.png',
+);
+
 Future<_HangRemote> _pump(
   WidgetTester tester, {
   List<SessionLogEvent> history = const <SessionLogEvent>[],
   List<DshQueuedItem> queue = const <DshQueuedItem>[],
+  Future<PromptImage?> Function()? pickImage,
 }) async {
   final remote = _HangRemote(history: history, queue: queue);
   await tester.pumpWidget(
@@ -135,6 +145,7 @@ Future<_HangRemote> _pump(
         session: _session(),
         remote: remote,
         snapshotTimeout: Duration.zero,
+        pickImage: pickImage,
       ),
     ),
   );
@@ -162,6 +173,13 @@ String? _draftInPrefs(SharedPreferences prefs) =>
 
 String? _pendingInPrefs(SharedPreferences prefs) =>
     prefs.getString(PendingStore.keyFor(_host.id, _sessionId));
+
+String? _draftImagesInPrefs(SharedPreferences prefs) =>
+    prefs.getString(DraftStore.imagesKeyFor(_host.id, _sessionId));
+
+/// 待发缩略图行里的第 [index] 张（缩略图上的移除按钮是它存在的证据）。
+Finder _thumb(int index) =>
+    find.byKey(ValueKey<String>('attach-remove.$index'));
 
 void main() {
   setUp(() {
@@ -204,8 +222,8 @@ void main() {
     await prefs.setString(
       PendingStore.keyFor(_host.id, _sessionId),
       '[{"localId":"local-1","text":"排队那条","requestId":"req-q1",'
-          '"sentAt":${DateTime.now().millisecondsSinceEpoch},'
-          '"queued":true,"failed":false}]',
+      '"sentAt":${DateTime.now().millisecondsSinceEpoch},'
+      '"queued":true,"failed":false}]',
     );
 
     final remote = await _pump(
@@ -227,8 +245,8 @@ void main() {
     await prefs.setString(
       PendingStore.keyFor(_host.id, _sessionId),
       '[{"localId":"local-2","text":"已经跑完那条","requestId":"req-q2",'
-          '"sentAt":${DateTime.now().millisecondsSinceEpoch},'
-          '"queued":true,"failed":false}]',
+      '"sentAt":${DateTime.now().millisecondsSinceEpoch},'
+      '"queued":true,"failed":false}]',
     );
 
     final remote = await _pump(
@@ -240,6 +258,60 @@ void main() {
 
     expect(find.text('已经跑完那条'), findsOneWidget);
     expect(find.text('排队中'), findsNothing);
+    await _leave(tester, remote);
+  });
+
+  testWidgets('选好的图返回列表再进来，缩略图还在', (tester) async {
+    final remote = await _pump(tester, pickImage: () async => _pendingImage);
+    await tester.tap(find.byKey(const ValueKey<String>('chat-attach')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(_thumb(0), findsOneWidget);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(_draftImagesInPrefs(prefs), contains('shot.png'));
+
+    await _leave(tester, remote);
+
+    final again = await _pump(tester);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(_thumb(0), findsOneWidget);
+    await _leave(tester, again);
+  });
+
+  testWidgets('手动删掉的图不会在下次进来时复活', (tester) async {
+    final remote = await _pump(tester, pickImage: () async => _pendingImage);
+    await tester.tap(find.byKey(const ValueKey<String>('chat-attach')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(_thumb(0), findsOneWidget);
+
+    await tester.tap(_thumb(0));
+    await tester.pump();
+    final prefs = await SharedPreferences.getInstance();
+    expect(_draftImagesInPrefs(prefs), isNull);
+    await _leave(tester, remote);
+
+    final again = await _pump(tester);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(_thumb(0), findsNothing);
+    await _leave(tester, again);
+  });
+
+  testWidgets('图发出去之后，待发区与落盘都清空', (tester) async {
+    final remote = await _pump(tester, pickImage: () async => _pendingImage);
+    await tester.tap(find.byKey(const ValueKey<String>('chat-attach')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pump();
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(_draftImagesInPrefs(prefs), isNull);
+    expect(_thumb(0), findsNothing);
     await _leave(tester, remote);
   });
 }

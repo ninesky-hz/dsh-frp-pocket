@@ -7,12 +7,18 @@ App 是壳：列表 + 扫码 + WebView。真正的鉴权在 PC 的网关里，�
 ```bash
 # 构建（仓库根目录）
 bash scripts/build-apk.sh
-# 产物：packages/app/build/app/outputs/flutter-apk/app-debug.apk
+# 归档产物：dist/dsh-pocket-<versionName>-<versionCode>.apk
+# 例：dist/dsh-pocket-1.3.7-22.apk（版本取自 packages/app/pubspec.yaml 的 version:）
 
 # 手机用 USB 连上（开 USB 调试）
 adb devices
-adb install -r packages/app/build/app/outputs/flutter-apk/app-debug.apk
+adb install -r dist/dsh-pocket-1.3.7-22.apk
 ```
+
+**出包目录约定**：所有发出去的 APK 统一放仓库根的 `dist/`（已在 `.gitignore` 里，
+不进版本库），文件名固定 `dsh-pocket-<versionName>-<versionCode>.apk`，与
+`pubspec.yaml` 的 `version:` 一一对应（`1.3.7+22` → `dsh-pocket-1.3.7-22.apk`）。
+`scripts/build-apk.sh` 构建完自动拷过去，不用手工改名。
 
 没有 adb 的话：把 APK 传到手机（微信文件传输/网盘/USB 拷贝），点开安装，允许「安装未知来源应用」。
 

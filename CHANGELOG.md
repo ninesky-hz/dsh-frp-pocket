@@ -2,6 +2,18 @@
 
 本项目两个包各自记版本：`packages/app`（Android 客户端，`dsh_frp_app`）与 `packages/plugin`（DSH 宿主插件，`dsh-frp-pocket`）。
 
+## 2026-11-13（待发图片随草稿落盘）
+
+### app 1.3.7+22
+
+- **选好的图返回列表再进来，不会再消失了**。以前只有输入框那行字落盘（`dsh_frp.draft.<host>.<session>`），输入区里那排待发图片（`_attached`）纯活在内存里，页面一 pop 就没了——文字在、图没了，用户只能重新挑一遍。
+  - `DraftStore` 新增 `dsh_frp.draft.images.<host>.<session>`：图按 `toJson()`（`mediaType` / `data` / `name`）整串 base64 存，跟 outbox 一个取舍，不额外管文件生命周期。
+  - 文本仍用原来的 key，老草稿照旧读得出来；没有把纯文本改成 JSON，因为用户真的会打 `{` 开头的内容。
+  - 选图成功、手动移除图之后立刻落盘（一次操作只有一下，不需要文本那套 400ms 防抖）；发送成功后 `clear()` 一次清文本与图两把 key。
+  - 回填时文本只在输入框为空时写回、图只在待发区为空时写回，不会盖掉正在打的新内容；坏掉的 base64 单张跳过，超过 5 张截断。
+- 出包目录统一到仓库根的 `dist/`，文件名 `dsh-pocket-<versionName>-<versionCode>.apk`（版本直接读 `pubspec.yaml`），`scripts/build-apk.sh` 构建完自动归档，不用手工改名。
+- 测试：`test/session_chat_pending_restore_test.dart` 新增 3 条（选图→返回→再进缩略图还在；手动删掉不复活；发出去后待发区与落盘都清空）。全量 346 通过，`flutter analyze` 无问题。
+
 ## 2026-11-13（会话图片全屏查看）
 
 ### app 1.3.6+21
