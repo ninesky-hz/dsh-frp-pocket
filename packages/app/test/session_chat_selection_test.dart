@@ -124,6 +124,32 @@ void main() {
     // 输入框自己的文本框不在这一层，别把聊天区的选字语义扩大过去。
     expect(find.byType(TextField), findsOneWidget);
 
+    // 选区和拖选把手必须相对**气泡**可见：自己发的气泡底色就是 primary，
+    // 如果沿用 Material 默认（把手 = primary），把手会和底色一模一样地消失。
+    for (final (text, expectSameAsForeground) in <(String, bool)>[
+      ('这句话我想复制出来', true),
+      ('这段回复也想复制一部分', false),
+    ]) {
+      final ctx = tester.element(
+        find.byWidgetPredicate(
+          (widget) => widget is SelectableText && widget.data == text,
+        ),
+      );
+      final scheme = Theme.of(ctx).colorScheme;
+      final foreground = expectSameAsForeground
+          ? scheme.onPrimary
+          : scheme.onSurface;
+      final selection = TextSelectionTheme.of(ctx);
+      expect(
+        selection.selectionHandleColor,
+        foreground,
+        reason: '$text：把手要跟气泡前景色一致，否则在气泡底色上看不见',
+      );
+      expect(selection.selectionHandleColor, isNot(scheme.primary));
+      expect(selection.selectionColor, isNot(scheme.primary));
+      expect(selection.selectionColor?.a, closeTo(0.32, 0.01));
+    }
+
     await tester.pumpWidget(const SizedBox());
     await remote.close();
   });

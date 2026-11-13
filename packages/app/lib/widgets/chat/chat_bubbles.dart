@@ -114,11 +114,24 @@ class MessageBubble extends StatelessWidget {
                 // 长按选字、拖选、复制一部分，靠系统文本框自己给；包
                 // `SelectionArea` 会跟我们的 `CustomScrollView(center:)` 抢
                 // 滚动容器，滚动中选字时还会拿已 defunct 的 element 取位置。
-                SelectableText(
-                  typing ? '${message.text}▌' : message.text,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: foreground,
-                    height: 1.45,
+                //
+                // 选中高亮和拖选把手必须相对**这个气泡**可见：默认取的是
+                // `colorScheme.primary`，而自己发的气泡底色就是 primary，
+                // 于是选区和把手一起消失（浅色主题最明显——两者都是
+                // #1F6F63）。这里按气泡自己的前景色重设，白字气泡得到白色
+                // 把手，深字气泡得到深色把手，两套主题都自洽。
+                TextSelectionTheme(
+                  data: TextSelectionTheme.of(context).copyWith(
+                    cursorColor: foreground,
+                    selectionColor: foreground.withValues(alpha: 0.32),
+                    selectionHandleColor: foreground,
+                  ),
+                  child: SelectableText(
+                    typing ? '${message.text}▌' : message.text,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: foreground,
+                      height: 1.45,
+                    ),
                   ),
                 ),
               if (message.notes.isNotEmpty)

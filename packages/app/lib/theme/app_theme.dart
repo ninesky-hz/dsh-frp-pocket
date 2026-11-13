@@ -37,6 +37,16 @@ ThemeData buildAppTheme(Brightness brightness) {
         color: colorScheme.onSurface,
       ),
     ),
+    // 选中文字这件事，Material 的默认值是「用 primary 画光标、把手和选区」。
+    // 我们的气泡、按钮、发送键都是 primary，于是「在 primary 上选 primary」——
+    // 选区和把手直接消失。这里把默认值改成显式的：光标跟正文走，把手用 primary
+    // （在灰底上是对的），选区给一层 32% 的 primary。气泡内部另有覆盖：那里
+    // 底色就是 primary，得反过来用 onPrimary（见 chat_bubbles.dart）。
+    textSelectionTheme: TextSelectionThemeData(
+      cursorColor: colorScheme.onSurface,
+      selectionColor: colorScheme.primary.withValues(alpha: 0.32),
+      selectionHandleColor: colorScheme.primary,
+    ),
   );
 }
 
