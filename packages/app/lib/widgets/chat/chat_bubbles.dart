@@ -9,6 +9,7 @@ import '../../models/chat_notes.dart';
 import '../../models/outbox.dart';
 import '../../models/session_event.dart';
 import '../../theme/app_icons.dart';
+import '../ignore_show_on_screen.dart';
 
 // 聊天页的展示层：气泡、离线气泡、图片、空态/错误态、思考小字。
 //
@@ -62,6 +63,7 @@ class MessageBubble extends StatelessWidget {
     required this.imageBytes,
     required this.localBytesOf,
     this.typing = false,
+    this.onSelectionChanged,
   });
 
   final ChatMessage message;
@@ -78,6 +80,10 @@ class MessageBubble extends StatelessWidget {
 
   /// 正在逐字流式：正文末尾挂一个光标。
   final bool typing;
+
+  /// 选字状态变化（落点、扩展、收起）。聊天列表据此在选字期间冻住滚动，
+  /// 否则长按之后想微调选区，一动就把整条列表带着滑走。
+  final ValueChanged<TextSelection>? onSelectionChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -120,17 +126,25 @@ class MessageBubble extends StatelessWidget {
                 // 于是选区和把手一起消失（浅色主题最明显——两者都是
                 // #1F6F63）。这里按气泡自己的前景色重设，白字气泡得到白色
                 // 把手，深字气泡得到深色把手，两套主题都自洽。
-                TextSelectionTheme(
-                  data: TextSelectionTheme.of(context).copyWith(
-                    cursorColor: foreground,
-                    selectionColor: foreground.withValues(alpha: 0.32),
-                    selectionHandleColor: foreground,
-                  ),
-                  child: SelectableText(
-                    typing ? '${message.text}▌' : message.text,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: foreground,
-                      height: 1.45,
+                //
+                // 外面再套一层 `IgnoreShowOnScreen`：选中时文本框会要求祖先
+                // 把它滚到可见处，而一条消息常有整屏高，`ensureVisible` 只能
+                // 把整条列表拽到底，于是长按上面的句子、页面掉到输入框那头。
+                IgnoreShowOnScreen(
+                  child: TextSelectionTheme(
+                    data: TextSelectionTheme.of(context).copyWith(
+                      cursorColor: foreground,
+                      selectionColor: foreground.withValues(alpha: 0.32),
+                      selectionHandleColor: foreground,
+                    ),
+                    child: SelectableText(
+                      typing ? '${message.text}▌' : message.text,
+                      onSelectionChanged: (selection, cause) =>
+                          onSelectionChanged?.call(selection),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: foreground,
+                        height: 1.45,
+                      ),
                     ),
                   ),
                 ),

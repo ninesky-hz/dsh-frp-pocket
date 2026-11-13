@@ -21,6 +21,7 @@ import '../services/dsh_remote.dart';
 import '../services/outbox_store.dart';
 import '../services/probe.dart';
 import '../widgets/chat/chat_bubbles.dart';
+import '../widgets/ignore_show_on_screen.dart';
 import '../widgets/chat/chat_scroll.dart';
 import '../widgets/chrome.dart';
 import '../widgets/status_dot.dart';
@@ -185,6 +186,17 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   bool _sending = false;
   bool _hasNew = false;
   bool _atBottom = true;
+
+  /// 聊天正文里正有一段被选中：这期间冻住列表滚动。
+  ///
+  /// 长按选字之后想拖把手微调，手一抖就把整条列表带走了，选中的那句话跟着跑掉
+  /// ——「长按复制的是上面的内容，整个却掉到输入框那头」。选字期间列表不动，
+  /// 等选区收起或轻点一下再交回给手势。
+  bool _selecting = false;
+
+  /// 记一次指针落点，用来区分「轻点收工」和「拖把手」。
+  Offset? _pointerDownAt;
+  DateTime? _pointerDownTime;
   bool _disposed = false;
   String? _loadError;
   int? _asOfSeq;
@@ -259,6 +271,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         ? kUntitledSession
         : widget.session.title;
     _scroll.addListener(_onScrollChanged);
+    // 点进输入框就等于离开选字：把列表交回给手势。
+    _focus.addListener(_onComposerFocusChanged);
     _linkSub = _remote.linkStates.listen(_onLinkState);
     _permission = widget.session.permission;
     if (_permission == null) unawaited(_hydratePermission());
@@ -278,6 +292,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     unawaited(_eventsSub?.cancel());
     unawaited(_linkSub?.cancel());
     _scroll.removeListener(_onScrollChanged);
+    _focus.removeListener(_onComposerFocusChanged);
     _scroll.dispose();
     _input.dispose();
     _focus.dispose();
@@ -1001,6 +1016,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       _pending.add(message);
       _sending = true;
       _hasNew = false;
+      _selecting = false;
     });
     _scrollToBottom();
     try {
@@ -1697,6 +1713,18 @@ class _SessionChatScreenState extends State<SessionChatScreen>
 
   // ------------------------------------------------------------ 布局
 
+  void _onComposerFocusChanged() {
+    if (!_focus.hasFocus || !_selecting) return;
+    setState(() => _selecting = false);
+  }
+
+  /// 正文选区变化：只有「真有一段被选中」才冻结列表。
+  void _onBubbleSelection(TextSelection selection) {
+    final selecting = !selection.isCollapsed;
+    if (selecting == _selecting) return;
+    setState(() => _selecting = selecting);
+  }
+
   void _onScrollChanged() {
     if (!mounted) return;
     final atBottom = _atBottomNow();
@@ -1735,7 +1763,10 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   }
 
   void _scrollToBottom({bool animate = true}) {
+    // 用户正在选字：别把视口拽走，他手上的那句话会跑。
+    if (_selecting) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_selecting) return;
       if (!mounted || !_scroll.hasClients) return;
       final position = _scroll.position;
       if (!position.hasContentDimensions) return;
@@ -2170,10 +2201,31 @@ class _SessionChatScreenState extends State<SessionChatScreen>
 
     return Stack(
       children: <Widget>[
-        _buildChatList(
-          items,
-          showOlderSlot: showOlderSlot,
-          draftKeys: draftKeys,
+        Listener(
+          // 选字时列表被冻住，得留一个自然的出口：轻点一下（没拖动）就解冻。
+          // 拖把手一定会超过 12 像素、也远比 300ms 长，所以不会被误判成轻点。
+          onPointerDown: (event) {
+            if (!_selecting) return;
+            _pointerDownAt = event.position;
+            _pointerDownTime = DateTime.now();
+          },
+          onPointerUp: (event) {
+            final start = _pointerDownAt;
+            final at = _pointerDownTime;
+            _pointerDownAt = null;
+            _pointerDownTime = null;
+            if (start == null || at == null || !_selecting) return;
+            final moved = (event.position - start).distance;
+            final elapsed = DateTime.now().difference(at);
+            if (moved < 12 && elapsed < const Duration(milliseconds: 300)) {
+              setState(() => _selecting = false);
+            }
+          },
+          child: _buildChatList(
+            items,
+            showOlderSlot: showOlderSlot,
+            draftKeys: draftKeys,
+          ),
         ),
         if (_hasNew)
           Positioned(
@@ -2226,6 +2278,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       center: _centerSliverKey,
       anchor: 1,
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.manual,
+      // 选字期间锁住：拖把手、拖选区都不该顺手把列表滚走。
+      physics: _selecting ? const NeverScrollableScrollPhysics() : null,
       slivers: <Widget>[
         const SliverToBoxAdapter(child: SizedBox(height: 8)),
         if (showOlderSlot) SliverToBoxAdapter(child: _buildOlderSlot()),
@@ -2283,6 +2337,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
               typing: draftKeys.contains(message.key),
               imageBytes: _imageBytes,
               localBytesOf: _localBytesOf,
+              onSelectionChanged: _onBubbleSelection,
             ),
     );
   }
@@ -2392,11 +2447,15 @@ class _SessionChatScreenState extends State<SessionChatScreen>
               children: <Widget>[
                 Align(
                   alignment: Alignment.centerLeft,
-                  child: SelectableText(
-                    request.detail,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      fontFamily: 'monospace',
-                      color: theme.colorScheme.onSurfaceVariant,
+                  // 同在一条聊天列表里：选字时别让祖先把视口滚走
+                  // （见 IgnoreShowOnScreen 的注释）。
+                  child: IgnoreShowOnScreen(
+                    child: SelectableText(
+                      request.detail,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                 ),

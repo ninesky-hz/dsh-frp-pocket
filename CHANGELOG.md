@@ -25,6 +25,15 @@
   - 重启标记落 `$DSH_HOME/dsh-frp-pocket/restart.json`，下次启动时打一行「上次远程重启 mode=… by=…」，方便事后对账。
 - 测试：`test/restart.test.mjs`（12 条：形态判定、relaunch 目标、Windows/POSIX 脚本内容与引号转义、标记形状、202→409→放行、能力不足）、`test/gateway-restart.test.mjs`（10 条：401、`?pin=` 不授权、缺动作头 400、200/405/202/409/503、`/info` 能力位且不泄露 PIN）。`npm test` 93 通过。
 
+### app 1.3.1+16
+
+- **长按选字的时候列表会自己滑走**。挑一段话长按想复制，页面先往上/下一蹿，选中的那几句跟着跑出视野——「长按复制的是上面的内容，整个却掉到输入框那头」。
+  - 选字期间把聊天列表的滚动**冻住**（`NeverScrollableScrollPhysics`）：拖把手、拖选区都不再顺手把整条列表带跑。
+  - 出口留了三个，不会卡死：轻点一下（位移 <12px 且 <300ms）解冻；点进输入框打字解冻；发新消息解冻。
+  - 自动贴底也一并让路：选字期间 `_scrollToBottom` 直接返回，流式增长不会再把你拽回底部。
+- 气泡里的文本框外面包了一层 `IgnoreShowOnScreen`：`SelectableText` 每次落点/选区变化都会请求祖先「把我滚到可见处」，这个请求会一路冒泡到 `Scrollable` 变成 `ensureVisible`，选中一条比屏幕还高的消息时它只能把列表拽到末尾。选字时视口位置该由用户的手决定，不由某段文字的光标决定。
+- 回归测试 `test/session_chat_selection_scroll_test.dart` 三条：长按后视口不动、选字期间拖动不滚、流式增长时翻上去不被拽回。测试里先找「真的露在视口里的正文」再按——按下空气会得到假绿。
+
 ### app 1.3.0+15
 
 - **隧道状态文案认 `reconnecting` / `starting`**：之前只认 `running/error`，frpc 正在自己重连时会显示成「网关握手成功」，看起来像没问题。现在分别显示「隧道重连中（拨 VPN / 换网后常见）」「隧道连接中」。
