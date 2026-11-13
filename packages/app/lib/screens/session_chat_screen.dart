@@ -18,7 +18,9 @@ import '../models/session_event.dart';
 import '../models/session_summary.dart';
 import '../services/dsh_api.dart';
 import '../services/dsh_remote.dart';
+import '../services/draft_store.dart';
 import '../services/outbox_store.dart';
+import '../services/pending_store.dart';
 import '../services/probe.dart';
 import '../widgets/chat/chat_bubbles.dart';
 import '../widgets/ignore_show_on_screen.dart';
@@ -42,6 +44,8 @@ class SessionChatScreen extends StatefulWidget {
     required this.session,
     this.remote,
     this.outboxStore,
+    this.draftStore,
+    this.pendingStore,
     this.pickImage,
     this.snapshotTimeout = const Duration(seconds: 8),
   });
@@ -54,6 +58,12 @@ class SessionChatScreen extends StatefulWidget {
 
   /// 离线队列的落盘层；测试注入用，为空时用默认 [OutboxStore]。
   final OutboxStore? outboxStore;
+
+  /// 输入框草稿的落盘层；测试注入用。
+  final DraftStore? draftStore;
+
+  /// 「已发未回显」气泡的落盘层；测试注入用。
+  final PendingStore? pendingStore;
 
   /// 选图入口；测试注入用。
   ///
@@ -163,6 +173,21 @@ class _SessionChatScreenState extends State<SessionChatScreen>
 
   /// 落盘层；没注入时自己建一个（SharedPreferences 全局单例，不用释放）。
   late final OutboxStore _outboxStore = widget.outboxStore ?? OutboxStore();
+  late final DraftStore _draftStore = widget.draftStore ?? DraftStore();
+  late final PendingStore _pendingStore =
+      widget.pendingStore ?? PendingStore();
+
+  /// 草稿写入的防抖闹钟：每敲一个字都写一次盘没必要。
+  Timer? _draftTimer;
+
+  /// 「已发未回显」气泡的写入串行化，和 outbox 一个套路。
+  Future<void> _pendingChain = Future<void>.value();
+
+  /// 从磁盘回填的气泡 localId：对账时只碰这些，别动本次会话里刚发出去那些。
+  final Set<String> _restoredLocalIds = <String>{};
+
+  /// 本地气泡的发出时间：落盘时带上，重启后 `PendingStore.maxAge` 才有依据。
+  final Map<String, DateTime> _pendingSentAt = <String, DateTime>{};
 
   /// 队列是否已从磁盘回填过：回填前不 flush，避免把旧条目当新条目重发。
   bool _outboxReady = false;
@@ -276,8 +301,11 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     _linkSub = _remote.linkStates.listen(_onLinkState);
     _permission = widget.session.permission;
     if (_permission == null) unawaited(_hydratePermission());
+    _input.addListener(_onDraftChanged);
     _start();
     unawaited(_restoreOutbox());
+    unawaited(_restoreDraft());
+    unawaited(_restorePending());
     unawaited(_loadChildren());
   }
 
@@ -293,6 +321,10 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     unawaited(_linkSub?.cancel());
     _scroll.removeListener(_onScrollChanged);
     _focus.removeListener(_onComposerFocusChanged);
+    _input.removeListener(_onDraftChanged);
+    _draftTimer?.cancel();
+    // 页面被销毁前把最后一个字写下去：用户是「返回列表」而不是「不要了」。
+    unawaited(_draftStore.save(_outboxHostId, _outboxSessionId, _input.text));
     _scroll.dispose();
     _input.dispose();
     _focus.dispose();
@@ -622,13 +654,32 @@ class _SessionChatScreenState extends State<SessionChatScreen>
 
   bool _resolvePending(SessionLogEvent event) {
     if (_pending.isEmpty) return false;
-    final text = chatMessageOf(event)?.text;
-    if (text == null) return false;
-    final index = _pending.indexWhere(
-      (item) => item.delivery != ChatDelivery.failed && item.text == text,
-    );
+    // 先按 requestId 认：文本匹配会把两条一模一样的话认成同一条。
+    final data = event.data;
+    final message = asObjectMap(data['message']);
+    final requestId =
+        asText(data['requestId']) ??
+        asText(message['requestId']) ??
+        asText(asObjectMap(message['source'])['rpcId']);
+    var index = -1;
+    if (requestId != null) {
+      index = _pending.indexWhere((item) => item.requestId == requestId);
+    }
+    if (index < 0) {
+      final text = chatMessageOf(event)?.text;
+      if (text == null) return false;
+      index = _pending.indexWhere(
+        (item) => item.delivery != ChatDelivery.failed && item.text == text,
+      );
+    }
     if (index < 0) return false;
+    final localId = _pending[index].localId;
     _pending.removeAt(index);
+    if (localId != null) {
+      _restoredLocalIds.remove(localId);
+      _pendingSentAt.remove(localId);
+    }
+    unawaited(_persistPending());
     return true;
   }
 
@@ -744,6 +795,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         if (added && !quiet && !_atBottom) _hasNew = true;
       });
       if (added) _scrollToBottom(animate: quiet);
+      // 历史到了再对一次账：回填的气泡如果已经变成历史，就地收掉。
+      if (_restoredLocalIds.isNotEmpty) unawaited(_reconcilePending());
     } on DshApiException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -883,6 +936,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     if (_sending) return;
     if (text.isEmpty && images.isEmpty) return;
     _input.clear();
+    unawaited(_draftStore.clear(_outboxHostId, _outboxSessionId));
     // 图已经拷进 images，输入区先清空：视觉上「已经发出去了」，
     // 失败了气泡里还留着（字节在 _localImages），不必再占着输入框。
     setState(() {
@@ -1012,6 +1066,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       images: List<ChatImageRef>.unmodifiable(refs),
       requestId: requestId,
     );
+    _pendingSentAt[localId] = DateTime.now();
     setState(() {
       _pending.add(message);
       _sending = true;
@@ -1019,6 +1074,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       _selecting = false;
     });
     _scrollToBottom();
+    unawaited(_persistPending());
     try {
       if (steer) {
         await _remote.promptSteer(
@@ -1044,6 +1100,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
           );
         }
       });
+      unawaited(_persistPending());
     } catch (error) {
       if (!mounted) return;
       debugPrint('SessionChat: 发送失败 $error');
@@ -1053,6 +1110,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
           _pending[index] = _pending[index].copyWith(delivery: ChatDelivery.failed);
         }
       });
+      unawaited(_persistPending());
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -1063,6 +1121,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     setState(() {
       _pending.removeWhere((item) => item.localId == message.localId);
     });
+    unawaited(_persistPending());
     unawaited(_sendText(message.text, images: images));
   }
 
@@ -1412,6 +1471,143 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     return '${delta.inDays} 天前';
   }
 
+  // ------------------------------------------------- 草稿与待回显气泡
+
+  /// 输入框内容变了：攒 400ms 再写盘，别每敲一个字落一次。
+  void _onDraftChanged() {
+    _draftTimer?.cancel();
+    _draftTimer = Timer(const Duration(milliseconds: 400), () {
+      if (_disposed) return;
+      unawaited(
+        _draftStore.save(_outboxHostId, _outboxSessionId, _input.text),
+      );
+    });
+  }
+
+  /// 回填上一次离开时没发出去的草稿。
+  Future<void> _restoreDraft() async {
+    final text = await _draftStore.load(_outboxHostId, _outboxSessionId);
+    if (_disposed || !mounted || text.isEmpty) return;
+    // 用户手已经先动了：旧草稿不能盖掉正在打的字。
+    if (_input.text.isNotEmpty) return;
+    _input.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+
+  /// 回填「已经交给宿主、还没变成历史」的气泡。
+  ///
+  /// 这一批气泡是聊天页里最容易丢的东西：排队中的消息不在 `session/page` 里，
+  /// 只活在内存里，页面一销毁就彻底看不见了（过一会儿上一轮跑完它又冒出来，
+  /// 用户只会觉得「刚才那条去哪了」）。
+  Future<void> _restorePending() async {
+    final restored = await _pendingStore.load(_outboxHostId, _outboxSessionId);
+    if (_disposed) return;
+    final alive = <PendingEntry>[];
+    for (final entry in restored) {
+      if (_pending.any((item) => item.localId == entry.localId)) continue;
+      if (_messages.any((item) => item.requestId == entry.requestId)) continue;
+      alive.add(entry);
+      _restoredLocalIds.add(entry.localId);
+      _pendingSentAt[entry.localId] = entry.sentAt;
+    }
+    if (alive.isEmpty) return;
+    void apply() {
+      for (final entry in alive) {
+        if (_pending.any((item) => item.localId == entry.localId)) continue;
+        _pending.add(entry.toMessage());
+      }
+    }
+
+    if (mounted) {
+      setState(apply);
+      _scrollToBottom();
+    } else {
+      apply();
+    }
+    unawaited(_reconcilePending());
+  }
+
+  /// 回填之后和宿主对一次账。
+  ///
+  /// 只剩两件事要判：这条是不是已经变成历史了（在历史里就删掉本地气泡，别重影），
+  /// 以及它还在不在宿主队列里（在就标成排队中）。两条都不成立也**不删**——
+  /// 队列在两次轮次之间本来就会短暂空一下，宁可留一个气泡，也不要凭空吞掉
+  /// 用户发过的话。
+  Future<void> _reconcilePending() async {
+    if (_disposed || _restoredLocalIds.isEmpty) return;
+    var changed = false;
+    for (final message in List<ChatMessage>.of(_pending)) {
+      final localId = message.localId;
+      if (localId == null || !_restoredLocalIds.contains(localId)) continue;
+      final echoed = _messages.any(
+        (item) =>
+            item.role == ChatRole.user &&
+            item.seq != null &&
+            item.text.trim() == message.text.trim(),
+      );
+      if (!echoed) continue;
+      _pending.removeWhere((item) => item.localId == localId);
+      _restoredLocalIds.remove(localId);
+      changed = true;
+    }
+
+    if (_linkOnline && _restoredLocalIds.isNotEmpty) {
+      try {
+        final items = await _remote.queuedItems(widget.session.sessionId);
+        if (_disposed) return;
+        for (var i = 0; i < _pending.length; i++) {
+          final message = _pending[i];
+          final localId = message.localId;
+          if (localId == null || !_restoredLocalIds.contains(localId)) continue;
+          final waiting = items.any(
+            (item) => item.rpcId != null && item.rpcId == message.requestId,
+          );
+          final next = waiting ? ChatDelivery.queued : message.delivery;
+          if (next != message.delivery) {
+            _pending[i] = message.copyWith(delivery: next);
+            changed = true;
+          }
+        }
+      } catch (error) {
+        debugPrint('SessionChat: 待回显对账失败 $error');
+      }
+    }
+
+    if (!changed) return;
+    if (mounted) setState(() {});
+    unawaited(_persistPending());
+  }
+
+  /// 把当前 `_pending` 整表写盘（只写有文字的那些，纯图消息存了也点不开）。
+  Future<void> _persistPending() {
+    final entries = <PendingEntry>[];
+    for (final message in _pending) {
+      final localId = message.localId;
+      final requestId = message.requestId;
+      if (localId == null || requestId == null) continue;
+      final text = message.text.trim();
+      if (text.isEmpty) continue;
+      entries.add(
+        PendingEntry(
+          localId: localId,
+          text: text,
+          requestId: requestId,
+          sentAt: _pendingSentAt[localId] ?? DateTime.now(),
+          queued: message.delivery == ChatDelivery.queued,
+          failed: message.delivery == ChatDelivery.failed,
+        ),
+      );
+    }
+    _pendingChain = _pendingChain
+        .then(
+          (_) => _pendingStore.save(_outboxHostId, _outboxSessionId, entries),
+        )
+        .catchError((Object _) {});
+    return _pendingChain;
+  }
+
   // ------------------------------------------------------- 离线待发队列
 
   /// 从磁盘回填上一次进程留下的队列。
@@ -1586,6 +1782,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     final index = _pending.indexWhere((item) => item.localId == localId);
     if (index < 0) return;
     setState(() => _pending.removeAt(index));
+    _restoredLocalIds.remove(localId);
+    unawaited(_persistPending());
 
     final requestId = message.requestId;
     if (requestId == null) {
