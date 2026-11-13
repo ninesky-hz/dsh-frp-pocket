@@ -744,6 +744,7 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = useState('');
       const [busy, setBusy] = useState('');
       const [showPin, setShowPin] = useState(false);
+      const [pinConfirm, setPinConfirm] = useState(false);
       const mounted = useRef(true);
 
       const call = async (endpoint, payload) => {
@@ -811,8 +812,27 @@ window.__ModuleLoader__.load({
         }
       };
 
-      const copy = async (text) => {
+      /** 换 PIN：主面板自己也要有一份（设置页那份是另一个组件的局部函数，这里引用不到）。
+       *  不用 window.confirm —— 面板跑在 iframe 里，没有 allow-modals 时 confirm 直接被拒，
+       *  点了会「看起来没反应」；改成按钮原地二次确认。 */
+      const regenPin = async () => {
+        setBusy('pin');
+        setNotice('');
+        setError(null);
         try {
+          const value = await call('pin.regenerate', {});
+          if (!mounted.current) return;
+          setStatus(value);
+          setPinConfirm(false);
+          setNotice('已生成新 PIN：旧 cookie 立即失效，手机需要重新扫码');
+        } catch (err) {
+          if (mounted.current) setError(err?.message ?? String(err));
+        } finally {
+          if (mounted.current) setBusy('');
+        }
+      };
+
+      const copy = async (text) => {        try {
           if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
           else throw new Error('no clipboard');
           setNotice('已复制到剪贴板');
@@ -941,22 +961,20 @@ window.__ModuleLoader__.load({
             h('button', { style: styles.btn, onClick: () => setShowPin((v) => !v) }, showPin ? '隐藏' : '显示'),
             h('button', { style: styles.btn, onClick: () => copy(pin) }, '复制 PIN'),
             h('button', { style: styles.btn, onClick: () => copy(qr?.text ?? '') }, '复制配对串'),
-            h(
-              'button',
-              {
-                style: styles.btn,
-                disabled: busy === 'pin',
-                // 换 PIN 会让手机上已存的 cookie 失效，必须用户确认，别误点
-                onClick: () => {
-                  const ask = typeof window !== 'undefined' && typeof window.confirm === 'function'
-                    ? '换 PIN 后手机需要重新扫码，旧 cookie 立即失效。继续？'
-                    : null;
-                  if (ask && !window.confirm(ask)) return;
-                  regenPin();
-                },
-              },
-              busy === 'pin' ? '生成中…' : '换个 PIN',
-            ),
+            pinConfirm
+              ? [
+                  h(
+                    'button',
+                    { style: styles.btn, disabled: busy === 'pin', onClick: regenPin },
+                    busy === 'pin' ? '生成中…' : '确认更换（手机要重扫）',
+                  ),
+                  h('button', { style: styles.btn, onClick: () => setPinConfirm(false) }, '取消'),
+                ]
+              : h(
+                  'button',
+                  { style: styles.btn, onClick: () => setPinConfirm(true) },
+                  '换个 PIN',
+                ),
           ),
           h(
             'div',

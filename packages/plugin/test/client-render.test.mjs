@@ -230,3 +230,79 @@ test('主面板：显示插件版本号，二维码容器是固定正方形（�
   // 立刻失效」却没有入口，很别扭
   assert.ok(text.includes('换个 PIN'), 'PIN 卡片上应有「换个 PIN」按钮');
 });
+
+/** 把渲染树摊平成节点数组，方便按文案找按钮。 */
+function flatten(node, out = []) {
+  if (!node || typeof node !== 'object') return out;
+  if (Array.isArray(node)) {
+    for (const item of node) flatten(item, out);
+    return out;
+  }
+  if (node.props) {
+    out.push(node);
+    flatten(node.props.children, out);
+  }
+  return out;
+}
+
+test('主面板「换个 PIN」：二次确认后真的发 pin.regenerate 并换掉显示的 PIN', async () => {
+  const { registered, begin, end } = loadPlugin();
+  const main = registered.find((r) => r.meta.name === 'main');
+  assert.ok(main, '没有注册 main 面板');
+
+  const calls = [];
+  const NEW_PIN = 'NEWPIN0002';
+  // 主面板里的 rpcCall 只有一个参数（endpoint），不像设置页那样带 channel
+  const rpcCall = async (endpoint) => {
+    calls.push(endpoint);
+    if (endpoint === 'pin.regenerate') {
+      return { ok: true, value: { ...STATUS, auth: { pin: NEW_PIN, pinCustom: false } } };
+    }
+    return { ok: true, value: STATUS };
+  };
+
+  const store = [];
+  begin(store);
+  main.comp({ rpcCall });
+  for (const fn of end()) fn();
+  await flush();
+  await flush();
+
+  begin(store);
+  let tree = main.comp({ rpcCall });
+  end();
+
+  // 这一步就是回归点：按钮曾经直接调一个不存在的函数（那是设置页组件的局部函数），
+  // 点了什么都不发生，也不报错到界面上。
+  const first = flatten(tree).find((n) => n.props?.children === '换个 PIN');
+  assert.ok(first, '卡片上应有「换个 PIN」');
+  first.props.onClick();
+
+  begin(store);
+  tree = main.comp({ rpcCall });
+  end();
+  const confirm = flatten(tree).find((n) =>
+    String(n.props?.children ?? '').startsWith('确认更换'),
+  );
+  assert.ok(confirm, '点第一下应变成二次确认按钮');
+  assert.ok(!calls.includes('pin.regenerate'), '第一下只进确认态，不该发请求');
+
+  await confirm.props.onClick();
+  await flush();
+
+  assert.ok(calls.includes('pin.regenerate'), '确认后必须真的调 pin.regenerate');
+
+  begin(store);
+  tree = main.comp({ rpcCall });
+  end();
+  assert.ok(JSON.stringify(tree).includes('已生成新 PIN'), '换完应给出提示');
+
+  // PIN 默认是打码的，点「显示」才看得到新值
+  const reveal = flatten(tree).find((n) => n.props?.children === '显示');
+  assert.ok(reveal, '应有「显示」按钮');
+  reveal.props.onClick();
+  begin(store);
+  tree = main.comp({ rpcCall });
+  end();
+  assert.ok(JSON.stringify(tree).includes(NEW_PIN), '显示后应是宿主返回的新 PIN');
+});
