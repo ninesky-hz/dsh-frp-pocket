@@ -191,3 +191,4 @@
 {"ts":"2026-11-13T07:20:59.672Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
 {"ts":"2026-11-13T07:27:59.633Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
 {"at":"2026-11-13T15:28:00+08:00","event":"queue-real-remove","version":"1.2.4+9","tests":308,"apk_md5":"9b9f75c9954510a49eb336e132359094","apk_bytes":35940368}
+{"at":"2026-11-13T15:56:00+08:00","event":"release-commit-push","app_version":"1.2.4+9","plugin_version":"0.2.1","commits":["49d16d9","f1ad9e4"],"pushed":"origin/main","tests":308}
