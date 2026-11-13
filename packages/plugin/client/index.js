@@ -941,6 +941,22 @@ window.__ModuleLoader__.load({
             h('button', { style: styles.btn, onClick: () => setShowPin((v) => !v) }, showPin ? '隐藏' : '显示'),
             h('button', { style: styles.btn, onClick: () => copy(pin) }, '复制 PIN'),
             h('button', { style: styles.btn, onClick: () => copy(qr?.text ?? '') }, '复制配对串'),
+            h(
+              'button',
+              {
+                style: styles.btn,
+                disabled: busy === 'pin',
+                // 换 PIN 会让手机上已存的 cookie 失效，必须用户确认，别误点
+                onClick: () => {
+                  const ask = typeof window !== 'undefined' && typeof window.confirm === 'function'
+                    ? '换 PIN 后手机需要重新扫码，旧 cookie 立即失效。继续？'
+                    : null;
+                  if (ask && !window.confirm(ask)) return;
+                  regenPin();
+                },
+              },
+              busy === 'pin' ? '生成中…' : '换个 PIN',
+            ),
           ),
           h(
             'div',

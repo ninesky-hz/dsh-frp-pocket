@@ -225,4 +225,8 @@ test('主面板：显示插件版本号，二维码容器是固定正方形（�
   assert.ok(qrNode, '二维码容器应固定为 168×168，避免 SVG 溢出压住右侧文字');
   // SVG 经 dangerouslySetInnerHTML 渲染，JSON 里引号是转义过的，用正则宽松匹配
   assert.match(text, /width=\\?"100%\\?"/, '二维码 SVG 应自适应容器宽度');
+
+  // PIN 卡上要能直接换 PIN：这个动作以前只在设置页深处，卡片上写着「PIN 换了旧 cookie
+  // 立刻失效」却没有入口，很别扭
+  assert.ok(text.includes('换个 PIN'), 'PIN 卡片上应有「换个 PIN」按钮');
 });
