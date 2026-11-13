@@ -35,6 +35,8 @@ class ProbeResult {
     this.dshPort,
     this.loggedIn = false,
     this.loginMessage,
+    this.restartTunnel = false,
+    this.restartDsh,
     this.latencyMs,
     this.errorKey,
     this.errorMessage,
@@ -64,7 +66,17 @@ class ProbeResult {
 
   final bool loggedIn;
   final String? loginMessage;
+
+  /// `/api/info` 的 `restart.tunnel`：网关是否具备重启隧道的能力。
+  final bool restartTunnel;
+
+  /// `/api/info` 的 `restart.dsh`：`app`（桌面版）| `process`（终端部署）| `off`。
+  final String? restartDsh;
+
   final int? latencyMs;
+
+  /// 这台主机能不能接受「重启 DSH」。
+  bool get canRestartDsh => restartDsh == 'app' || restartDsh == 'process';
 
   /// 英文错误 key（便于排查 / 上报）。
   final String? errorKey;
@@ -89,6 +101,8 @@ class ProbeResult {
     switch (status) {
       case ProbeStatus.online:
         if (frpState == 'running') return '隧道运行中';
+        if (frpState == 'reconnecting') return '隧道重连中（拨 VPN / 换网后常见）';
+        if (frpState == 'starting') return '隧道连接中';
         if (frpState == 'error') return '隧道异常';
         return loggedIn ? '网关握手成功' : (loginMessage ?? '未登录');
       case ProbeStatus.tunnelOnly:
@@ -129,9 +143,11 @@ class ProbeService {
 
   Uri _apiUri(Host host, String path, [Map<String, String>? query]) {
     final base = '${host.url}$kApiPrefix/$path';
-    return Uri.parse(query == null || query.isEmpty
-        ? base
-        : '$base?${Uri(queryParameters: query).query}');
+    return Uri.parse(
+      query == null || query.isEmpty
+          ? base
+          : '$base?${Uri(queryParameters: query).query}',
+    );
   }
 
   Future<ProbeResult> probe(Host host) async {
@@ -165,6 +181,15 @@ class ProbeService {
     final serverName = _asText(infoJson['name']);
     final serverVersion = _asText(infoJson['version']);
     final pluginName = _asText(infoJson['plugin']);
+    final restartJson = infoJson['restart'];
+    // 老插件没有 restart 字段：两个菜单项都该灰着，点了只会 404
+    var restartTunnel = false;
+    String? restartDsh;
+    if (restartJson is Map) {
+      final tunnel = restartJson['tunnel'];
+      restartTunnel = tunnel is bool ? tunnel : restartTunnel;
+      restartDsh = _asText(restartJson['dsh']);
+    }
 
     var loggedIn = false;
     String? loginMessage;
@@ -228,6 +253,8 @@ class ProbeService {
       dshPort: dshPort,
       loggedIn: loggedIn,
       loginMessage: loginMessage,
+      restartTunnel: restartTunnel,
+      restartDsh: restartDsh,
       latencyMs: stopwatch.elapsedMilliseconds,
     );
   }
@@ -275,7 +302,8 @@ class ProbeService {
       final response = await _client
           .get(
             uri,
-            headers: headers ?? const <String, String>{'accept': 'application/json'},
+            headers:
+                headers ?? const <String, String>{'accept': 'application/json'},
           )
           .timeout(timeout);
       return _Fetch(response: response);

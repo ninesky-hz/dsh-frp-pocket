@@ -16,6 +16,8 @@ import { constants as zlibConstants, createBrotliCompress, createGzip } from 'no
 export const API_PREFIX = '/frp-pocket/api';
 export const COOKIE_NAME = 'frp_auth';
 export const COOKIE_MAX_AGE = 30 * 24 * 60 * 60; // 30 天（秒）
+/** 破坏性动作必须带这枚自定义头（CONTRACT §4.6）：跨站表单发不出，挡住 CSRF。 */
+export const ACTION_HEADER = 'x-frp-pocket-action';
 
 /* ------------------------------------------------------------------ *
  * dsh-pocket 的移动端补丁（原样保留，data 属性用于判重）
@@ -386,6 +388,7 @@ function createUpstreamProbe(upstream) {
  * @param {string} [opts.dshVersion]    DSH 版本（info 用）
  * @param {() => string} [opts.launchToken]  DSH launch token 提供者
  * @param {object} [opts.frpc]          frpc 管理器（health 用）
+ * @param {object} [opts.restart]       重启控制器（/api/dsh/restart 用，可为 null）
  * @param {object} [opts.log]
  */
 export function createGateway({
@@ -398,6 +401,7 @@ export function createGateway({
   dshVersion = '',
   launchToken = () => '',
   frpc = null,
+  restart = null,
   log = console,
   injectHtml = DEFAULT_INJECT,
   rateLimit = null,
@@ -438,6 +442,28 @@ export function createGateway({
 
   // ---- API ----
 
+  /**
+   * 破坏性动作的统一前置检查（契约 §4.6）：必须过 cookie 鉴权（不接受 `?pin=`，
+   * 否则 URL 里带明文 PIN 就能重启），且必须带 `x-frp-pocket-action: restart`
+   * ——跨站表单发不出自定义头，这枚头就是 CSRF 闸门。
+   */
+  function guardAction(req, res, common) {
+    const g = gate(req);
+    if (!g.ok) {
+      const url = new URL(req.url ?? '/', 'http://x');
+      const viaPin = url.searchParams.get('pin');
+      if (viaPin) limiter.record(clientIp(req));
+      jsonResponse(res, 401, { ok: false, error: 'unauthorized' }, common);
+      return null;
+    }
+    if (String(req.headers[ACTION_HEADER] ?? '') !== 'restart') {
+      jsonResponse(res, 400, { ok: false, error: 'action_header_required' }, common);
+      return null;
+    }
+    req.resume(); // 丢掉可能的 body，别让 keep-alive 卡住
+    return g;
+  }
+
   function handleApi(req, res, url) {
     const path = url.pathname;
     const cfg = getConfig();
@@ -464,6 +490,8 @@ export function createGateway({
         version,
         dsh: dshVersion,
         requiresPin: true,
+        // 能力位：App 据此决定菜单项灰不灰（不是秘密信息）
+        restart: restart?.capability?.() ?? { tunnel: Boolean(frpc), dsh: 'off', dshReason: 'no_controller' },
         time: Date.now(),
       }, common);
       return true;
@@ -555,6 +583,7 @@ export function createGateway({
           ok: true,
           uptime: Date.now() - startedAt,
           wsClients,
+          restart: restart?.status?.() ?? null,
           frp: {
             state: state.state,
             since: state.since,
@@ -564,6 +593,61 @@ export function createGateway({
           dsh: { reachable, port: upstream.port },
         }, common);
       });
+      return true;
+    }
+
+    // 契约 §4.6.1：重启隧道（frpc 进程重拉，DSH 不中断）
+    if (path === `${API_PREFIX}/frpc/restart`) {
+      if (req.method !== 'POST') {
+        jsonResponse(res, 405, { ok: false, error: 'method_not_allowed' }, common);
+        return true;
+      }
+      if (!guardAction(req, res, common)) return true;
+      if (!frpc?.restart) {
+        jsonResponse(res, 503, { ok: false, error: 'frpc_unavailable' }, common);
+        return true;
+      }
+      const out = frpc.restart() ?? {};
+      const state = out.state ?? 'starting';
+      log.info?.(`frp-pocket: 隧道已重启 by=${clientIp(req)} state=${state}`);
+      jsonResponse(res, 200, {
+        ok: true,
+        frp: { state, since: Date.now() },
+      }, common);
+      return true;
+    }
+
+    // 契约 §4.6.2：重启 DSH（202 先回包，250ms 后才杀进程树）
+    if (path === `${API_PREFIX}/dsh/restart`) {
+      if (req.method !== 'POST') {
+        jsonResponse(res, 405, { ok: false, error: 'method_not_allowed' }, common);
+        return true;
+      }
+      if (!guardAction(req, res, common)) return true;
+      if (!restart?.requestDsh) {
+        jsonResponse(res, 503, { ok: false, error: 'restart_unsupported', reason: 'no_controller' }, common);
+        return true;
+      }
+      const result = restart.requestDsh({ by: clientIp(req) }) ?? { ok: false, code: 'unsupported' };
+      if (!result.ok) {
+        if (result.code === 'restarting') {
+          jsonResponse(res, 409, { ok: false, error: 'restarting', restarting: true, at: result.at ?? null }, common);
+          return true;
+        }
+        jsonResponse(res, 503, {
+          ok: false,
+          error: 'restart_unsupported',
+          reason: result.reason ?? result.code ?? null,
+        }, common);
+        return true;
+      }
+      log.warn?.(`frp-pocket: DSH 重启已请求 by=${clientIp(req)} mode=${result.mode}`);
+      jsonResponse(res, 202, {
+        ok: true,
+        restarting: true,
+        at: result.at,
+        mode: result.mode,
+      }, common);
       return true;
     }
 

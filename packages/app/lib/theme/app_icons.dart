@@ -34,6 +34,12 @@ abstract final class AppIcons {
   static const IconData more = CupertinoIcons.ellipsis;
   static const IconData close = CupertinoIcons.xmark;
   static const IconData check = CupertinoIcons.checkmark;
+
+  /// 步骤完成：实心对勾，靠填充度区分「已完成」与「未开始」。
+  static const IconData stepDone = CupertinoIcons.checkmark_circle_fill;
+
+  /// 步骤未开始：空心圆。
+  static const IconData stepPending = CupertinoIcons.circle;
   static const IconData add = CupertinoIcons.plus;
   static const IconData refresh = CupertinoIcons.arrow_clockwise;
   static const IconData search = CupertinoIcons.search;

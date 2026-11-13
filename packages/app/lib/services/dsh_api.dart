@@ -25,6 +25,19 @@ const int kHandshakeAttempts = 4;
 /// `session/list` 的路径（原生一元 RPC）。
 const String kSessionListPath = '/api/session/list';
 
+/// 网关身份探测（免鉴权，重启期间用它探活）。
+const String kInfoPath = '/frp-pocket/api/info';
+
+/// 重启隧道：frpc 重拉，DSH 不中断（CONTRACT §4.6.1）。
+const String kFrpRestartPath = '/frp-pocket/api/frpc/restart';
+
+/// 重启 DSH：先回 202，主机随后断线重来（CONTRACT §4.6.2）。
+const String kDshRestartPath = '/frp-pocket/api/dsh/restart';
+
+/// 破坏性动作必须带的头：网关用它挡跨站请求（自定义头跨站表单发不出来）。
+const String kActionHeader = 'x-frp-pocket-action';
+const String kActionRestart = 'restart';
+
 /// DSH 原生接口的错误。
 ///
 /// [code] 是稳定短标识，界面直接展示成「无法连接 DSH: <code>」，
@@ -89,10 +102,7 @@ class DshApi {
     if (_hasBothCookies(jar)) return;
     jar.clear();
     if (host.pin.isEmpty) {
-      throw const DshApiException(
-        'missing_pin',
-        '这台主机没有保存 PIN，无法自动登录',
-      );
+      throw const DshApiException('missing_pin', '这台主机没有保存 PIN，无法自动登录');
     }
     await _handshake(host, jar);
   }
@@ -107,6 +117,107 @@ class DshApi {
       clearAuth(host);
       await ensureAuth(host);
       return _listOnce(host);
+    }
+  }
+
+  /// 重启隧道（frpc 重拉）。返回新的 frp 状态字符串（通常是 `starting`）。
+  ///
+  /// 隧道重启不影响 DSH，手机不会掉登录，通常 0.5–2 秒恢复。
+  Future<String> restartTunnel(Host host) async {
+    final body = await _postAction(host, kFrpRestartPath);
+    final frp = body['frp'];
+    final state = frp is Map ? _asText(frp['state']) : null;
+    return state ?? 'starting';
+  }
+
+  /// 重启主机上的 DSH。返回服务端判定的方式：`app`（桌面版）或 `process`（终端部署）。
+  ///
+  /// 请求本身成功只代表「已排程」：真正的杀进程在 250ms 后发生，
+  /// 之后要轮询 [infoTime] 等主机回来。
+  Future<String> restartDsh(Host host) async {
+    final body = await _postAction(host, kDshRestartPath);
+    return _asText(body['mode']) ?? 'app';
+  }
+
+  /// 只读 `/info` 探活：返回服务器时间（毫秒）；连不上 / 不是网关时返回 null。
+  ///
+  /// 重启窗口里不能轮询 `/health`：那需要 cookie，而 sessionKey 换了 cookie 必然
+  /// 失效，一直 401 看起来像「没起来」。`/info` 免鉴权，正好用来判断「回来了没」。
+  Future<int?> infoTime(Host host) async {
+    try {
+      final response = await _fetch(
+        Uri.parse('${host.url}$kInfoPath'),
+        headers: const <String, String>{'accept': 'application/json'},
+      );
+      if (response.statusCode != 200) return null;
+      final json = _decodeObject(response);
+      final time = json?['time'];
+      return time is num ? time.toInt() : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<Map<String, Object?>> _postAction(Host host, String path) async {
+    Future<http.Response> send() {
+      final jar = _jar(host);
+      return _fetch(
+        Uri.parse('${host.url}$path'),
+        method: 'POST',
+        headers: <String, String>{
+          'content-type': 'application/json; charset=utf-8',
+          'accept': 'application/json',
+          kActionHeader: kActionRestart,
+          'cookie': _cookieHeader(jar),
+        },
+        body: '{}',
+      );
+    }
+
+    await ensureAuth(host);
+    var response = await send();
+    if (response.statusCode == 401) {
+      // cookie 被服务端换掉（插件重载过）：重新握手再来一次
+      clearAuth(host);
+      await ensureAuth(host);
+      response = await send();
+    }
+
+    final body = _decodeObject(response) ?? const <String, Object?>{};
+    switch (response.statusCode) {
+      case 200:
+      case 202:
+        return body;
+      case 401:
+        throw const DshApiException(
+          'unauthorized',
+          '登录态已失效（HTTP 401）',
+          statusCode: 401,
+        );
+      case 403:
+        throw const DshApiException(
+          'restart_disabled',
+          '这台主机关闭了远程重启（HTTP 403）',
+          statusCode: 403,
+        );
+      case 409:
+        throw const DshApiException(
+          'restarting',
+          '主机正在重启中，请等它回来再试',
+          statusCode: 409,
+        );
+      case 503:
+        throw DshApiException(
+          _asText(body['error']) ?? 'restart_unsupported',
+          '这台主机不支持这样重启（${_asText(body['reason']) ?? 'unsupported'}）',
+          statusCode: 503,
+        );
+      default:
+        throw DshApiException(
+          'http_${response.statusCode}',
+          '重启请求失败（HTTP ${response.statusCode}）',
+          statusCode: response.statusCode,
+        );
     }
   }
 
@@ -239,10 +350,7 @@ class DshApi {
       throw const DshApiException('bad_response', '响应缺少 value.items');
     }
 
-    return items
-        .whereType<Map>()
-        .map(_toSummary)
-        .toList(growable: false);
+    return items.whereType<Map>().map(_toSummary).toList(growable: false);
   }
 
   static SessionSummary _toSummary(Map item) {
@@ -265,9 +373,8 @@ class DshApi {
       _hasFrpCookie(jar) &&
       jar.keys.any((name) => name.startsWith(kDshAuthCookiePrefix));
 
-  String _cookieHeader(Map<String, String> jar) => jar.entries
-      .map((entry) => '${entry.key}=${entry.value}')
-      .join('; ');
+  String _cookieHeader(Map<String, String> jar) =>
+      jar.entries.map((entry) => '${entry.key}=${entry.value}').join('; ');
 
   /// `set-cookie` 可能有多枚、且被 http 包用逗号拼成一行，所以按名字前缀逐个抓。
   void _absorbCookies(Map<String, String> jar, http.Response response) {
@@ -296,10 +403,7 @@ class DshApi {
       final streamed = await _client.send(request).timeout(timeout);
       return await http.Response.fromStream(streamed).timeout(timeout);
     } on TimeoutException {
-      throw DshApiException(
-        'timeout',
-        '连接超时（${timeout.inSeconds} 秒无响应）',
-      );
+      throw DshApiException('timeout', '连接超时（${timeout.inSeconds} 秒无响应）');
     } on DshApiException {
       rethrow;
     } catch (error) {

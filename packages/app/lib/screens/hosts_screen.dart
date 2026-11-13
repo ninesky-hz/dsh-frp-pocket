@@ -3,10 +3,12 @@ import 'package:flutter/services.dart';
 
 import '../app_scope.dart';
 import '../models/host.dart';
+import '../services/dsh_api.dart';
 import '../services/platform_bridge.dart';
 import '../services/probe.dart';
 import '../services/scan_parser.dart';
 import '../widgets/host_card.dart';
+import '../widgets/restart_flow.dart';
 import 'host_edit_screen.dart';
 import 'host_sessions_screen.dart';
 import 'scanner_screen.dart';
@@ -29,6 +31,7 @@ class HostsScreen extends StatefulWidget {
 class _HostsScreenState extends State<HostsScreen> {
   late final ProbeService _probe = widget.probe ?? ProbeService();
   final PlatformBridge _bridge = const PlatformBridge();
+  final DshApi _api = DshApi();
   final Map<String, ProbeResult> _results = <String, ProbeResult>{};
   final Set<String> _probing = <String>{};
 
@@ -41,6 +44,7 @@ class _HostsScreenState extends State<HostsScreen> {
   @override
   void dispose() {
     _probe.dispose();
+    _api.dispose();
     super.dispose();
   }
 
@@ -101,6 +105,10 @@ class _HostsScreenState extends State<HostsScreen> {
   }
 
   Future<void> _showActions(Host host) async {
+    final result = _results[host.id];
+    final online = result?.isOnline ?? false;
+    final canRestartTunnel = online && (result?.restartTunnel ?? false);
+    final canRestartDsh = online && (result?.canRestartDsh ?? false);
     final action = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
@@ -130,6 +138,36 @@ class _HostsScreenState extends State<HostsScreen> {
                 onTap: () => Navigator.of(sheetContext).pop('browser'),
               ),
               ListTile(
+                leading: const Icon(AppIcons.cloudSync),
+                title: const Text('重启隧道'),
+                subtitle: Text(
+                  !online
+                      ? '主机不在线，先下拉刷新'
+                      : canRestartTunnel
+                      ? '只重连 frpc，DSH 与正在跑的任务不受影响'
+                      : '这台主机的插件版本不支持远程重启',
+                ),
+                enabled: canRestartTunnel,
+                onTap: canRestartTunnel
+                    ? () => Navigator.of(sheetContext).pop('restartTunnel')
+                    : null,
+              ),
+              ListTile(
+                leading: const Icon(AppIcons.refresh),
+                title: const Text('重启 DSH'),
+                subtitle: Text(
+                  canRestartDsh
+                      ? '结束并重新拉起主机上的 DSH，正在跑的任务会中断'
+                      : online
+                      ? '这台主机不支持远程重启'
+                      : '主机不在线，先下拉刷新',
+                ),
+                enabled: canRestartDsh,
+                onTap: canRestartDsh
+                    ? () => Navigator.of(sheetContext).pop('restartDsh')
+                    : null,
+              ),
+              ListTile(
                 leading: Icon(
                   AppIcons.delete,
                   color: Theme.of(sheetContext).colorScheme.error,
@@ -157,9 +195,63 @@ class _HostsScreenState extends State<HostsScreen> {
       case 'browser':
         final ok = await _bridge.openExternal(host.url);
         if (!ok) _toast('没有找到可用的浏览器');
+      case 'restartTunnel':
+        await _restartTunnel(host);
+      case 'restartDsh':
+        await _restartDsh(host);
       case 'delete':
         await _confirmDelete(host);
     }
+  }
+
+  /// 重启隧道：不动 DSH，只让 frpc 重连（CONTRACT §4.6.1）。
+  Future<void> _restartTunnel(Host host) async {
+    final done = await showRestartDialog(
+      context,
+      host: host,
+      api: _api,
+      kind: RestartKind.tunnel,
+      onOpenBrowser: () => _bridge.openExternal(host.url),
+    );
+    if (!mounted) return;
+    if (done) _toast('隧道已重连');
+    await _probeOne(host);
+  }
+
+  /// 重启 DSH：先确认（会打断正在跑的任务），再走进度对话框（CONTRACT §4.6.2）。
+  Future<void> _restartDsh(Host host) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('重启 DSH'),
+        content: Text(
+          '将结束「${host.name}」上的 DSH 并重新拉起。\n\n'
+          '正在运行的任务会中断，手机将断线约 5–20 秒，PIN 会自动重新登录。',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('重启'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final done = await showRestartDialog(
+      context,
+      host: host,
+      api: _api,
+      kind: RestartKind.dsh,
+      onOpenBrowser: () => _bridge.openExternal(host.url),
+    );
+    if (!mounted) return;
+    if (done) _toast('DSH 已重启');
+    await _probeOne(host);
   }
 
   Future<void> _confirmDelete(Host host) async {
@@ -307,39 +399,39 @@ class _EmptyState extends StatelessWidget {
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.symmetric(horizontal: 32),
       children: <Widget>[
-          const SizedBox(height: 96),
-          Icon(
-            AppIcons.dns,
-            size: AppIcons.hero,
-            color: theme.colorScheme.outline,
+        const SizedBox(height: 96),
+        Icon(
+          AppIcons.dns,
+          size: AppIcons.hero,
+          color: theme.colorScheme.outline,
+        ),
+        const SizedBox(height: 16),
+        Text(
+          '还没有主机',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.titleMedium,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '把家里 / 工作室的 DSH 网关加进来，\n或用插件设置页的二维码直接扫码添加。',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
           ),
-          const SizedBox(height: 16),
-          Text(
-            '还没有主机',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '把家里 / 工作室的 DSH 网关加进来，\n或用插件设置页的二维码直接扫码添加。',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 24),
-          FilledButton.icon(
-            onPressed: onAdd,
-            icon: const Icon(AppIcons.add),
-            label: const Text('手动添加'),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: onScan,
-            icon: const Icon(AppIcons.qrScan),
-            label: const Text('扫码添加'),
-          ),
-        ],
+        ),
+        const SizedBox(height: 24),
+        FilledButton.icon(
+          onPressed: onAdd,
+          icon: const Icon(AppIcons.add),
+          label: const Text('手动添加'),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: onScan,
+          icon: const Icon(AppIcons.qrScan),
+          label: const Text('扫码添加'),
+        ),
+      ],
     );
   }
 }

@@ -7,6 +7,7 @@ import { loadConfig, getSessionKey, updateConfig, paths } from './config.mjs';
 import { createGateway } from './gateway.mjs';
 import { createFrpcManager } from './frpc.mjs';
 import { installRpc } from './rpc.mjs';
+import { createRestartController, readRestartMarker } from './restart.mjs';
 
 import { readFileSync, statSync } from 'node:fs';
 import { detectDshVersion } from './dsh-version.mjs';
@@ -101,6 +102,14 @@ export async function apply(ctx, config = {}) {
   const sessionKey = getSessionKey();
 
   const frpc = createFrpcManager({ getConfig: liveConfig, log });
+  const restart = createRestartController({ getConfig: liveConfig, log });
+  const lastRestart = readRestartMarker();
+  if (lastRestart) {
+    // 重启后第一件事：把「这次是被远程重启的」写进日志，方便事后对时间线
+    log.info(
+      `frp-pocket: 上次远程重启 ${new Date(lastRestart.at).toISOString()} mode=${lastRestart.mode} by=${lastRestart.by ?? '-'}`,
+    );
+  }
 
   const upstreamPort = await waitForUpstreamPort(ctx);
   if (!upstreamPort) {
@@ -121,6 +130,7 @@ export async function apply(ctx, config = {}) {
         dshVersion: config?.dshVersion ?? detectDshVersion(),
         launchToken: () => readLaunchToken(ctx),
         frpc,
+        restart,
         log,
       });
       log.info(`frp-pocket: 网关已监听 ${gateway.bind}:${gateway.port} → 127.0.0.1:${upstreamPort}`);

@@ -103,6 +103,44 @@ void main() {
     probe.dispose();
   });
 
+  test('info 的 restart 能力位决定菜单项能不能点', () async {
+    final client = MockClient((request) async {
+      if (request.url.path == _infoPath) {
+        return _json(
+          '{"schema":1,"ok":true,"hostId":"home-1a2b3c4d","name":"家里",'
+          '"plugin":"frp-pocket","version":"0.3.0",'
+          '"dsh":{"reachable":true,"port":3080},"requiresPin":true,'
+          '"restart":{"tunnel":true,"dsh":"app"},'
+          '"time":"2026-01-01T00:00:00Z"}',
+        );
+      }
+      if (request.url.path == _healthPath) {
+        return _json(_healthBody, 401);
+      }
+      return http.Response('', 401);
+    });
+    final probe = ProbeService(client: client);
+    final result = await probe.probe(_host);
+    expect(result.restartTunnel, isTrue);
+    expect(result.restartDsh, 'app');
+    expect(result.canRestartDsh, isTrue);
+    probe.dispose();
+  });
+
+  test('老插件没有 restart 字段 → 两项都不可用，不会点了 404', () async {
+    final client = MockClient((request) async {
+      if (request.url.path == _infoPath) return _json(_infoBody);
+      if (request.url.path == _healthPath) return _json(_healthBody, 401);
+      return http.Response('', 401);
+    });
+    final probe = ProbeService(client: client);
+    final result = await probe.probe(_host);
+    expect(result.restartTunnel, isFalse);
+    expect(result.restartDsh, isNull);
+    expect(result.canRestartDsh, isFalse);
+    probe.dispose();
+  });
+
   test('health 401 视为「隧道通、未登录」仍算 online', () async {
     final client = MockClient((request) async {
       if (request.url.path == _infoPath) return _json(_infoBody);

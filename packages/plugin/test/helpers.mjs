@@ -62,7 +62,7 @@ export function makeHome() {
 }
 
 /** 起网关（端口 0 让系统分配）。 */
-export async function startGateway({ upstreamPort, cfg, frpc = null }) {
+export async function startGateway({ upstreamPort, cfg, frpc = null, restart = null }) {
   return createGateway({
     port: 0,
     host: '127.0.0.1',
@@ -73,6 +73,7 @@ export async function startGateway({ upstreamPort, cfg, frpc = null }) {
     dshVersion: '0.2.2-rc.1',
     launchToken: () => 'launch-token-test',
     frpc,
+    restart,
     log: { info() {}, warn() {}, error() {} },
     injectHtml: '<script data-test-inject="1"></script>',
   });

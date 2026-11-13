@@ -66,7 +66,11 @@ dsh-frp-pocket/
     "subdomain": "home",             // mode=subdomain 时使用（frps 需配 subDomainHost）
     "customDomains": ["home.dsh.example.com"], // mode=customDomains 时使用；1–5 个完整主机名
     "remotePort": 0,                 // mode=remotePort 时使用（frps allowPorts 内）
-    "publicUrl": "https://home.dsh.example.com"
+    "publicUrl": "https://home.dsh.example.com",
+    "dnsServer": "",                 // 空=跟随系统 DNS；填 host 或 host:port（拨 VPN 后系统 DNS 常被改写）
+    "dialServerTimeout": 5,          // 秒，写进 frpc.toml 的 transport.dialServerTimeout
+    "heartbeatInterval": 10,         // 秒，transport.heartbeatInterval
+    "heartbeatTimeout": 30           // 秒，transport.heartbeatTimeout
   },
   "frpcPath": "",                    // 空=自动查找（PATH、插件目录、bin/）
   "updatedAt": 0
@@ -74,8 +78,13 @@ dsh-frp-pocket/
 ```
 
 派生文件（插件自己管理，用户不手改）：
-- `$DSH_HOME/dsh-frp-pocket/frpc.toml`：由配置生成，每次启动重写。
+- `$DSH_HOME/dsh-frp-pocket/frpc.toml`：由配置生成，每次启动重写。除 §6 的基本键外，固定写
+  `loginFailExit = false`（登录失败不退进程，重连交给 frpc 内部循环）与上面三个网络保活键，
+  配了 `dnsServer` 时再写一行 `dnsServer = "..."`。
 - `$DSH_HOME/dsh-frp-pocket/state.json`：`{ frpState, frpSince, lastError, pid }`。
+  `frpState ∈ { running, starting, reconnecting, stopped, error }`；
+  `reconnecting` = 进程活着但链路断了、frpc 正在自己重连（拨 VPN / 换网卡后的常态），
+  不要和 `stopped`/`error` 混用——它表示「会自己回来」。
 
 ## 4. App 面向的 HTTP 契约
 
@@ -86,10 +95,13 @@ dsh-frp-pocket/
 ```json
 { "schema": 1, "ok": true, "hostId": "home-9f3c1a2b", "name": "家里",
   "plugin": "dsh-frp-pocket", "version": "0.1.0", "dsh": "0.2.2-rc.1",
-  "requiresPin": true, "time": 1762900000000 }
+  "requiresPin": true, "time": 1762900000000,
+  "restart": { "tunnel": true, "dsh": "app" } }
 ```
 
 用途：App 添加主机时的连通性/身份探测；**不得**包含 PIN、frp token、路径等敏感信息。
+
+`restart` 是远程重启的能力位（§4.6）：`tunnel` 为 `false` 表示 frpc 没接上，`dsh` 为 `off` 表示这台机器不能被远程重启（终端部署且没开开关），App 据此把菜单项置灰。
 
 ### 4.2 `POST /frp-pocket/api/login`（免鉴权，限速）
 
@@ -107,10 +119,39 @@ dsh-frp-pocket/
 ```json
 { "ok": true, "uptime": 12345, "wsClients": 1,
   "frp": { "state": "running", "since": 1762900000000, "lastError": null, "publicUrl": "https://home.dsh.example.com" },
-  "dsh": { "reachable": true, "port": 61700 } }
+  "dsh": { "reachable": true, "port": 61700 },
+  "restart": null }
 ```
 
 `frp.state ∈ running|starting|stopped|error`。App 用于主机卡片状态点与"隧道异常"提示。
+
+### 4.6 远程重启（需 cookie，只接受 POST）
+
+破坏性动作：跨站表单发不出自定义头，所以两条路由都强制 `x-frp-pocket-action: restart`，且**不接受 `?pin=`**——必须已经持有 `frp_auth` cookie。
+
+**`POST /frp-pocket/api/frpc/restart`** —— 只重连 frpc，DSH 与正在跑的任务不受影响，通常 0.5–2 秒恢复。
+
+```json
+{ "ok": true, "frp": { "state": "starting", "since": 1762900000000 } }
+```
+
+- `405`：不是 POST。
+- `503 {"error":"frpc_unavailable"}`：frpc 关闭或还没就绪。
+- 手机端 cookie 仍然有效，不需要重新登录。
+
+**`POST /frp-pocket/api/dsh/restart`** —— 结束并重新拉起主机上的 DSH（桌面版连 Electron 主进程一起重启），任务会中断，5–20 秒回来。
+
+```json
+{ "ok": true, "restarting": true, "at": 1762900000000, "mode": "app" }
+```
+
+- `202` 只表示**已排程**：真正杀进程在 250ms 之后。客户端要轮询 `GET /frp-pocket/api/info`（免鉴权），按 `time` 是否变大判断「新的网关起来了」；**不要**轮询 `/health`——那需要 cookie，而重启后 cookie 必然失效，一直 401 看起来像「没起来」。
+- `mode ∈ app|process`：`app` 是桌面版（重启整个应用，默认）；`process` 是终端部署（只重启 dsh 进程，需要 `DSH_FRP_POCKET_RESTART_PROCESS=1` 显式开启）。
+- `409 {"restarting":true,"at":...}`：30 秒内重复请求；直接告诉用户「正在重启」。
+- `503 {"error":"restart_unsupported","reason":"..."}`：当前部署形态不支持（例如没有 Electron 宿主且没开开关）。
+- 无 cookie 或只给 `?pin=` → `401`；缺动作头 → `400 {"error":"action_header_required"}`。
+
+重启后 `sessionKey` 换新，`frp_auth` 与 `dsh-auth-*` 全部失效：手机必须用 PIN 重新握手（§4.3）。桌面版的重启由一段脱离进程树的助手脚本完成——插件先把自己所在的进程树杀掉，再由脚本重新拉起可执行文件，所以宿主的退出确认弹窗**不会**出现在手机这侧。
 
 ### 4.5 其余路径
 

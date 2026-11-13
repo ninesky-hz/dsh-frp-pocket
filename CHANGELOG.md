@@ -2,6 +2,37 @@
 
 本项目两个包各自记版本：`packages/app`（Android 客户端，`dsh_frp_app`）与 `packages/plugin`（DSH 宿主插件，`dsh-frp-pocket`）。
 
+## 2026-11-13（隧道保活 F5/F6 + 远程重启）
+
+### plugin 0.3.0（F5/F6：隧道保活）
+
+- **换网 / 拨 VPN 之后隧道会「假在线」到死**。旧逻辑是「崩溃 3 秒重拉，1 分钟内最多 5 次，超限进 error」——秒失败场景（VPN 刚拨号、网卡刚切）16 秒就把配额烧光，之后面板停在 error，只能手动点重启。
+  - 退避改成 3s→6s→12s→24s→48s→60s 封顶，**不再按次数放弃**；只有真的看到 `login to server success` 才把轮次清零。
+  - toml 写 `loginFailExit = false`：登录失败时 frpc 不退出进程，重连交给它自己的循环，避免「抖动 → 进程死 → 插件重拉 → 再死」。
+  - 就绪/断线只认真实日志：`login to server success|start proxy success` → running；`connection to server closed|connect to server error|try to reconnect to server` → **新增的 `reconnecting` 状态**。不再用「进程存活 6 秒」冒充 running（6 秒比 10 秒 dial 超时还短，面板会说谎）。
+  - 新增三个网络参数（`frp.dnsServer` / `dialServerTimeout` / `heartbeatInterval` / `heartbeatTimeout`，落在设置页），默认 5s dial / 10s 心跳 / 30s 超时：拨 VPN 后系统 DNS 常被 fake-IP 改写，frpc 走自己的解析器才稳。
+- 测试：`test/frpc.test.mjs` 新增退避序列、断线信号、toml 新键、日志尾部取「最后一个事件」等 130 行；`test/config.test.mjs` 覆盖 dnsServer 收敛（非法值回落空串，不因为填错 DNS 把隧道打死）。
+
+- **新增「重启隧道」与「重启 DSH」两条网关路由**（契约 §4.6）。之前的现实是：隧道半死只能等 frpc 自己重连，DSH 卡死只能跑到电脑前重启应用——手机上没有任何入口。
+  - `POST /frp-pocket/api/frpc/restart` → `200 {ok,frp:{state,since}}`：只重连 frpc，DSH 和正在跑的任务不受影响。
+  - `POST /frp-pocket/api/dsh/restart` → `202 {ok,restarting,at,mode}`：结束并重拉 DSH。桌面版连 Electron 主进程一起重启；30 秒内重复请求回 `409`；形态不支持回 `503 restart_unsupported`。
+  - 鉴权**只认 `frp_auth` cookie**，`?pin=` 不放行；两条路由都要求 `x-frp-pocket-action: restart`（跨站表单发不出自定义头，顺带挡掉 CSRF）。先 `res.end()` 再排程，手机不会拿到连接重置。
+  - `/info` 增 `restart:{tunnel,dsh}` 能力位（免鉴权，App 用它决定菜单项是否置灰）；`/health` 增 `restart:{at,by,mode}`。
+- **新增 `lib/restart.mjs`**：插件跑在 Electron 起的子进程里，`process.exit()` 之后主进程（`code===0` 只 resolve）**不会**重拉它——所以重启必须由一段脱离进程树的助手脚本来做。
+  - Windows 走 PowerShell：等 800ms → 校验进程名 → `taskkill /F /T /PID <Electron 主进程>` → 轮询确认退出 → 最多 20 次 `Start-Process`（Electron 单实例锁释放有延迟，第一次经常自退）→ 全程写 `restart.log`。启动用 `cmd /c start "" /b powershell …`，`start` 让脚本脱离进程树，`taskkill /T` 打不到它。
+  - POSIX 走 bash：TERM → 等 → KILL → `nohup` 重拉。
+  - 终端部署（`dsh web`）默认**不**允许重启进程树：`ppid` 那时候是 shell，按父进程杀会误伤终端。要开就显式设 `DSH_FRP_POCKET_RESTART_PROCESS=1`。
+  - 重启标记落 `$DSH_HOME/dsh-frp-pocket/restart.json`，下次启动时打一行「上次远程重启 mode=… by=…」，方便事后对账。
+- 测试：`test/restart.test.mjs`（12 条：形态判定、relaunch 目标、Windows/POSIX 脚本内容与引号转义、标记形状、202→409→放行、能力不足）、`test/gateway-restart.test.mjs`（10 条：401、`?pin=` 不授权、缺动作头 400、200/405/202/409/503、`/info` 能力位且不泄露 PIN）。`npm test` 93 通过。
+
+### app 1.3.0+15
+
+- **隧道状态文案认 `reconnecting` / `starting`**：之前只认 `running/error`，frpc 正在自己重连时会显示成「网关握手成功」，看起来像没问题。现在分别显示「隧道重连中（拨 VPN / 换网后常见）」「隧道连接中」。
+- **主机卡片三点菜单新增「重启隧道」「重启 DSH」**：隧道项只重连 frpc（副标题写明「DSH 与正在跑的任务不受影响」）；DSH 项先弹二次确认——「正在运行的任务会中断，手机将断线约 5–20 秒，PIN 会自动重新登录。」——确认后全屏步骤条：已发送 → 等待主机退出 → 等待 DSH 起来 → 重新登录。离线时两项置灰，主机上报 `restart.dsh = off` 时 DSH 项也会置灰并说明「这台主机不支持远程重启」。
+- **重启窗口用 `/info` 探活，不用 `/health`**：重启后 `sessionKey` 换新，旧 cookie 必然失效，`/health` 会一直 401；`/info` 免鉴权，拿它的服务器 `time` 跟重启前最后一次比，变大才算「新的网关起来了」。基线为空时退化成「任意一次成功」。
+- 失败出路是三条而不是一句报错：在浏览器打开 / 重试 / 关闭；运行中给「取消等待」，并诚实说明**已发出的重启不会撤销**。
+- 测试：`test/restart_api_test.dart` 9 条（动作头与 cookie、mode 解析、409/503/403 映射、401 后重握手、`infoTime` 正常与 5xx）、`test/restart_flow_test.dart` 4 条（隧道成功、失败停留、DSH 全流程含重登、取消等待）。`flutter analyze` 干净，`flutter test` 323 通过。
+
 ## 2026-11-13
 
 ### plugin 0.2.3
