@@ -9,7 +9,13 @@
 //    启动/退出时按 1 MiB 上限截断保留尾部（F3）
 //  - status()/health 每次读都做探活对账：pid 不存在 → stopped + lastError；
 //    pid 存活 → running，必要时用日志就绪行把 starting 提升为 running（F4）
-//  - 崩溃 3 秒退避重启，1 分钟内最多 5 次；超限进入 error
+//  - 崩溃退避重启 **3s→6s→12s→24s→48s→60s 封顶，永不放弃**（F5：旧版「5 次/60 秒即 error」
+//    在 VPN 拨号、换网卡这类「秒失败」场景里 16 秒就烧光配额，之后只能手动点重启）
+//  - 断线重连交给 frpc 进程自己：toml 写 `loginFailExit = false`，登录失败不再退出进程，
+//    避免「一次网络抖动 → 进程死 → 插件重拉 → 再死」的抖动循环（F5）
+//  - 就绪/断线判定只认真实日志信号：`login to server success` → running，
+//    `connection to server closed` / `connect to server error` → reconnecting；
+//    **不再**用「进程存活 6 秒」冒充 running（F6：6s 比 10s dial 超时还短，面板会说谎）
 //  - stop() 杀整棵进程树（Windows: taskkill /T /F；POSIX: kill(-pid)）
 //  - 找不到 frpc → state=error / lastError=frpc_not_found，**不阻塞网关**
 
@@ -32,11 +38,13 @@ import { fileURLToPath } from 'node:url';
 import { paths, readState, writeState } from './config.mjs';
 
 export const LOG_LIMIT = 100;
-export const RESTART_DELAY_MS = 3000;
-export const RESTART_MAX = 5;
-export const RESTART_WINDOW_MS = 60_000;
+/** 重启退避：3s 起步翻倍，60s 封顶，永不因「次数」放弃（F5）。 */
+export const RESTART_BASE_MS = 3000;
+export const RESTART_MAX_MS = 60_000;
+/** @deprecated 旧名保留，等价于 RESTART_BASE_MS。 */
+export const RESTART_DELAY_MS = RESTART_BASE_MS;
 
-/** 未看到就绪日志时，进程存活多久算「兜底就绪」（不是固定 sleep 假成功）。 */
+/** 等登录信号的观察窗口：超时只记日志，**不**据此把 starting 提升为 running（F6）。 */
 export const READY_FALLBACK_MS = 6000;
 /** frpc.log 大小上限与截断后保留的尾部大小（F3）。 */
 export const LOG_MAX_BYTES = 1024 * 1024;
@@ -44,6 +52,13 @@ export const LOG_KEEP_BYTES = 256 * 1024;
 export const LOG_NAME = 'frpc.log';
 /** frpc 真正「隧道可用」的信号行（v0.71 实测输出）。 */
 export const READY_PATTERN = /(start proxy success|login to server success)/;
+/** 隧道断了/正在重试的信号行（v0.71 实测输出）。 */
+export const DISCONNECT_PATTERN =
+  /(connection to server closed|login to the server failed|connect to server error|try to reconnect to server)/;
+/** 网络层的默认值（秒）：拨 VPN / 换网卡后要尽快发现半死连接，frpc 默认 10/30/90 太钝。 */
+export const DEFAULT_DIAL_TIMEOUT_S = 5;
+export const DEFAULT_HEARTBEAT_INTERVAL_S = 10;
+export const DEFAULT_HEARTBEAT_TIMEOUT_S = 30;
 
 const PLUGIN_ROOT = dirname(dirname(fileURLToPath(import.meta.url))); // packages/plugin
 const TAIL_INTERVAL_MS = 250;
@@ -54,18 +69,41 @@ function tomlString(value) {
   return JSON.stringify(String(value));
 }
 
+/** 第 round 轮（0 起）崩溃后的重启延迟：3s 起步翻倍，60s 封顶。 */
+export function restartDelayMs(round) {
+  const n = Number.isFinite(round) && round > 0 ? Math.trunc(round) : 0;
+  return Math.min(RESTART_BASE_MS * 2 ** n, RESTART_MAX_MS);
+}
+
+/** 秒数收敛：非正整数/超出 1h 的回落默认（TOML 里 frp 的 duration 写成整数即秒）。 */
+function seconds(value, fallback) {
+  const n = Math.trunc(Number(value));
+  return Number.isFinite(n) && n >= 1 && n <= 3600 ? n : fallback;
+}
+
 /**
  * 生成 frpc.toml 文本。mode=subdomain 写 subdomain，mode=remotePort 写 remotePort；
  * 两者都写会让 frpc 报冲突，所以严格二选一（契约 §6 注释里的“或”）。
+ *
+ * 网络相关的四个键不是可选装饰（F5/F6）：
+ *  - loginFailExit=false：登录失败不退进程，重连由 frpc 内部循环负责；
+ *  - dialServerTimeout/heartbeat*：拨 VPN、换网卡后要尽快发现半死连接；
+ *  - dnsServer：不依赖被 VPN/代理改写过的系统 DNS（fake-IP 劫持时尤其明显）。
  */
 export function buildFrpcToml(cfg) {
   const frp = cfg.frp;
+  const dnsServer = String(frp.dnsServer ?? '').trim();
   const lines = [
     `serverAddr = ${tomlString(frp.serverAddr)}`,
     `serverPort = ${Number(frp.serverPort)}`,
+    'loginFailExit = false',
+    ...(dnsServer ? [`dnsServer = ${tomlString(dnsServer)}`] : []),
     'auth.method = "token"',
     `auth.token = ${tomlString(frp.authToken)}`,
     `transport.tls.enable = ${frp.transport === 'tls' ? 'true' : 'false'}`,
+    `transport.dialServerTimeout = ${seconds(frp.dialServerTimeout, DEFAULT_DIAL_TIMEOUT_S)}`,
+    `transport.heartbeatInterval = ${seconds(frp.heartbeatInterval, DEFAULT_HEARTBEAT_INTERVAL_S)}`,
+    `transport.heartbeatTimeout = ${seconds(frp.heartbeatTimeout, DEFAULT_HEARTBEAT_TIMEOUT_S)}`,
     'log.to = "console"',
     'log.level = "info"',
     // 写进文件时不要 ANSI 颜色码，frpc.log 才可读（v0.71 支持该键）
@@ -138,6 +176,18 @@ export function stripAnsi(text) {
 
 export function isReadyLine(line) {
   return READY_PATTERN.test(stripAnsi(line));
+}
+
+/**
+ * 一行日志代表哪种隧道事件。
+ * 先判 ready：`login to server success` 也含 "server"，别被断线规则抢走。
+ * @returns {'ready'|'down'|null}
+ */
+export function tunnelEventOf(line) {
+  const s = stripAnsi(line);
+  if (READY_PATTERN.test(s)) return 'ready';
+  if (DISCONNECT_PATTERN.test(s)) return 'down';
+  return null;
 }
 
 const TS_RE = /^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?)/;
@@ -248,6 +298,27 @@ export function findReadyInLog(file = frpcLogPath(), sinceMs = 0) {
     const at = lineTimestamp(line);
     if (at !== null && sinceMs && at < sinceMs - 1000) continue;
     found = { line, at };
+  }
+  return found;
+}
+
+/**
+ * 在日志尾部找「本次启动之后」的最后一个隧道事件（ready 或 down）。
+ * 重启后不能只看「有没有就绪过」——可能先 success 又 closed，真实状态是后者。
+ * @returns {{kind:'ready'|'down', line:string, at:number|null}|null}
+ */
+export function findLastTunnelEvent(file = frpcLogPath(), sinceMs = 0) {
+  const text = readLogTail(file, 256 * 1024);
+  if (!text) return null;
+  let found = null;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const kind = tunnelEventOf(line);
+    if (!kind) continue;
+    const at = lineTimestamp(line);
+    if (at !== null && sinceMs && at < sinceMs - 1000) continue;
+    found = { kind, line, at };
   }
   return found;
 }
@@ -419,7 +490,8 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
   let restartTimer = null;
   let fallbackTimer = null;
   let tailTimer = null;
-  let restartTimes = [];
+  /** 连续重启轮次：只有「真的连上」才清零（F5）。 */
+  let restartRound = 0;
   let logs = [];
   let state = readState();
   let logOffset = 0;
@@ -516,18 +588,38 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
           setState('running', null, pid);
           return state;
         }
-        const evidence = findReadyInLog(frpcLogPath(), persisted.frpSince || 0);
-        if (evidence) {
-          pushLog(`frpc 就绪信号（读时对账）：${evidence.line}`);
+        const ev = findLastTunnelEvent(frpcLogPath(), persisted.frpSince || 0);
+        if (ev?.kind === 'ready') {
+          pushLog(`frpc 就绪信号（读时对账）：${ev.line}`);
           setState('running', null, pid);
           return state;
         }
+        if (ev?.kind === 'down') {
+          setState('reconnecting', ev.line, pid);
+          return state;
+        }
+      }
+      if (persisted.frpState === 'reconnecting') {
+        // 进程活着但上次记的是断线：只在日志出现新的就绪行时才翻回 running
+        const ev = findLastTunnelEvent(frpcLogPath(), persisted.frpSince || 0);
+        if (ev?.kind === 'ready') {
+          pushLog(`frpc 就绪信号（读时对账）：${ev.line}`);
+          setState('running', null, pid);
+          return state;
+        }
+        state = persisted;
+        return state;
       }
       state = persisted;
       return state;
     }
 
-    if (persisted.frpState === 'running' || persisted.frpState === 'starting') {
+    if (persisted.frpState === 'running' || persisted.frpState === 'starting' || persisted.frpState === 'reconnecting') {
+      // 正在等下一轮重启（F5）：pid 已经回收，状态是 starting 且定时器在跑，别当「进程没了」判死
+      if (persisted.frpState === 'starting' && restartTimer) {
+        state = persisted;
+        return state;
+      }
       // 进程没了：回收 pid + 记录原因（F4）
       const err = pid > 0 ? `frpc_exited: pid ${pid} 已不存在` : 'frpc_pid_missing';
       if (adoptedPid === pid) adoptedPid = null;
@@ -558,27 +650,26 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
     if (pids && pids.length) {
       const pid = pids[0];
       adoptedPid = pid;
-      const evidence = findReadyInLog(frpcLogPath(), v.frpSince || 0);
-      setState(evidence ? 'running' : 'starting', null, pid);
-      pushLog(`frpc 探活发现存活进程 pid=${pid}${evidence ? `（${evidence.line}）` : ''}`);
+      const ev = findLastTunnelEvent(frpcLogPath(), v.frpSince || 0);
+      const next = ev?.kind === 'ready' ? 'running' : ev?.kind === 'down' ? 'reconnecting' : 'starting';
+      setState(next, ev?.kind === 'down' ? ev.line : null, pid);
+      pushLog(`frpc 探活发现存活进程 pid=${pid}${ev ? `（${ev.line}）` : ''}`);
     }
     return status();
   }
 
   function scheduleRestart(reason, lastError = null) {
-    const now = Date.now();
-    restartTimes = restartTimes.filter((t) => now - t < RESTART_WINDOW_MS);
-    if (restartTimes.length >= RESTART_MAX) {
-      setState('error', 'frpc_restart_limit');
-      log.error?.(`frpc: 1 分钟内重启超过 ${RESTART_MAX} 次，停止重试（${reason}）`);
-      return;
-    }
-    restartTimes.push(now);
+    // F5：指数退避 3s→6s→12s→24s→48s→60s 封顶，永不按「次数」放弃。
+    // 拨 VPN 时 frpc 会连续失败几十次，按次数限流只会把隧道永久钉死在 error。
+    const delay = restartDelayMs(restartRound);
+    restartRound += 1;
     setState('starting', lastError);
+    log.warn?.(`frpc: ${Math.round(delay / 1000)}s 后重启（第 ${restartRound} 轮，${reason}）`);
+    if (restartTimer) clearTimeout(restartTimer);
     restartTimer = setTimeout(() => {
       restartTimer = null;
       start({ fromRestart: true });
-    }, RESTART_DELAY_MS);
+    }, delay);
     restartTimer.unref?.();
   }
 
@@ -601,8 +692,19 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
     const pid = activePid();
     if (!pid) return;
     clearFallback();
+    restartRound = 0; // 真连上才算恢复，退避计数归零
     setState('running', null, pid);
     log.info?.(`frpc: 就绪（${via}），隧道进入 running`);
+  }
+
+  /** 断线信号：进程还活着，frpc 自己在重连 → reconnecting（不再冒充 running）。 */
+  function markReconnecting(line) {
+    const pid = activePid();
+    if (!pid) return;
+    if (state.frpState === 'reconnecting' && state.lastError === line) return;
+    clearFallback();
+    setState('reconnecting', line, pid);
+    log.warn?.(`frpc: 隧道断开，等待重连 | ${line}`);
   }
 
   /** 跟随 frpc.log 增量：既进内存环形缓冲，也做就绪判定（F2/F3）。 */
@@ -620,7 +722,9 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
         for (const line of parts) {
           if (!line.trim()) continue;
           pushLog(line);
-          if (isReadyLine(line)) markRunning('日志信号');
+          const ev = tunnelEventOf(line);
+          if (ev === 'ready') markRunning('日志信号');
+          else if (ev === 'down') markReconnecting(line.trim());
         }
       }
       tailTimer = setTimeout(tick, TAIL_INTERVAL_MS);
@@ -720,15 +824,15 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
     pushLog(`frpc 启动 pid=${pid} (${bin.source}: ${bin.path}) log=${logPath}`);
     startTail(pid);
 
-    // 兜底：进程存活 READY_FALLBACK_MS 仍未见错误 → 认为就绪（仍要求真实存活）
+    // 观察窗口：只解释「为什么还没 running」，不再据进程存活冒充就绪（F6）
     clearFallback();
     fallbackTimer = setTimeout(() => {
       fallbackTimer = null;
       if (!child || child.pid !== pid) return;
-      if (!isProcessAlive(pid)) return;
       if (state.frpState !== 'starting') return;
-      pushLog(`frpc ${READY_FALLBACK_MS}ms 内未见就绪日志，按进程存活兜底判 running`);
-      setState('running', null, pid);
+      pushLog(
+        `frpc ${READY_FALLBACK_MS}ms 内未见 "login to server success"，状态保持 starting（不按进程存活冒充 running）`,
+      );
     }, READY_FALLBACK_MS);
     fallbackTimer.unref?.();
 
@@ -754,7 +858,7 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
         setState('stopped', null);
         return;
       }
-      if (!fromRestart) restartTimes = [];
+      if (!fromRestart) restartRound = 0;
       const reason = `frpc_exited: code=${code ?? '-'} signal=${signal ?? '-'}`;
       setState('stopped', reason, null);
       scheduleRestart(`exit ${code ?? signal}`, reason);

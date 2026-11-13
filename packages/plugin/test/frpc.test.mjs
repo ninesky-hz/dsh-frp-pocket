@@ -11,13 +11,18 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   buildFrpcToml,
   createFrpcManager,
+  findLastTunnelEvent,
   findReadyInLog,
   frpcLogPath,
   isProcessAlive,
   resolveFrpc,
+  restartDelayMs,
   rotateLogFile,
+  tunnelEventOf,
   LOG_KEEP_BYTES,
   LOG_MAX_BYTES,
+  RESTART_BASE_MS,
+  RESTART_MAX_MS,
 } from '../lib/frpc.mjs';
 import { loadConfig, paths, readState, updateConfig, writeState } from '../lib/config.mjs';
 import { makeHome } from './helpers.mjs';
@@ -93,6 +98,72 @@ test('frpc.toml（customDomains 模式）：写 customDomains、不写 subdomain
 test('frpc.toml：token 含引号/反斜杠时仍生成合法 TOML 字符串', () => {
   const toml = buildFrpcToml(baseCfg({ authToken: 'a"b\\c' }));
   assert.ok(toml.includes('auth.token = "a\\"b\\\\c"'), toml);
+});
+
+test('frpc.toml：拨 VPN 保活四键（loginFailExit / dialServerTimeout / heartbeat / dnsServer）', () => {
+  const toml = buildFrpcToml(
+    baseCfg({ dnsServer: '223.5.5.5', dialServerTimeout: 4, heartbeatInterval: 8, heartbeatTimeout: 20 }),
+  );
+  assert.ok(toml.includes('loginFailExit = false'), `登录失败必须退化成无限重试：\n${toml}`);
+  assert.ok(toml.includes('dnsServer = "223.5.5.5"'), toml);
+  assert.ok(toml.includes('transport.dialServerTimeout = 4'), toml);
+  assert.ok(toml.includes('transport.heartbeatInterval = 8'), toml);
+  assert.ok(toml.includes('transport.heartbeatTimeout = 20'), toml);
+
+  // 未填 DNS 时不写该键（frpc 回落系统 DNS），但保活键必须始终在
+  const bare = buildFrpcToml(baseCfg({ dnsServer: '' }));
+  assert.ok(!bare.includes('dnsServer'), bare);
+  assert.ok(bare.includes('loginFailExit = false'), bare);
+  assert.ok(bare.includes('transport.dialServerTimeout = 5'), bare);
+});
+
+test('restartDelayMs：3→6→12→24→48→60s 封顶，永不放弃', () => {
+  assert.equal(restartDelayMs(0), RESTART_BASE_MS);
+  assert.deepEqual(
+    [0, 1, 2, 3, 4, 5, 6, 50].map((r) => restartDelayMs(r) / 1000),
+    [3, 6, 12, 24, 48, 60, 60, 60],
+  );
+  assert.equal(RESTART_MAX_MS, 60_000);
+  // 负数 / 非数字按第 0 轮处理，不会算出 NaN 延迟去 setTimeout
+  assert.equal(restartDelayMs(-3), RESTART_BASE_MS);
+  assert.equal(restartDelayMs(Number.NaN), RESTART_BASE_MS);
+});
+
+test('tunnelEventOf：就绪行不被断线规则抢走，重连成功不算 down', () => {
+  assert.equal(tunnelEventOf('2026-11-12 10:00:00.000 [I] [service.go:355] login to server success'), 'ready');
+  assert.equal(tunnelEventOf('2026-11-12 10:00:00.120 [I] [control.go:174] start proxy success'), 'ready');
+  assert.equal(tunnelEventOf('2026-11-12 10:00:01.000 [W] [service.go:237] connection to server closed'), 'down');
+  assert.equal(
+    tunnelEventOf('2026-11-12 10:00:02.000 [W] [service.go:265] try to reconnect to server...'),
+    'down',
+  );
+  assert.equal(
+    tunnelEventOf('2026-11-12 10:00:03.000 [E] [service.go:302] connect to server error: dial tcp: i/o timeout'),
+    'down',
+  );
+  assert.equal(
+    tunnelEventOf('2026-11-12 10:00:04.000 [I] [service.go:290] reconnect to server success'),
+    null,
+  );
+  assert.equal(tunnelEventOf('2026-11-12 10:00:05.000 [I] [control.go:1] some unrelated line'), null);
+});
+
+test('findLastTunnelEvent：取最后一条事件，不是「曾经成功过」', () => {
+  const file = join(PKG_ROOT, 'test', '.last-event.log');
+  writeFileSync(
+    file,
+    [
+      '2026-11-12 10:00:00.000 [I] [service.go:355] login to server success, get run id [aaaaaaaa]',
+      '2026-11-12 10:00:01.000 [W] [service.go:237] connection to server closed',
+    ].join('\n'),
+  );
+  try {
+    const ev = findLastTunnelEvent(file, 0);
+    assert.equal(ev?.kind, 'down');
+    assert.match(ev.line, /connection to server closed/);
+  } finally {
+    rmSync(file, { force: true });
+  }
 });
 
 test('resolveFrpc：优先 config.frpcPath，不存在则回退 PATH', () => {
@@ -199,6 +270,65 @@ test('F2/F3：假 frpc 打出 start proxy success → state=running 且持久化
 
   m.stop();
   assert.equal(readState().frpState, 'stopped');
+});
+
+/** 假 frpc：先 login success，再报断线，然后常驻（模拟拨 VPN 后链路被切断）。 */
+const FAKE_FRPC_DOWN = [
+  "process.stdout.write('2026-11-12 10:00:00.000 [I] [client/service.go:355] [aaaaaaaa] login to server success, get run id [aaaaaaaa]\\n');",
+  "setTimeout(() => process.stdout.write('2026-11-12 10:00:02.000 [W] [client/service.go:237] [aaaaaaaa] connection to server closed\\n'), 400);",
+  'setInterval(() => {}, 1000);',
+].join('\n');
+
+test('F6：进程活着但链路断了 → reconnecting（不是 running，也不是 stopped）', async () => {
+  cleanDataDir();
+  const cfg = cfgForFix();
+  const m = createFrpcManager({
+    getConfig: () => cfg,
+    log: QUIET,
+    spawnOverride: { command: process.execPath, args: ['-e', FAKE_FRPC_DOWN] },
+  });
+  const r = m.start();
+  assert.equal(r.ok, true, JSON.stringify(r));
+
+  const up = await waitFor(() => (m.status().state === 'running' ? m.status() : null), 6000);
+  assert.ok(up, `未先进入 running：${JSON.stringify(m.status())}`);
+
+  const down = await waitFor(() => (m.status().state === 'reconnecting' ? m.status() : null), 6000);
+  assert.ok(down, `断线后没有进 reconnecting：${JSON.stringify(m.status())}`);
+  assert.equal(down.pid, r.pid, '进程还活着，pid 不该被清掉');
+  assert.match(down.lastError ?? '', /connection to server closed/);
+  assert.equal(readState().frpState, 'reconnecting', 'reconnecting 必须能落盘（不被枚举降级）');
+  assert.equal(isProcessAlive(r.pid), true);
+
+  m.stop();
+  assert.equal(m.status().state, 'stopped');
+});
+
+test('F5：假 frpc 秒退时进 starting + 排下一轮重启，绝不打 frpc_restart_limit', async () => {
+  cleanDataDir();
+  const cfg = cfgForFix();
+  const warns = [];
+  const m = createFrpcManager({
+    getConfig: () => cfg,
+    log: { info() {}, warn: (s) => warns.push(String(s)), error: (s) => warns.push(String(s)) },
+    // 立刻退出：模拟拨 VPN 抢走路由后 frpc 秒失败
+    spawnOverride: { command: process.execPath, args: ['-e', 'process.exit(1)'] },
+  });
+  const r = m.start();
+  assert.equal(r.ok, true, JSON.stringify(r));
+
+  // 先等「进程真的退过一次」（lastError 记下 frpc_exited），再断言退避
+  const st = await waitFor(() => {
+    const s = m.status();
+    return s.state === 'starting' && /frpc_exited/.test(s.lastError ?? '') ? s : null;
+  }, 6000);
+  assert.ok(st, `退出后应停在 starting 等重试：${JSON.stringify(m.status())}`);
+  assert.notEqual(st.lastError, 'frpc_restart_limit');
+  assert.ok(
+    warns.some((w) => /3s 后重启（第 1 轮/.test(w)),
+    `没有按退避排重启：${warns.join(' | ')}`,
+  );
+  m.stop(); // 清掉待触发的重启定时器
 });
 
 test('F1：父进程退出后 frpc 仍存活（detached + 日志 fd，不是管道）', async () => {

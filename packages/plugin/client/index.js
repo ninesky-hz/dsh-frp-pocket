@@ -11,6 +11,19 @@ window.__ModuleLoader__.load({
     const { useState, useEffect, useRef } = React;
 
     const CHANNEL = '/dsh-frp-pocket';
+
+    // frpc 状态 → 中文标签。reconnecting = 进程还活着、frpc 正在自己重连
+    // （拨 VPN / 换网卡之后的常态），必须和 starting/error 分开显示，否则用户
+    // 会以为隧道一直是好的。未知值原样回显，不吞信息。
+    const STATE_LABEL = {
+      running: '运行中',
+      starting: '连接中',
+      reconnecting: '重连中',
+      stopped: '已停止',
+      error: '异常',
+    };
+    const stateLabel = (state) => STATE_LABEL[state] ?? (state ?? 'stopped');
+
     const styles = {
       root: { display: 'flex', flexDirection: 'column', gap: 14, padding: '4px 2px 32px', fontSize: 13 },
       card: {
@@ -60,11 +73,21 @@ window.__ModuleLoader__.load({
             ? 'rgba(16,185,129,.12)'
             : state === 'starting'
               ? 'rgba(245,158,11,.14)'
-              : state === 'error'
-                ? 'rgba(239,68,68,.14)'
-                : 'rgba(107,114,128,.14)',
+              : state === 'reconnecting'
+                ? 'rgba(59,130,246,.14)'
+                : state === 'error'
+                  ? 'rgba(239,68,68,.14)'
+                  : 'rgba(107,114,128,.14)',
         color:
-          state === 'running' ? '#047857' : state === 'starting' ? '#b45309' : state === 'error' ? '#b91c1c' : '#4b5563',
+          state === 'running'
+            ? '#047857'
+            : state === 'starting'
+              ? '#b45309'
+              : state === 'reconnecting'
+                ? '#1d4ed8'
+                : state === 'error'
+                  ? '#b91c1c'
+                  : '#4b5563',
       }),
       err: {
         border: '1px solid #fca5a5',
@@ -203,6 +226,7 @@ window.__ModuleLoader__.load({
           autoDomain: value.config?.frp?.autoDomain === true,
           remotePort: String(value.config?.frp?.remotePort ?? 0),
           publicUrl: value.config?.frp?.publicUrl ?? '',
+          dnsServer: value.config?.frp?.dnsServer ?? '',
           enabled: value.config?.frp?.enabled !== false,
         });
       };
@@ -263,6 +287,7 @@ window.__ModuleLoader__.load({
                 autoDomain: form.autoDomain === true,
                 remotePort: Number(form.remotePort) || 0,
                 publicUrl: form.publicUrl.trim(),
+                dnsServer: form.dnsServer.trim(),
               },
             },
           });
@@ -492,6 +517,21 @@ window.__ModuleLoader__.load({
           ),
           h(
             Field,
+            { label: 'DNS 服务器' },
+            h('input', {
+              style: styles.input,
+              placeholder: '留空=跟随系统；建议 223.5.5.5 或 119.29.29.29',
+              value: form.dnsServer,
+              onChange: (e) => setForm({ ...form, dnsServer: e.target.value }),
+            }),
+          ),
+          h(
+            'div',
+            { style: styles.hint },
+            '拨 VPN / 开代理时系统 DNS 常被改写（解析成 198.18.x.x 之类的假 IP），frpc 会一直 dial 超时。填一个固定 DNS 让 frpc 自己解析，绕开被劫持的系统解析。注意：它治不了「VPN 抢走默认路由」，那种情况要靠给 VPS IP 加静态路由或关掉 VPN 的默认网关。',
+          ),
+          h(
+            Field,
             { label: '认证 token' },
             h('input', {
               style: styles.input,
@@ -661,7 +701,7 @@ window.__ModuleLoader__.load({
             'div',
             { style: styles.head },
             h('h3', { style: styles.title }, '隧道状态'),
-            h('span', { style: styles.badge(frpc.state) }, frpc.state ?? 'stopped'),
+            h('span', { style: styles.badge(frpc.state) }, stateLabel(frpc.state)),
           ),
           h(
             'div',
@@ -702,7 +742,16 @@ window.__ModuleLoader__.load({
         height: 8,
         borderRadius: 999,
         display: 'inline-block',
-        background: state === 'running' ? '#10b981' : state === 'error' ? '#ef4444' : '#9ca3af',
+        background:
+          state === 'running'
+            ? '#10b981'
+            : state === 'reconnecting'
+              ? '#3b82f6'
+              : state === 'starting'
+                ? '#f59e0b'
+                : state === 'error'
+                  ? '#ef4444'
+                  : '#9ca3af',
       }),
       grid: { display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '8px 16px', alignItems: 'baseline' },
       key: { color: 'var(--dsw-alias-label-secondary, #6b7280)', fontSize: 12, whiteSpace: 'nowrap' },
@@ -871,7 +920,7 @@ window.__ModuleLoader__.load({
             ? h('span', { style: { ...pageStyles.key, fontSize: 12, wordBreak: 'break-all' } }, status.displayName)
             : null,
           h('span', { style: pageStyles.dot(frpc.state) }),
-          h('span', { style: styles.badge(frpc.state) }, frpc.state ?? 'stopped'),
+          h('span', { style: styles.badge(frpc.state) }, stateLabel(frpc.state)),
           // 插件版本（来自 RPC status.version，宿主实测值，不是页面写死）
           h('span', { style: styles.version, title: 'dsh-frp-pocket 插件版本' }, `v${status?.version ?? '—'}`),
           h('div', { style: { flex: 1 } }),

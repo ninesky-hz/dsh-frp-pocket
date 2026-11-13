@@ -8,6 +8,8 @@ import {
   readConfig,
   writeConfig,
   updateConfig,
+  readState,
+  writeState,
   generatePin,
   isValidPin,
   slugify,
@@ -15,6 +17,7 @@ import {
   pinCookieValue,
   redactConfig,
   normalizeDomains,
+  normalizeDnsServer,
   normalizeDomainSuffix,
   normalizeConfig,
   generateSubdomain,
@@ -106,7 +109,53 @@ test('slugify / pinCookieValue / redactConfig', () => {
 });
 
 test('状态枚举与默认状态文件', () => {
-  assert.deepEqual(FRP_STATES, ['running', 'starting', 'stopped', 'error']);
+  // reconnecting：进程活着但链路断了（拨 VPN / 换网后常见），必须能和 stopped 区分开
+  assert.deepEqual(FRP_STATES, ['running', 'starting', 'reconnecting', 'stopped', 'error']);
+});
+
+test('readState/writeState：reconnecting 原样保留，不被降级成 stopped', () => {
+  writeState({ frpState: 'reconnecting', frpSince: 1234, lastError: 'connection to server closed', pid: 42 });
+  const s = readState();
+  assert.equal(s.frpState, 'reconnecting');
+  assert.equal(s.lastError, 'connection to server closed');
+  assert.equal(s.pid, 42);
+});
+
+test('normalizeDnsServer：只收 host / host:port，非法值回落空串', () => {
+  assert.equal(normalizeDnsServer('223.5.5.5'), '223.5.5.5');
+  assert.equal(normalizeDnsServer(' 223.5.5.5:53 '), '223.5.5.5:53');
+  assert.equal(normalizeDnsServer('dns.alidns.com'), 'dns.alidns.com');
+  assert.equal(normalizeDnsServer(''), '');
+  assert.equal(normalizeDnsServer(undefined), '');
+  assert.equal(normalizeDnsServer('223.5.5.5:0'), '');
+  assert.equal(normalizeDnsServer('223.5.5.5:99999'), '');
+  assert.equal(normalizeDnsServer('http://1.1.1.1'), '');
+  assert.equal(normalizeDnsServer('1.1.1.1 8.8.8.8'), '');
+});
+
+test('normalizeConfig：网络保活四字段有默认值且能收敛', () => {
+  const base = normalizeConfig({});
+  assert.equal(base.frp.dnsServer, '');
+  assert.equal(base.frp.dialServerTimeout, 5);
+  assert.equal(base.frp.heartbeatInterval, 10);
+  assert.equal(base.frp.heartbeatTimeout, 30);
+
+  const tuned = normalizeConfig({
+    frp: { dnsServer: '119.29.29.29', dialServerTimeout: 3, heartbeatInterval: 5, heartbeatTimeout: 15 },
+  });
+  assert.equal(tuned.frp.dnsServer, '119.29.29.29');
+  assert.equal(tuned.frp.dialServerTimeout, 3);
+  assert.equal(tuned.frp.heartbeatInterval, 5);
+  assert.equal(tuned.frp.heartbeatTimeout, 15);
+
+  // 非法值回落默认，不让坏配置把隧道打死
+  const bad = normalizeConfig({
+    frp: { dnsServer: 'not a dns', dialServerTimeout: 0, heartbeatInterval: 'x', heartbeatTimeout: -1 },
+  });
+  assert.equal(bad.frp.dnsServer, '');
+  assert.equal(bad.frp.dialServerTimeout, 5);
+  assert.equal(bad.frp.heartbeatInterval, 10);
+  assert.equal(bad.frp.heartbeatTimeout, 30);
 });
 
 test('normalizeDomains：字符串/数组都能收，非法项被丢掉', () => {

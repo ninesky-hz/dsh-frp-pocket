@@ -158,6 +158,11 @@ export function defaultConfig(displayName) {
       autoDomain: false,
       remotePort: 0,
       publicUrl: '',
+      // 网络保活（F5）：拨 VPN 后要尽快发现半死连接，不信系统 DNS
+      dnsServer: '',
+      dialServerTimeout: 5,
+      heartbeatInterval: 10,
+      heartbeatTimeout: 30,
     },
     frpcPath: '',
     updatedAt: Date.now(),
@@ -178,6 +183,23 @@ function str(value, fallback = '') {
 
 function bool(value, fallback) {
   return typeof value === 'boolean' ? value : fallback;
+}
+
+/**
+ * dnsServer 收敛成 `host` 或 `host:port`。
+ * 拨 VPN / 开代理时系统 DNS 可能被改写（fake-IP），frpc 走自己的解析器才稳。
+ * 非法值一律回落空串（= 用系统 DNS），不因为填错 DNS 把隧道彻底打死。
+ */
+export function normalizeDnsServer(value) {
+  const s = str(value).trim();
+  if (!s) return '';
+  const m = /^([A-Za-z0-9._-]{1,253})(?::(\d{1,5}))?$/.exec(s);
+  if (!m) return '';
+  if (m[2] !== undefined) {
+    const port = Number(m[2]);
+    if (!(port >= 1 && port <= 65535)) return '';
+  }
+  return s;
 }
 
 /** 合并默认值 + 逐字段校验；hostId / PIN 缺失或非法则重新生成。 */
@@ -229,6 +251,10 @@ export function normalizeConfig(raw) {
       autoDomain,
       remotePort: intIn(frp.remotePort, 0, 65535, 0),
       publicUrl,
+      dnsServer: normalizeDnsServer(frp.dnsServer),
+      dialServerTimeout: intIn(frp.dialServerTimeout, 1, 60, 5),
+      heartbeatInterval: intIn(frp.heartbeatInterval, 1, 3600, 10),
+      heartbeatTimeout: intIn(frp.heartbeatTimeout, 1, 3600, 30),
     },
     frpcPath: str(src.frpcPath).trim(),
     updatedAt: Number.isFinite(src.updatedAt) ? src.updatedAt : Date.now(),
@@ -298,7 +324,11 @@ export function updateConfig(patch = {}) {
 
 // ---------- state.json ----------
 
-export const FRP_STATES = ['running', 'starting', 'stopped', 'error'];
+/**
+ * 合法的隧道状态。reconnecting = 进程活着但链路断了、frpc 正在自己重连；
+ * 漏了它 readState() 会把它降级成 stopped，面板就开始说谎。
+ */
+export const FRP_STATES = ['running', 'starting', 'reconnecting', 'stopped', 'error'];
 
 export function readState() {
   const file = paths().state;
