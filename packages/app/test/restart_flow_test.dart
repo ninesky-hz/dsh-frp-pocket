@@ -121,7 +121,7 @@ void main() {
     expect(find.text('重启隧道'), findsNothing);
   });
 
-  testWidgets('隧道重启失败：留在对话框，给重试 / 在浏览器打开 / 关闭', (tester) async {
+  testWidgets('隧道重启失败：留在对话框，只给重试 / 关闭', (tester) async {
     final api = _FakeApi(
       times: const <int?>[1000],
       tunnelError: const DshApiException(
@@ -134,7 +134,7 @@ void main() {
 
     expect(find.textContaining('不支持这样重启'), findsOneWidget);
     expect(find.text('重试'), findsOneWidget);
-    expect(find.text('在浏览器打开'), findsOneWidget);
+    expect(find.text('在浏览器打开'), findsNothing);
     expect(find.text('关闭'), findsOneWidget);
     expect(api.relogins, 0);
 

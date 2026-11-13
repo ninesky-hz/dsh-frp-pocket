@@ -24,17 +24,12 @@ Future<bool> showRestartDialog(
   required Host host,
   required DshApi api,
   required RestartKind kind,
-  Future<bool> Function()? onOpenBrowser,
 }) async {
   final result = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
-    builder: (dialogContext) => RestartProgressDialog(
-      host: host,
-      api: api,
-      kind: kind,
-      onOpenBrowser: onOpenBrowser,
-    ),
+    builder: (dialogContext) =>
+        RestartProgressDialog(host: host, api: api, kind: kind),
   );
   return result ?? false;
 }
@@ -45,13 +40,11 @@ class RestartProgressDialog extends StatefulWidget {
     required this.host,
     required this.api,
     required this.kind,
-    this.onOpenBrowser,
   });
 
   final Host host;
   final DshApi api;
   final RestartKind kind;
-  final Future<bool> Function()? onOpenBrowser;
 
   @override
   State<RestartProgressDialog> createState() => _RestartProgressDialogState();
@@ -199,12 +192,6 @@ class _RestartProgressDialogState extends State<RestartProgressDialog> {
     );
   }
 
-  Future<void> _openBrowser() async {
-    final opener = widget.onOpenBrowser;
-    if (opener == null) return;
-    await opener();
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -276,7 +263,6 @@ class _RestartProgressDialogState extends State<RestartProgressDialog> {
               child: const Text('好'),
             )
           else ...<Widget>[
-            TextButton(onPressed: _openBrowser, child: const Text('在浏览器打开')),
             TextButton(onPressed: _run, child: const Text('重试')),
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),

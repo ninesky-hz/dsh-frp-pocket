@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../app_scope.dart';
 import '../models/host.dart';
 import '../services/dsh_api.dart';
-import '../services/platform_bridge.dart';
 import '../services/probe.dart';
 import '../services/scan_parser.dart';
 import '../widgets/host_card.dart';
@@ -30,7 +28,6 @@ class HostsScreen extends StatefulWidget {
 
 class _HostsScreenState extends State<HostsScreen> {
   late final ProbeService _probe = widget.probe ?? ProbeService();
-  final PlatformBridge _bridge = const PlatformBridge();
   final DshApi _api = DshApi();
   final Map<String, ProbeResult> _results = <String, ProbeResult>{};
   final Set<String> _probing = <String>{};
@@ -123,21 +120,6 @@ class _HostsScreenState extends State<HostsScreen> {
                 onTap: () => Navigator.of(sheetContext).pop('edit'),
               ),
               ListTile(
-                leading: const Icon(AppIcons.link),
-                title: const Text('复制链接'),
-                subtitle: Text(
-                  host.url,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                onTap: () => Navigator.of(sheetContext).pop('copy'),
-              ),
-              ListTile(
-                leading: const Icon(AppIcons.browser),
-                title: const Text('在浏览器打开'),
-                onTap: () => Navigator.of(sheetContext).pop('browser'),
-              ),
-              ListTile(
                 leading: const Icon(AppIcons.cloudSync),
                 title: const Text('重启隧道'),
                 subtitle: Text(
@@ -189,12 +171,6 @@ class _HostsScreenState extends State<HostsScreen> {
     switch (action) {
       case 'edit':
         await _openEdit(host: host);
-      case 'copy':
-        await Clipboard.setData(ClipboardData(text: host.url));
-        _toast('链接已复制：${host.url}');
-      case 'browser':
-        final ok = await _bridge.openExternal(host.url);
-        if (!ok) _toast('没有找到可用的浏览器');
       case 'restartTunnel':
         await _restartTunnel(host);
       case 'restartDsh':
@@ -211,7 +187,6 @@ class _HostsScreenState extends State<HostsScreen> {
       host: host,
       api: _api,
       kind: RestartKind.tunnel,
-      onOpenBrowser: () => _bridge.openExternal(host.url),
     );
     if (!mounted) return;
     if (done) _toast('隧道已重连');
@@ -247,7 +222,6 @@ class _HostsScreenState extends State<HostsScreen> {
       host: host,
       api: _api,
       kind: RestartKind.dsh,
-      onOpenBrowser: () => _bridge.openExternal(host.url),
     );
     if (!mounted) return;
     if (done) _toast('DSH 已重启');

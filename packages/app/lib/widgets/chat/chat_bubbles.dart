@@ -11,6 +11,7 @@ import '../../models/session_event.dart';
 import '../../theme/app_icons.dart';
 import '../ignore_show_on_screen.dart';
 import 'chat_note_sheet.dart';
+import 'image_viewer.dart';
 
 // 聊天页的展示层：气泡、离线气泡、图片、空态/错误态、思考小字。
 //
@@ -102,184 +103,182 @@ class MessageBubble extends StatelessWidget {
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-          constraints: BoxConstraints(maxWidth: maxWidth),
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: isUser
-                ? theme.colorScheme.primary
-                : theme.colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(16),
-              topRight: const Radius.circular(16),
-              bottomLeft: Radius.circular(isUser ? 16 : 4),
-              bottomRight: Radius.circular(isUser ? 4 : 16),
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              if (message.images.isNotEmpty) _buildImages(),
-              if (message.text.isNotEmpty || typing)
-                // 长按选字、拖选、复制一部分，靠系统文本框自己给；包
-                // `SelectionArea` 会跟我们的 `CustomScrollView(center:)` 抢
-                // 滚动容器，滚动中选字时还会拿已 defunct 的 element 取位置。
-                //
-                // 选中高亮和拖选把手必须相对**这个气泡**可见：默认取的是
-                // `colorScheme.primary`，而自己发的气泡底色就是 primary，
-                // 于是选区和把手一起消失（浅色主题最明显——两者都是
-                // #1F6F63）。这里按气泡自己的前景色重设，白字气泡得到白色
-                // 把手，深字气泡得到深色把手，两套主题都自洽。
-                //
-                // 外面再套一层 `IgnoreShowOnScreen`：选中时文本框会要求祖先
-                // 把它滚到可见处，而一条消息常有整屏高，`ensureVisible` 只能
-                // 把整条列表拽到底，于是长按上面的句子、页面掉到输入框那头。
-                IgnoreShowOnScreen(
-                  child: TextSelectionTheme(
-                    data: TextSelectionTheme.of(context).copyWith(
-                      cursorColor: foreground,
-                      selectionColor: foreground.withValues(alpha: 0.32),
-                      selectionHandleColor: foreground,
-                    ),
-                    child: SelectableText(
-                      typing ? '${message.text}▌' : message.text,
-                      onSelectionChanged: (selection, cause) =>
-                          onSelectionChanged?.call(selection),
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: foreground,
-                        height: 1.45,
-                      ),
-                    ),
-                  ),
-                ),
-              if (message.notes.isNotEmpty)
-                Padding(
-                  padding: EdgeInsets.only(
-                    top: message.text.isEmpty ? 0 : 6,
-                  ),
-                  child: NotesLine(
-                    notes: message.notes,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: foreground.withValues(alpha: 0.7),
-                    ),
-                  ),
-                ),
-              if (message.delivery == ChatDelivery.sending)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    '发送中…',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: foreground.withValues(alpha: 0.7),
-                    ),
-                  ),
-                ),
-              if (message.delivery == ChatDelivery.queued)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      SizedBox(
-                        width: 11,
-                        height: 11,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.6,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            foreground.withValues(alpha: 0.65),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        '排队中',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: foreground.withValues(alpha: 0.7),
-                        ),
-                      ),
-                      const SizedBox(width: 18),
-                      // 撤回在前、插队在后：右边是这一行里唯一「改变顺序」的
-                      // 动作，手指从右往左扫过来先撞见它。
-                      InkWell(
-                        key: ValueKey<String>('queued.drop.${message.key}'),
-                        onTap: () {
-                          onDropQueued(message);
-                        },
-                        borderRadius: BorderRadius.circular(8),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 2,
-                          ),
-                          child: Text(
-                            '撤回',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: foreground.withValues(alpha: 0.55),
-                              decoration: TextDecoration.underline,
-                              decorationColor:
-                                  foreground.withValues(alpha: 0.35),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      InkWell(
-                        key: ValueKey<String>('queued.steer.${message.key}'),
-                        onTap: () {
-                          onSteerQueued(message);
-                        },
-                        borderRadius: BorderRadius.circular(8),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 2,
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: <Widget>[
-                              Icon(
-                                AppIcons.send,
-                                size: 11,
-                                color: foreground.withValues(alpha: 0.9),
-                              ),
-                              const SizedBox(width: 2),
-                              Text(
-                                '插队',
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: foreground.withValues(alpha: 0.9),
-                                  fontWeight: FontWeight.w600,
-                                  decoration: TextDecoration.underline,
-                                  decorationColor:
-                                      foreground.withValues(alpha: 0.5),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              if (message.retryable)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: InkWell(
-                    onTap: () => onRetry(message),
-                    child: Text(
-                      '发送失败，点这里重试',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: isUser ? foreground : theme.colorScheme.error,
-                        decoration: TextDecoration.underline,
-                        decorationColor: isUser ? foreground : null,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: isUser
+              ? theme.colorScheme.primary
+              : theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: Radius.circular(isUser ? 16 : 4),
+            bottomRight: Radius.circular(isUser ? 4 : 16),
           ),
         ),
-      );
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            if (message.images.isNotEmpty) _buildImages(),
+            if (message.text.isNotEmpty || typing)
+              // 长按选字、拖选、复制一部分，靠系统文本框自己给；包
+              // `SelectionArea` 会跟我们的 `CustomScrollView(center:)` 抢
+              // 滚动容器，滚动中选字时还会拿已 defunct 的 element 取位置。
+              //
+              // 选中高亮和拖选把手必须相对**这个气泡**可见：默认取的是
+              // `colorScheme.primary`，而自己发的气泡底色就是 primary，
+              // 于是选区和把手一起消失（浅色主题最明显——两者都是
+              // #1F6F63）。这里按气泡自己的前景色重设，白字气泡得到白色
+              // 把手，深字气泡得到深色把手，两套主题都自洽。
+              //
+              // 外面再套一层 `IgnoreShowOnScreen`：选中时文本框会要求祖先
+              // 把它滚到可见处，而一条消息常有整屏高，`ensureVisible` 只能
+              // 把整条列表拽到底，于是长按上面的句子、页面掉到输入框那头。
+              IgnoreShowOnScreen(
+                child: TextSelectionTheme(
+                  data: TextSelectionTheme.of(context).copyWith(
+                    cursorColor: foreground,
+                    selectionColor: foreground.withValues(alpha: 0.32),
+                    selectionHandleColor: foreground,
+                  ),
+                  child: SelectableText(
+                    typing ? '${message.text}▌' : message.text,
+                    onSelectionChanged: (selection, cause) =>
+                        onSelectionChanged?.call(selection),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: foreground,
+                      height: 1.45,
+                    ),
+                  ),
+                ),
+              ),
+            if (message.notes.isNotEmpty)
+              Padding(
+                padding: EdgeInsets.only(top: message.text.isEmpty ? 0 : 6),
+                child: NotesLine(
+                  notes: message.notes,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: foreground.withValues(alpha: 0.7),
+                  ),
+                ),
+              ),
+            if (message.delivery == ChatDelivery.sending)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  '发送中…',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: foreground.withValues(alpha: 0.7),
+                  ),
+                ),
+              ),
+            if (message.delivery == ChatDelivery.queued)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    SizedBox(
+                      width: 11,
+                      height: 11,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.6,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          foreground.withValues(alpha: 0.65),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '排队中',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: foreground.withValues(alpha: 0.7),
+                      ),
+                    ),
+                    const SizedBox(width: 18),
+                    // 撤回在前、插队在后：右边是这一行里唯一「改变顺序」的
+                    // 动作，手指从右往左扫过来先撞见它。
+                    InkWell(
+                      key: ValueKey<String>('queued.drop.${message.key}'),
+                      onTap: () {
+                        onDropQueued(message);
+                      },
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 2,
+                        ),
+                        child: Text(
+                          '撤回',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: foreground.withValues(alpha: 0.55),
+                            decoration: TextDecoration.underline,
+                            decorationColor: foreground.withValues(alpha: 0.35),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    InkWell(
+                      key: ValueKey<String>('queued.steer.${message.key}'),
+                      onTap: () {
+                        onSteerQueued(message);
+                      },
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 2,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            Icon(
+                              AppIcons.send,
+                              size: 11,
+                              color: foreground.withValues(alpha: 0.9),
+                            ),
+                            const SizedBox(width: 2),
+                            Text(
+                              '插队',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: foreground.withValues(alpha: 0.9),
+                                fontWeight: FontWeight.w600,
+                                decoration: TextDecoration.underline,
+                                decorationColor: foreground.withValues(
+                                  alpha: 0.5,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            if (message.retryable)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: InkWell(
+                  onTap: () => onRetry(message),
+                  child: Text(
+                    '发送失败，点这里重试',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: isUser ? foreground : theme.colorScheme.error,
+                      decoration: TextDecoration.underline,
+                      decorationColor: isUser ? foreground : null,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// 图片排在文字上方：手机上是先看图再看说明的习惯顺序。
@@ -326,10 +325,38 @@ class ChatImageTile extends StatelessWidget {
   static const double _placeholderHeight = 96;
   static const double _maxHeight = 260;
 
+  /// 点开全屏看大图（双指缩放 / 双击放大）。
+  ///
+  /// 图还没到位时先等这次取附件：用户点的就是那张图，等一下比让他再点一次好。
+  /// 取失败就什么都不做——气泡上已经写着「图片加载失败」，再弹一次没有新信息。
+  Future<void> _openViewer(BuildContext context) async {
+    var data = localBytes;
+    if (data == null) {
+      try {
+        data = await future;
+      } on Object {
+        return;
+      }
+    }
+    if (data.isEmpty || !context.mounted) return;
+    await showImageViewer(context, bytes: data, label: image.name);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final bytes = localBytes;
+    return Semantics(
+      button: true,
+      label: '查看大图',
+      child: GestureDetector(
+        onTap: () => _openViewer(context),
+        child: _buildFrame(context, theme, bytes),
+      ),
+    );
+  }
+
+  Widget _buildFrame(BuildContext context, ThemeData theme, Uint8List? bytes) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(10),
       child: ConstrainedBox(
@@ -359,6 +386,7 @@ class ChatImageTile extends StatelessWidget {
   }
 
   Widget _buildImage(BuildContext context, Uint8List bytes) {
+    final theme = Theme.of(context);
     return Image.memory(
       bytes,
       width: double.infinity,
@@ -366,8 +394,18 @@ class ChatImageTile extends StatelessWidget {
       // 本地占位图换成远端真图时会重建同一个 widget：保留上一帧画面，
       // 避免闪一下空白。
       gaplessPlayback: true,
-      errorBuilder: (context, error, stack) =>
-          _buildFailed(context, Theme.of(context)),
+      // 解码要一帧时间，而 `Image` 在拿到首帧前的高度是 0 —— 气泡会先塌成一条
+      // 线再弹开，手指正好点上去还会落空。给它一块和加载态同高的骨架。
+      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+        if (frame != null || wasSynchronouslyLoaded) return child;
+        return Container(
+          height: _placeholderHeight,
+          color: theme.colorScheme.surfaceContainerHighest.withValues(
+            alpha: 0.5,
+          ),
+        );
+      },
+      errorBuilder: (context, error, stack) => _buildFailed(context, theme),
     );
   }
 
@@ -397,6 +435,7 @@ class ChatImageTile extends StatelessWidget {
     );
   }
 }
+
 /// 离线队列里的一条：服务端还没见过它。
 ///
 /// 和 [MessageBubble] 分开：它没有 seq、没有 durable 身份，样式也刻意压低
@@ -456,13 +495,20 @@ class OutboxBubble extends StatelessWidget {
                   runSpacing: 4,
                   children: <Widget>[
                     for (final bytes in thumbs)
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.memory(
-                          bytes,
-                          width: 56,
-                          height: 56,
-                          fit: BoxFit.cover,
+                      GestureDetector(
+                        onTap: () => showImageViewer(
+                          context,
+                          bytes: bytes,
+                          label: '未发送的图片',
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.memory(
+                            bytes,
+                            width: 56,
+                            height: 56,
+                            fit: BoxFit.cover,
+                          ),
                         ),
                       ),
                   ],
@@ -521,17 +567,18 @@ class OutboxBubble extends StatelessWidget {
       case OutboxStatus.pending:
         return Tooltip(
           message: '排队中，等待网络恢复后自动发送',
-          child: Icon(AppIcons.schedule, size: AppIcons.inline, color: foreground),
+          child: Icon(
+            AppIcons.schedule,
+            size: AppIcons.inline,
+            color: foreground,
+          ),
         );
       case OutboxStatus.sending:
         return SizedBox(
           key: ValueKey<String>('outbox.sending.${entry.id}'),
           width: 14,
           height: 14,
-          child: CircularProgressIndicator(
-            strokeWidth: 1.6,
-            color: foreground,
-          ),
+          child: CircularProgressIndicator(strokeWidth: 1.6, color: foreground),
         );
       case OutboxStatus.failed:
         return InkWell(
@@ -597,7 +644,10 @@ class ChatEmptyView extends StatelessWidget {
 
 class ChatErrorView extends StatelessWidget {
   const ChatErrorView({
-    super.key,required this.message, required this.onRetry});
+    super.key,
+    required this.message,
+    required this.onRetry,
+  });
 
   final String message;
   final VoidCallback onRetry;
@@ -645,8 +695,7 @@ class ChatErrorView extends StatelessWidget {
 ///
 /// 详细模式逐项一行（带工具参数摘要，太长就省略号），简洁模式仍是一行统计。
 class NotesLine extends StatelessWidget {
-  const NotesLine({
-    super.key,required this.notes, required this.style});
+  const NotesLine({super.key, required this.notes, required this.style});
 
   final List<ChatNote> notes;
   final TextStyle? style;
@@ -668,9 +717,7 @@ class NotesLine extends StatelessWidget {
     if (notes.length == 1) return _noteRow(context, notes.first);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        for (final note in notes) _noteRow(context, note),
-      ],
+      children: <Widget>[for (final note in notes) _noteRow(context, note)],
     );
   }
 

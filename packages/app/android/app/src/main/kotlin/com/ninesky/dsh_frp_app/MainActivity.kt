@@ -2,7 +2,6 @@ package com.ninesky.dsh_frp_app
 
 import android.app.DownloadManager
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
@@ -10,10 +9,9 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * 极小的原生桥：只提供 Flutter 侧拿不到的三件事
- *  - keepAwake    保持屏幕常亮（FLAG_KEEP_SCREEN_ON）
- *  - openExternal 用系统浏览器打开链接
- *  - download     交给系统 DownloadManager 下载（带 Cookie）
+ * 极小的原生桥：只提供 Flutter 侧拿不到的两件事
+ *  - keepAwake 保持屏幕常亮（FLAG_KEEP_SCREEN_ON）
+ *  - download  交给系统 DownloadManager 下载（带 Cookie）
  */
 class MainActivity : FlutterActivity() {
 
@@ -37,15 +35,6 @@ class MainActivity : FlutterActivity() {
                         result.success(true)
                     }
 
-                    "openExternal" -> {
-                        val url = call.arguments as? String
-                        if (url.isNullOrEmpty()) {
-                            result.error("bad_args", "url is empty", null)
-                        } else {
-                            result.success(openExternal(url))
-                        }
-                    }
-
                     "download" -> {
                         val args = call.arguments as? Map<*, *>
                         val url = args?.get("url") as? String
@@ -65,17 +54,6 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
-    }
-
-    private fun openExternal(url: String): Boolean {
-        return try {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(intent)
-            true
-        } catch (e: Exception) {
-            false
-        }
     }
 
     private fun enqueueDownload(

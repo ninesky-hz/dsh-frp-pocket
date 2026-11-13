@@ -7,6 +7,7 @@ import 'package:dsh_frp_app/models/host.dart';
 import 'package:dsh_frp_app/screens/host_edit_screen.dart';
 import 'package:dsh_frp_app/services/probe.dart';
 import 'package:dsh_frp_app/services/scan_parser.dart';
+import 'package:dsh_frp_app/widgets/host_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -31,11 +32,7 @@ class _FakeProbeService extends ProbeService {
 
 /// 一次完整挂载产生的句柄，方便断言持久化与「重启」。
 class _Harness {
-  _Harness({
-    required this.hosts,
-    required this.settings,
-    required this.probe,
-  });
+  _Harness({required this.hosts, required this.settings, required this.probe});
 
   final HostStore hosts;
   final SettingsStore settings;
@@ -114,7 +111,9 @@ void main() {
 
     // 扫码页（摄像头）无法在 widget test 里跑，这里直接把扫码结果
     // 交给「添加主机」页 —— 与 ScannerScreen 返回后的等价路径。
-    final navigator = tester.state<NavigatorState>(find.byType(Navigator).first);
+    final navigator = tester.state<NavigatorState>(
+      find.byType(Navigator).first,
+    );
     unawaited(
       navigator.push<Host>(
         MaterialPageRoute<Host>(
@@ -154,10 +153,14 @@ void main() {
         '&hostId=host-8630811a',
       );
       expect(payload, isNotNull);
-      final navigator = tester.state<NavigatorState>(find.byType(Navigator).first);
+      final navigator = tester.state<NavigatorState>(
+        find.byType(Navigator).first,
+      );
       unawaited(
         navigator.push<Host>(
-          MaterialPageRoute<Host>(builder: (_) => HostEditScreen(prefill: payload)),
+          MaterialPageRoute<Host>(
+            builder: (_) => HostEditScreen(prefill: payload),
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -174,9 +177,44 @@ void main() {
 
     final reloaded = HostStore();
     await reloaded.load();
-    final sameHost = reloaded.hosts.where((h) => h.hostId == 'host-8630811a').toList();
+    final sameHost = reloaded.hosts
+        .where((h) => h.hostId == 'host-8630811a')
+        .toList();
     expect(sameHost.length, 1, reason: '同一 hostId 不应重复入库');
     expect(sameHost.single.name, 'FRP 远程 · 工作室');
-    expect(sameHost.single.id, 'host-8630811a', reason: '本地 id 直接用服务端 hostId，才能覆盖更新');
+    expect(
+      sameHost.single.id,
+      'host-8630811a',
+      reason: '本地 id 直接用服务端 hostId，才能覆盖更新',
+    );
+  });
+  testWidgets('主机菜单：只剩编辑/重启/删除，复制链接与浏览器打开已摘掉', (tester) async {
+    final harness = await _pumpApp(tester);
+    await harness.hosts.upsert(
+      const Host(
+        id: 'h-menu',
+        name: '工作室',
+        url: 'https://p.example.test',
+        pin: '1234',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 列表里可能同时挂着多张卡片（含过渡帧），菜单内容与具体哪一张无关。
+    await tester.tap(
+      find
+          .descendant(of: find.byType(HostCard), matching: find.byTooltip('更多'))
+          .first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('编辑'), findsOneWidget);
+    expect(find.text('重启隧道'), findsOneWidget);
+    expect(find.text('重启 DSH'), findsOneWidget);
+    expect(find.text('删除'), findsOneWidget);
+    // 这两条在手机上是死路（域名必须过 PIN 握手），已经移除；
+    // 防回归：谁把它们加回来，这条会红。
+    expect(find.text('复制链接'), findsNothing);
+    expect(find.text('在浏览器打开'), findsNothing);
   });
 }

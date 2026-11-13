@@ -71,7 +71,6 @@ abstract final class AppIcons {
   static const IconData qrScan = CupertinoIcons.qrcode_viewfinder;
   static const IconData qrCode = CupertinoIcons.qrcode;
   static const IconData link = CupertinoIcons.link;
-  static const IconData browser = CupertinoIcons.compass;
   static const IconData key = CupertinoIcons.lock_shield;
   static const IconData network = CupertinoIcons.wifi;
   static const IconData hub = CupertinoIcons.antenna_radiowaves_left_right;
