@@ -184,3 +184,11 @@
 - `_MuxConnection`：新增 `_forceAuth`（失败即清 jar，下一轮强制重新握手）、`_retryNow`（连接在飞时点击排队）、`_dropSocket()`（半死连接也扔）；`reconnectNow()` 不再因 `_socket != null` 早退。
 - 新增 `test/dsh_reconnect_auth_test.dart` 3 条；226 全绿。
 - 版本 1.1.1+3；APK 36,733,030B md5 c0157b3e1ffbba422f7bcd12d50be1c5。
+
+## 2026-11-13 08:31 新建会话 + 去掉「完整面板」入口（app 1.1.2+4）
+- 列表页右上角 `完整面板` → `new-session`（＋）；点开先选目标：已有工作区（只发 `workspaceId`）或「其他目录…」（只发 `cwd`，宿主要绝对路径）。
+- `DshRemote.createSession({cwd, workspaceId, agentPreset})` → `session/create`，返回 `sessionId` 后直接 `SessionSummary.fromJson` 插到列表头并进会话页，不等列表刷新。
+- 工作区那条分支的 `cwd` 只用于本地造标题，请求里仍只发 `workspaceId`，避免「用哪个目录」两个来源。
+- 会话页 ⋯ 菜单删掉「完整面板」；两处 `host_webview_screen.dart` import 一并删除（WebView 兜底页仍从主机列表页进）。
+- `test/new_session_test.dart` 6 条；`host_sessions_screen_test.dart` 里旧的「点完整面板 push WebView」用例换成「右上角是新建会话、不再有完整面板」。
+- 回归：analyze No issues、232 全绿；APK 36,405,046B md5 92472695327adff937f46cfc5175d1f1。

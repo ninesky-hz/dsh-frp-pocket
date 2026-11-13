@@ -127,3 +127,67 @@
 {"ts":"2026-11-13T00:07:05.207Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
 {"ts":"2026-11-13T00:12:30.517Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
 {"at":"2026-11-13T08:16:00+08:00","event":"reconnect-auth-fix","summary":"DSH 重启后点重连永久失败：DSH 重启让插件内存里的 dsh-auth-* 失效，但 DshApi.ensureAuth 看到两枚 cookie 都在就短路返回旧凭据，WS 握手一直被拒。修：失败即 _forceAuth 清 jar 重新握手；reconnectNow 不再因 _socket != null 早退；_connecting 期间的点击用 _retryNow 排队并在下次失败时立刻兑现。226 测试全绿，APK 1.1.1+3 = 36,733,030B md5 c0157b3e1ffbba422f7bcd12d50be1c5"}
+{"ts":"2026-11-13T00:18:05.552Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T00:20:55.067Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T00:23:20.496Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T00:28:16.631Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T00:31:12.000Z","event":"new-session-and-drop-full-panel","detail":{"app":"1.1.2+4","tests":232,"apk":36405046,"md5":"92472695327adff937f46cfc5175d1f1","deliverables":["DshRemote.createSession","host_sessions_screen _newSession/_pickSessionTarget/_PathDialog","chat menu 去掉完整面板","test/new_session_test.dart 6 条"]}}
+{"ts":"2026-11-13T00:33:40.421Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T00:36:23.007Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T00:39:04.000Z","event":"chat-notes-density-setting","detail":{"app":"1.1.2+4","tests":239,"apk":36405090,"md5":"c3a2644670ab1e46451bf39642684dbc","files":["models/app_settings.dart ChatNotesMode","models/chat_notes.dart noteSummary","data/settings_store.dart chatNotesMode","screens/settings_screen.dart 会话段","screens/session_chat_screen.dart _NotesLine"],"tests_new":["chat_notes_test 5","chat_notes_setting_test 2"]}}
+{"ts":"2026-11-13T00:41:15.053Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T00:46:22.771Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T00:46:30.000Z","event":"remove-dead-webview-chain","detail":{"reason":"HostWebviewScreen 已无任何入口（grep 只剩注释），桌面 UA 开关 / 两处清除 Cookie 都是死功能","removed":["lib/screens/host_webview_screen.dart","设置页 使用桌面 User-Agent 开关","settings_store desktopUserAgent","constants kDesktopUserAgent","hosts_screen 清除此主机的 Cookie","settings_screen 清除全部 Cookie","pubspec flutter_inappwebview 6.2.0-beta.3"],"tests":239,"apk":35839649,"md5":"65b4a7d13a82819c368eb78d9b807b0f","libapp_so":6816656,"version":"1.1.2+4"}}
+{"ts":"2026-11-13T00:48:59.934Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T00:56:00.000Z","event":"hide-subagent-sessions","detail":{"finding":"session/list 返回 87 条，其中 60 条 origin=subagent（parentSessionId 指向父会话），1 条 blank=true；它们此前全落在未分组","fix":["SessionSummary 解析 parentSessionId/origin/blank + isSubagent/isHidden","_composeSessions 两个分支都滤 isHidden，未分组循环再兜 isArchived","工作区帧里的子会话最后一刀统一滤掉"],"tests":245,"apk":35839649,"md5":"a7c4383bdd93f3413a2e52a05cb1d2e8"}}
+{"ts":"2026-11-13T02:23:49.190Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T02:26:45.513Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T02:40:00.000Z","event":"archived-footer","detail":{"ui":"列表底部一行「已归档 · N」，点开铺卡片，每条带恢复按钮","files":["lib/screens/host_sessions_screen.dart","test/host_sessions_archived_test.dart"],"tests":253,"apk":35839781,"md5":"56489d940ba518ec1f51b04dd67951cb","decisions":["归档卡片不可点进会话","全部归档时仍保留入口行","恢复失败回滚并提示"]}}
+{"ts":"2026-11-13T02:49:24.579Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T02:52:38.781Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T03:12:00.000Z","event":"chat-image-support","detail":{"worker":"19f139fd-e818-48ce-89ad-8ebc6a8b3ef6","files":["lib/models/prompt_image.dart","lib/models/session_event.dart","lib/models/outbox.dart","lib/services/dsh_remote.dart","lib/screens/session_chat_screen.dart","pubspec.yaml"],"tests":274,"new_tests":21,"apk":35989576,"md5":"2c4f4aa9152b749e7e74b9431cf1968c","libapp_so":6947728,"image_picker":"1.2.4"}}
+{"ts":"2026-11-13T03:28:58.579Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T03:33:00.000Z","event":"icon-system-unified","detail":{"new_file":"lib/theme/app_icons.dart","call_sites":75,"tests":274,"apk":35989400,"md5":"1cb7d6dae0be92a35a141420ad052f90","family":"material-outlined","sizes":"14/18/20/56","exception":"pinned 用实心"}}
+{"ts":"2026-11-13T03:38:19.100Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T03:45:00.000Z","event":"cupertino-icons-and-neutral-palette","detail":{"icons":"AppIcons 全部改 CupertinoIcons；尺寸 inline16/small20/normal22/hero56","palette":"去掉 fromSeed(0xFF2563EB) 的模板蓝，表面改中性暖灰，强调色改青绿 1F6F63 / 7FD3C0","tests":274,"apk":35874784,"md5":"424c7d656c69a5316248167618d6efbc"}}
+{"ts":"2026-11-13T03:44:16.842Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T03:46:52.033Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T03:50:00.000Z","event":"skill-slash-picker","detail":{"finding":"技能不是客户端能力：宿主用 SKILL_GESTURE 正则扫用户文本里的 /name 注入 skill_content，隧道实测 seq=11 source=skill-invocation/unslop","added":["lib/models/dsh_skill.dart","DshRemote.listSkills -> skills/list {sessionId}","聊天页 / 补全面板 skill-panel"],"skills":95,"tests":280,"apk":35874784,"md5":"f3d56cae9a0fe7e586a9670510caf6cc"}}
+{"ts":"2026-11-13T03:52:55.602Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T03:57:25.239Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T03:58:00.000Z","event":"queue-waiting-ui","detail":{"why":"连发多条时看不出哪条在排队","added":["ChatDelivery.queued + waiting getter","_sendText busyBefore 决定 queued","气泡『排队中』+ 等待行『队列 N』","无一轮在跑时文案『已送出，等待接手…』"],"tests":283,"apk":35874784,"md5":"62812e7c27f057e3a49d0e189ed22a70"}}
+{"ts":"2026-11-13T04:08:10.567Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T04:12:34.070Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T04:15:11.798Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T04:19:00.000Z","event":"subagent-strip-and-send-color","detail":{"probe":"session/page 对子会话被拒：session/agent-busy 'subagent Sessions require their durable parent address'；宿主只开放 subagents/prompt 与 subagents/interruptByParent 两个写口","data":"session/list 里子会话带 running/updatedAt/projections.tokenUsage/title；本机 92 条中 61 条是子会话，最忙父会话 15 个","ui":["DshRemote.childSessions(parentSessionId)","聊天页 subagent-strip：数量+在跑数，展开逐条标题/tokens/时间，有在跑时 5 秒轮询","发送键配色显式化：可用=primary/onPrimary，不可用不画底"],"tests":287,"apk":35874784,"md5":"24e2a2a4417adebd5a8dac96c4ce0b45"}}
+{"ts":"2026-11-13T04:21:17.827Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T04:25:20.271Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T04:35:00.000Z","event":"subagent-label-and-tokens","detail":{"finding":"子会话 projections.values 里 title 是它收到的第一条长指令（噪声），真正可读的是 subagent.label；tokenUsage 无 total，需 uncachedInputTokens+outputTokens","impl":["SessionSummary.subagentLabel + displayTitle","状态带改用 displayTitle"],"probe":"父会话 session-0f18e12e 有 15 个子会话，updatedAt 为毫秒数","tests":287,"apk":35874784,"md5":"2ba39b5edbf889a6db9ece61eaf5e8b5"}}
+{"ts":"2026-11-13T04:27:54.612Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T04:30:39.504Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T04:33:23.103Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T04:45:00.000Z","event":"queue-edit-actions","detail":{"user":"排队中的消息不能删除、不能插队","impl":["DshRemote.promptSteer(mode:steer)","长按发送键=插队","排队气泡 撤回","离线队列项 删除/先发这条","队列胶囊提示 长按⬆插队"],"gotcha":"IconButton.tooltip 自带 TooltipTriggerMode.longPress，会吃掉长按手势","tests":291,"apk":35940320,"md5":"2a7c43672f545776ab64ff8ae8f2b275"}}
+{"ts":"2026-11-13T04:38:57.642Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T04:41:36.875Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T04:44:26.501Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T04:48:25.038Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T04:51:26.940Z","event":"session-permission-picker","detail":{"read":"session/list -> projections.values.permissions.currentValue","write":"commands/execute {agentId,line:\"/permission <value>\",submittedAttachments:[]}","catalog":"permissionPresets/catalog (no params, lazy on first tap)","ui":"toolbar chip permission-chip + bottom sheet permission.<value>","tests":295,"apk":35940368,"md5":"d6f8e0702e89eae813bafc833e6cd57d","libapp":7013264,"version":"1.2.0+5"}}
+{"ts":"2026-11-13T04:53:46.390Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T04:56:27.800Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T05:00:46.879Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts": "2026-11-13T05:05:16.191263Z", "event": "chat-notes-detailed", "detail": {"change": "notes: List<String> → List<ChatNote>；详细模式逐项一行带参数摘要", "tests": 300, "version": "1.2.1+6", "apk": 35940368, "md5": "02cb3dc5ff7b19f6c43ef862cd281dbe"}}
+{"ts":"2026-11-13T05:08:05.852Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T05:10:49.438Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T05:15:01.704Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T05:19:00.128Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T05:24:49.212Z","event":"selectable-chat-text","detail":{"change":"气泡正文 Text → SelectableText；放弃 SelectionArea（与 center sliver 抢滚动容器 + defunct element）","tests":301,"version":"1.2.2+7","apk":35940368,"md5":"e8578dd8511e5a5f10219cb87c7e2605"}}
+{"ts":"2026-11-13T06:06:00.893Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T06:09:12.808Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T06:13:10.989Z","event":"approval-session-scope","detail":{"change":"审批/提问按 agentId 过滤：只收本会话与子会话；agentId 缺失不收","tests":303,"version":"1.2.3+8","apk":35940368,"md5":"ecb5b357fa2e245f90c6d07335419db6"}}
+{"ts":"2026-11-13T07:10:00.963Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T07:12:57.927Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T07:15:26.605Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T07:18:17.892Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T07:20:59.672Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"ts":"2026-11-13T07:27:59.633Z","event":"loop-paused","detail":{"session":"a110c8ef","reason":"连续 5 轮没有任何产出，先停在这里等人工确认","idleTicks":5}}
+{"at":"2026-11-13T15:28:00+08:00","event":"queue-real-remove","version":"1.2.4+9","tests":308,"apk_md5":"9b9f75c9954510a49eb336e132359094","apk_bytes":35940368}

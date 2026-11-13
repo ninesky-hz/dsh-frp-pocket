@@ -1,0 +1,26 @@
+{
+  "worker": "19f139fd-e818-48ce-89ad-8ebc6a8b3ef6",
+  "declaredAt": "2026-11-13T02:52:38.701Z",
+  "items": [
+    {
+      "id": "e1",
+      "text": "flutter analyze 输出 No issues found"
+    },
+    {
+      "id": "e2",
+      "text": "flutter test --concurrency=1 全绿且总数 ≥253（新增至少 6 条图片相关测试）"
+    },
+    {
+      "id": "e3",
+      "text": "DshRemote.prompt 支持 images 参数，纯图片（text 为空）消息可发出，content 中 text part 仅在文本非空时出现"
+    },
+    {
+      "id": "e4",
+      "text": "聊天页有 key 为 chat-attach 的选图入口，选中后出现可移除的预览（attach-remove），发送后本地气泡立即显示该图"
+    },
+    {
+      "id": "e5",
+      "text": "历史中 user/message 的 image part 能渲染出图片（走 session/attachment 取字节并按 attachmentId 缓存），纯图片消息不再被丢弃"
+    }
+  ]
+}

@@ -239,3 +239,142 @@ worker 第一版只判断「text 非空」就上屏，直接把 `[MNEMON] …`�
 1. 连接层每次失败都置「下次强制重新握手」，不要指望 HTTP 层的 401 兜底（WS 握手失败没有 401 可看）。
 2. 用户点「重试」必须无条件作废凭据，不能因为 `_socket != null`（半死连接）就返回。
 3. 点击可能落在「一次连接在飞」的窗口里：用 `_retryNow` 记下意图，等这次失败立刻兑现；成功则由 ready 帧清掉，避免误踢好连接。
+
+## 新建会话：`session/create` 的两种入参别混用
+- `{workspaceId}` 让宿主按工作区目录开，`{cwd}` 是裸目录；两个一起发时宿主用进程 cwd，等于把「在哪个目录」变成两处来源 —— 所以只发一个。
+- 本地 `SessionSummary` 没有 `title`，`_titleFromCwd` 会拿路径最后一段当标题；工作区那条分支把 `workspace.path` 塞进 `cwd` 只为造标题，不进请求。
+- `showDialog` 里的 `TextField` 控制器必须由弹窗自己持有（`_PathDialog`/`_RenameDialog` 同理），否则退出动画期间重建会撞 `used after being disposed`。
+- 二进制里搜中文只能当参考：UTF-16LE 字面量可能落在奇数偏移上，`buf.toString('utf16le')` 这类整串扫描会漏。判定「改动进包了」优先搜 ASCII 的 widget key（`new-session`、`new-session.path`）。
+
+## 「思考/调用工具」那行小字的显示密度
+- 纯函数放 `lib/models/chat_notes.dart`（`noteSummary(notes, mode)`），别把拼接逻辑塞进 widget —— 详细/简洁的差别只有一句「工具名换成次数」，可单测。
+- 聊天页用 `AppScope.maybeOf(context)?.settings` + `AnimatedBuilder`：测试里没有 AppScope 就退回「详细」，和旧行为逐字一致，既有断言不用改。
+- 关键：设置改完要能立刻反映到已经打开的聊天页，所以必须是监听而不是 initState 读一次。
+
+## 删「没用的设置项」要连同它唯一的消费者一起查
+- 判断一个开关是否死掉，不能只看「有没有 UI」：`使用桌面 User-Agent` 的读者只有 `host_webview_screen.dart`，而那个页面在删掉两个「完整面板」入口后已经**没有任何 Navigator 入口**（`grep -rn HostWebviewScreen lib/` 只剩一行注释）。所以开关、常量、依赖一起删。
+- 同理「清除 Cookie」清的是 WebView 的 cookie；原生链路的凭据在 `DshApi` 的内存 jar，两者不通。留着只会让人以为点了会退出登录。
+- 删 `flutter_inappwebview` 后 `flutter pub get` 要重跑（否则 `.dart_tool/package_config.json` 还指着旧依赖），APK 从 36,405,090 → 35,839,649。
+- 判断字符串是否还在包里：UTF-16LE 中文可能落在奇数偏移（`保持屏幕常亮` 这次就漏了），负向结论（「删掉了」）比正向结论可靠；正向验证用 ASCII 的 key。
+
+## 会话列表要滤掉 worker 与空会话
+- 实测 `session/list` 本机返回 87 条，其中 **60 条 `origin: "subagent"`**（且都带 `parentSessionId`），1 条 `blank: true`。DSH 把派生子会话当独立会话列出来，看不出层级。
+- 判断子会话的可靠标记：`origin == 'subagent'`；`parentSessionId != null` 作为兜底（两者在本机完全重合）。
+- 「未分组」桶就是 `_composeSessions` 里那句「快照有、工作区流没提到」的兜底循环——子会话从不在工作区帧里出现，所以全落在这里。过滤要加在这个循环里，不能只在工作区排序分支加。
+- 工作区帧里也可能列着子会话（子会话归属父会话的工作区），所以最后再统一 `.where(!isHidden)` 一刀。
+
+## 归档会话的呈现：底部一行，而不是塞进某个分组
+- 归档是**跨工作区**的状态，挂在任何组下面都会误导（用户会以为「这个工作区里归档的」）。
+- 全部会话都归档时，`_buildBody` 的空态必须让路给列表，否则底部那行入口跟着消失，没有退回的路。实现上是 `if (!_searching && _archivedSessions.isNotEmpty) return 列表;` 放在空态之前。
+- 归档卡片刻意不可点：归档会话不在手边，误点进去会以为它还在用。只给「恢复」。
+- 老测试里 `find.textContaining('已归档')` 会因为新的 footer 撞两条 —— 用精确文案断言 SnackBar（`已归档「X」`）。
+
+## 图片消息：payload 里只有 attachmentId，字节要另拉
+- 发送侧 `content` 是 part 数组：`{type:'text',text}` 与 `{type:'image',mediaType,data,name}`；**text part 只在文本非空时出现**，纯图合法（服务端 `accepted:true`）。
+- 历史侧 `{type:'image',attachment:{attachmentId,mediaType,width,height,bytes,name}}` —— 没有 data，必须 `session/attachment` 再取一次 base64；老 Host 只认 `{sessionId,attachmentId}`，所以按错误码退化重试。
+- 顺手修掉的一个老 bug：`chatMessageOf` 原来「文本为空就返回 null」，导致电脑端发的带图消息在 App 里整条消失。现在「既无文本又无图」才算空。
+- 图片字节不能进 build 同步读：一律 `FutureBuilder` + 进程内缓存（`kImageCacheLimit = 40`，插入序淘汰）。
+- 离线队列带图要设阈值：base64 进 SharedPreferences 会爆，>3MB 只留文字。
+
+## 图标只有一个来源：AppIcons
+- 之前 `Icons.refresh` / `Icons.refresh_rounded` / `Icons.refresh_outlined` 三种变体同时出现在三个页面，是「看着潦草」的根因——不是图标丑，是**族系混用**。
+- 现在 `lib/theme/app_icons.dart` 是唯一出现 `Icons.*` 的地方，业务代码只写 `AppIcons.xxx`；换风格（比如整体换成 CupertinoIcons）只改这一个文件。
+- 尺寸四档 + `buildAppTheme` 的 `iconTheme` 兜底；颜色 `onSurfaceVariant`。
+- 状态类图标必须靠**填充度**区分（pinned 实心 / pin 线性），颜色不承担这个职责。
+- 参考：dsh-Go 用的是 CupertinoIcons + `IconThemeData(size: 22, color: onSurfaceVariant)`，所以它的按钮看着更「细」。要完全对齐就换 AppIcons 表里的常量。
+
+## 配色：M3 的 seed 会把表面染色，这是模板感的真正来源
+- `ColorScheme.fromSeed(seedColor: 0xFF2563EB)` 不只是给你一个蓝色按钮，它把 surface / surfaceContainer / outline 全按 seed 的色相重新调了一遍。结果整个 App 有一层蓝灰底，跟任何刚 init 的 Flutter 模板长得一样。
+- 改法：仍然用 fromSeed 打底（角色齐全、对比度合规），然后 copyWith 覆盖所有 surface* / onSurface / outline / primary / surfaceTint。中性灰带一点暖（F AFAF9 / 111110），夜里不发蓝。
+- 强调色只在「连接是活的」这件事上出现：浅色 1F6F63（白底 5.4:1），深色 7FD3C0 配深墨字。
+
+## Cupertino Icons 的正确尺寸基线
+- Cupertino 图标笔画比 Material 细一档，同样 20px 看起来更小。dsh-Go 的 `iconTheme` 是 22，所以这里 normal = 22、small = 20、inline = 16。
+- `CupertinoIcons` 里没有 safari / key / network 这三个名字（key → lock_shield、network → wifi、safari → compass）。写错会报 `undefined_getter` + `const_initialized_with_non_constant_value` 双错，看第一条就够。
+- MaterialIcons 树摇后只剩 1,772 字节，说明全 App 已无 Material 图标残留；CupertinoIcons.ttf 9,908 字节。
+
+## 技能（/skill）是宿主扫文本，不是客户端能力
+- `@deepseek-ai/dsh-tool-skill` 里 `const SKILL_GESTURE = /(^|\s)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?=\s|$)/g`，`invokedSkillNames()` 只扫 `source.kind === 'user'` 的 text block，然后注入 `skill-invocation` 上下文。
+- 所以任何能把纯文本发给 `session/prompt` 的客户端都能用技能。隧道实测：发 `/unslop 只回复两个字：收到` → 日志 seq=11 `user/message` `source.kind = "skill-invocation"`、`name = unslop`，正文是完整 `<skill_content>`。之前的"不能加载"其实只是**没有补全菜单**。
+- `skills/list` request `{sessionId}` → `{skills:[{name, description?, whenToUse?, path?, modelInvocable?}]}`，只返回 userInvocable 的；本机 95 条。
+- 补全只在输入以 `/` 开头且还没空白时弹（跟宿主正则的边界一致）；点一下回填 `/name ` 带尾空格——**尾空格很关键**，否则用户接着打字会粘成一个不存在的名字。
+
+## 「发送中」与「排队中」是两种等待
+- `sending` = HTTP 还在路上（网络在等）；`queued` = 服务端收讫但这一轮还没轮到它（模型在等）。
+- 判定不要看会话的 `running` 投影：真实时序里用户常常在「上一条已被受理、还没回显」的窗口里发下一条，这时 `running` 可能还没翻真。用「发之前 `_pending` 里有没有非 failed 的本地气泡」判断更准，并且天然把「一次手滑发两条」也算进去。
+- 状态条只在三种情况下出现：正在跑、在流式输出、或有排队消息；没有一轮在跑却还有排队时，文案必须换成「已送出，等待接手…」，否则用户会以为模型在思考。
+- 排队标记跟着本地气泡一起消失——回显到达即摘除，不需要单独维护「已处理」状态。
+
+## 子会话（subagent）只能读目录，不能读正文
+- 对子会话调 `session/page` 会被拒：`session/agent-busy: subagent Sessions require their durable parent address`（`dsh-api-session-controller/lib/index.js:1156` 那句 `header.origin === "subagent"` 判断）。
+- 宿主对子会话只开放两个写口：`subagents/prompt`（`{requestId,parentSessionId,childSessionId,mode:'continuable',delivery:'queue'|'steer',content:[…]}`）与 `subagents/interruptByParent`（`{childSessionId,parentSessionId,mode}`）。
+- 所以「子智能体在做什么」只能从 `session/list` 推：每条子会话都有 `running`、`updatedAt`、`projections.tokenUsage`、`projections.title`——够画「谁在跑、跑了多少、最近动是什么时候」，但拿不到它的对话转录。
+- 父会话的事件流里有 `subagent/catalog`（`{version,childId,childCreatedAt,mode,label}`）与 `user/message/subagent-settled`（关闭消息正文）。前者是「派了谁」，后者是「它最后说了什么」。
+- 轮询只在「有子会话在跑」时排下一次（5 秒）；都跑完就停，不要常驻拉 92 条全表。
+
+## 发送键配色要自己定，不要吃组件的默认角色色
+- `IconButton.filled` 默认取 `primary`/`onPrimary`，但我们的 `_tintedScheme` 覆盖了 primary 家族，容易出现「深底 + 深箭头」的低对比组合。
+- 现在显式写 `IconButton.styleFrom(backgroundColor: primary, foregroundColor: onPrimary, disabledBackgroundColor: primary@45%, disabledForegroundColor: onPrimary)`。
+- 空输入时改成**不画底的普通 IconButton**：空的输入框旁边挂一块色块会抢注意力，而它此刻什么也做不了。
+
+## 排队消息的三个动作，边界不同
+- **离线队列项（还没被服务端见过）**：`删除` 是真删，`先发这条` 是把它移到队首。这两件事只对 `outbox` 里的条目成立。
+- **已受理进会话队列的（气泡上写「排队中」）**：宿主没有撤销口子（`session/prompt` 只有 queue/steer 两个 mode，也没有 dequeue RPC），所以只能「从界面移除」，而且必须老实告诉用户服务端那条照样会跑。
+- **插队**的正解是 `mode: 'steer'`：打断当前这一轮、立刻送达，而不是排到队尾。入口放在发送键上（长按），提示写在队列胶囊上。
+- 坑：`IconButton.tooltip` 内部是 `Tooltip`，默认 `TooltipTriggerMode.longPress` —— 会把长按手势吃掉，插队永远不触发。要去掉 tooltip 或改成 manual。
+
+## 权限（permission）的三条事实（真机实测）
+- 读：只有 `session/list` 的 `projections.values.permissions.currentValue`，没有单独读口；这个 key 缺失 = 宿主没装权限服务，客户端要藏控件（宿主注释原话）。
+- 写：没有 setPermission RPC。宿主对外写路径是命令面板的斜杠命令，所以 `commands/execute` + `line: "/permission <value>"`，`agentId` 传会话 id。回包 `{commandId, result:{kind, text}}`。
+- 目录：`permissionPresets/catalog` 无参数，返回 `{options, defaultOptions, defaultPreset}`；本机 `name` 就是机器名（read-only / workspace-write / danger-full-access），中文标签得客户端自己配。
+- 直接把 `/permission read-only` 当消息发给 `session/prompt` 是没用的：那是普通文本，宿主只把它当对话（实测权限值不变）。
+
+## 另外发现：排队消息其实有宿主级 RPC
+- `session/updateQueue` request `{sessionId, itemId, action}`，action 三选一：`{kind:"edit",content:[{type:"text",text}]}`、`{kind:"remove"}`、`{kind:"steer"}`。
+- `itemId` 来自 `session/observeState` 的 `queue: [{id, placement, rpcId, content}]`。
+- 之前我只看 `session/prompt` 的 schema 就断定「宿主没有撤销口」，是错的——客户端目前「撤回/删除」只是本地摘气泡，接上这个 RPC 才算真撤销。
+## 「思考·调用工具」那一行要给什么信息
+- 详细模式的价值在**参数摘要**，不在把 `调用 read` 原样列出来：用户想知道这一步干了什么。
+  摘要按 `description` → `command`/`cmd` → `file_path`/`path` → `pattern` → `query` → `url` → `prompt`
+  取第一个非空字符串，全空就把 JSON 值拍平，最后单行化并限 120 字。
+- 必须按 `mergeKey`（`reasoning` / `tool:<name>`）合并连续同种工具：一条消息里 `read` 连调 12 次，
+  逐行列出来会把气泡撑成半屏，反而更难扫。
+- `arguments` 在宿主那里是 **JSON 字符串**（不是对象），解析失败要退回原始串，不能吞掉。
+- `_NotesLine` 在 `AppScope` 缺失时（纯 widget 测试）走详细分支，保持「测试里看得到最全形态」。
+## 聊天正文选字：用 SelectableText，不要 SelectionArea
+- 直接拿 `SelectionArea` 包住带 `center` 的 `CustomScrollView` 会炸：
+  `_ScrollableSelectionContainerDelegate._globalPositionInScrollable` 去
+  `findRenderObject()` 一个已经 defunct 的 `Scrollable` element，真机上是
+  一屏红字（测试里表现为「运行中显示正在思考」那条挂掉）。
+- 只把正文换成 `SelectableText` 就够用：长按选字、拖选一部分、复制全是系统行为，
+  且每个气泡各自成选区，不会跨 sliver 拉扯。
+- 代价一：`SelectableText` 内部有 `EditableText` 自己的 `Scrollable`，
+  测试里 `find.descendant(of: chat-list, matching: Scrollable)` 会匹配到多个，
+  取位置要 `.first`（外层 `CustomScrollView` 的 `Scrollable` 排在前面）。
+- 代价二：别在正文外面再套 `onDoubleTap`——双击是 `SelectableText` 的选词手势，
+  两者抢手势会让单击（比如「发送失败，点这里重试」）延后到双击窗口结束。
+## 审批/提问必须按会话过滤
+- `$events`（宿主级事件流）上跑着**所有**会话的 `approval/request` 与 `user-questions/request`，
+  帧里带 `agentId`（网关 schema 里是必填：`type/event/eventId/agentId/request` 五个键精确匹配）。
+- 客户端之前照单全收 → 点进任意会话都能看到别人的「需要你回答」，而且答复会发到别人的会话上。
+- 过滤规则：`agentId == 本会话` 或 `agentId` 属于本会话的子会话（`childSessions()` 的结果）。
+  子会话的审批必须留在父会话里答，否则子智能体会一直等下去。
+- `agentId` 缺失时不显示：漏一张卡比把别人的请求摆进来安全。
+
+## 排队消息怎么真撤回（1.2.4+9）
+- `session/observeState` 是 **stream-mode** Remote：走 HTTP `POST /api/session/observeState`
+  会被网关拒 —— `gateway/signature-invalid: stream Remote methods must be opened through
+  the stream carrier`。必须开在 mux（`wss://HOST/api/remote.mux`）上，帧形状
+  `{type:'item', value:{cursor, active, running, queue:[...], pendingInput:[...]}}`。
+- 只取第一帧就关流：它是「读一次状态」，长期订阅没有意义，而且每次 `_openMuxStream`
+  都会新建一条 WS，不能留。
+- 队列项的 `rpcId` **就是** 我们发 `session/prompt` 时传的 `requestId`
+  （宿主 `prompt()` 里 `source = {kind:'user', rpcId: request.requestId}`）。
+  所以客户端必须自己生成并留住 `requestId`（`ChatMessage.requestId`），否则认不出哪条是自己的。
+- `session/updateQueue` 是 unary，走 HTTP 就行：`{sessionId, itemId, action:{kind:'remove'}}`
+  → `{accepted:true}`。真机实测：撤回后 `observeState` 的 `queue` 里那条消失，且只有
+  `placement === 'queued'` 的撤得掉（`steering` 已经在插队处理）。
+- 探针踩坑：`payload.args` 只包一层 `{request:{...}}`。多包一层会得到
+  `gateway/input-invalid: wire field "request" failed boundary validation`——
+  这个报错看着像 schema 不匹配，其实是我自己把参数套了两层，查了很久。
+
