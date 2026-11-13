@@ -9,6 +9,12 @@
 - **「访问 PIN 与配对」卡片上直接能换 PIN 了**：这个动作以前只藏在设置页深处的「随机生成」，而卡片上写着「PIN 换了旧 cookie 立刻失效」——提示和入口不在同一个地方。现在卡片上是 显示 / 复制 PIN / 复制配对串 / **换个 PIN**，带二次确认（换完手机要重扫二维码），生成期间按钮禁用防连点。两处入口走同一个 `pin.regenerate`。
 - `test/client-render.test.mjs` 加一条断言：主面板必须渲染出「换个 PIN」。
 
+### plugin 0.2.2（续）：版本自报与兼容声明
+
+- **`/frp-pocket/api/info` 的 `dsh` 字段在桌面端终于不再是空串**：原来只从 `process.argv[1]` 往上爬 8 层找 `name === '@deepseek-ai/dsh'` 的 package.json，而桌面端入口是 `resources/runtime/cli/bin/dsh.cmd`，那条路摸不到 `resources/app/dsh/node_modules/@deepseek-ai/dsh/package.json`，字段一直报 `""`（契约 §4.1 要求填真实版本）。现在抽成 `packages/plugin/lib/dsh-version.mjs`，按 `DSH_VERSION` → 入口祖先链（也认 `@deepseek-ai/dsh-desktop-runtime` 的 `dependencies['@deepseek-ai/dsh']`）→ `app.asar` / `app.asar.unpacked` 同层互换 → `<exe>/resources/app[/app.asar.unpacked]/dsh/package.json` → `import.meta.resolve('@deepseek-ai/dsh/package.json')` 依次尝试，全落空才返回空串。新增 `test/dsh-version.test.mjs` 9 条覆盖各布局（含坏 JSON 不崩）。实测桌面端 0.2.2-rc.1 下报出 `"dsh":"0.2.2-rc.1"`。
+- **声明 `engines.dsh: ">=0.2.2-rc.1"`**：之前 `engines` 只有 `node`，DSH 既不拦也不提示，装到不兼容版本只会在运行期炸。现在宿主会在激活前挡下并给出可照做的处置（含 `dsh plugin allow-version` 的精确版本豁免口子）。实测把范围临时改成 `>=9.0.0`，DSH 输出 `skipping profile bundle "dsh-frp-pocket": … is incompatible with dsh 0.2.2-rc.1` 后跳过插件、本体照常启动。
+- `lib/rpc.mjs` 里 `connection.rpc.handle` 的三参调用补了注释：0.2.2 起宿主只吃 `(channel, handler)`，第三参 `{ authority: 'loopback' }` 是旧接口遗留，多传会被静默忽略，保留只为向下兼容。
+
 ### security：清理公开仓库里的真实环境信息
 
 - **测试里的 PIN 是生产 PIN**：`packages/{app,plugin}/test` 五个文件把 `auth.pin` 写成了本机真实网关 PIN（`pinCustom: false` 自动生成的那枚），仓库是公开的，等于把入口凭据一起发了出去。全部替换为占位 `TESTPIN0001`。
@@ -16,6 +22,30 @@
 - **`.agi/` 移出版本库**：那是代理记账与巡检笔记，含真实主机名、域名、本机绝对路径，公开仓库没理由带它；已 `git rm --cached` + 加进 `.gitignore`，文件仍在本地。
 - 排查过 frps `auth.token`：历史与当前都只有占位符（`FRP_TOKEN` / `__FRP_TOKEN__` / 测试用的 `tok_demo`），没有真实值。
 - **注意**：历史提交里仍有旧 PIN / 旧 IP（公开仓库被 clone 过就有副本），所以真正有效的处置是**换 PIN**（插件设置页「换个 PIN」）与必要时换 frps token，改代码只是止血。
+
+### app 1.2.7+12
+
+- **拆文件，不拆行为**：这轮只动结构，界面、文案、交互一个字没改，两处最大的页面各自瘦身。
+
+  - **聊天页 3451 → 2785 行**：气泡、离线气泡、气泡里的图片、空态、错误态、思考小字整体搬到 `lib/widgets/chat/chat_bubbles.dart`；滚动控制器与它的 position 搬到 `lib/widgets/chat/chat_scroll.dart`。这些类原来都是私有的（`_MessageBubble` / `_ChatScrollController` …），搬出去必须能被跨库引用，于是去掉前导下划线改名 `MessageBubble` / `ChatScrollController`，同时补上 `super.key`（公开构造函数该有的礼数，之前做私有类时 lint 不管）。滚动控制器那一对留着原注释：为什么 `applyContentDimensions` 里 `correctBy` 之后要 `return false`——这条一旦被人「顺手改成 true」，插入历史时视口就会跳。
+  - **会话列表页 1811 → 1172 行**：摊平后的列表项（`_GroupedItem` 那一族）、组头、空态/无结果/错误态、会话卡片、行尾状态点、重命名与「其他目录」弹窗、`_relativeTime` / `_formatThousands` 两个纯函数，一起搬进 `lib/screens/host_sessions/list_parts.dart`。这里用的是 `part` 而不是 `import`：这一层全是私有类型，和列表状态机共用一个库的作用域，没必要为了分文件把它们提升成公开 API。
+  - **主题从入口里拿出来**：`buildAppTheme` / `_tintedScheme` / `_accent` 从 `main.dart` 搬到 `lib/theme/app_theme.dart`，`main.dart` 只剩 68 行——启动、Store 装载、`MaterialApp` 装配。配色注释（为什么不用 `fromSeed(0xFF2563EB)`）跟着搬，它解释的是这 100 行本身。
+
+- 顺手清掉拆分后变成死引用的 5 个 import；`dart analyze lib test` 零问题，`flutter test` 310 条全绿。
+
+### app 1.2.6+11
+
+- **换掉了 Flutter 默认图标**：桌面上的蓝色双箭头一直是 `flutter create` 的默认值，和「DSH 口袋隧道」没有任何关系。新图标是石墨底 `#111110` 上的薄荷色 `›` 提示符 + 一枚方块光标，两个色值直接取自 `ColorScheme`（深色主题的 `surface` 与 `primary`），意思是「这条会话正等着你敲字」。
+  - 补齐自适应图标 `mipmap-anydpi-v26/ic_launcher.xml`（含 `monochrome`，Android 13 主题图标跟着系统取色）：以前只有方图，Android 8+ 会把它硬套遮罩，四角露白。前景图形收在中心安全区，传统 `mipmap-*` 另留一份 22.5% 圆角的方图给旧系统。
+  - 启动屏也一起收拾了：原来 `launch_background.xml` 是纯白空底，深色主题下先白闪一下再进 `#111110`。现在按 `浅色 #FAFAF9 / 深色 #111110` 出两种底色（`values` 与 `values-night` 各一份 `colors.xml`），中间一枚同款 mark；`NormalTheme` 的 `windowBackground` 也跟着对齐，Flutter 首帧前不再露白。
+  - 图标不是手搓一堆 png，而是 `tool/icon/generate_icon.py` 生成：设计坐标 0..1024 直接写几何，超采样 4 倍再降采样，`preview` 出七版对比图、`install` 写 mipmap、`splash` 写启动层、`mock` 出桌面/启动屏效果图。方向与九道工序记在 `tool/icon/DIRECTION.md`。
+
+### app 1.2.5+10
+
+- **新建会话进去就有权限入口了**：以前「＋」建完会话直接进聊天页，顶上少了权限胶囊，必须退出去再点进来才有。原因是新建那一刻手上那行 `SessionSummary` 是本地拼的（`host_sessions_screen.dart` 只塞了 `sessionId` 和 `cwd`），没有 `projections`，`permissions.currentValue` 自然是 null，而权限胶囊在值缺失时按契约整块藏起来。
+  - 客户端不再等列表刷新：进页时若 `session.permission == null`，在后台补拉一次（`DshRemote.permissionOf` 复用 `session/list` 的投影值），拿到就点亮入口；拿不到（宿主真没装权限服务）继续藏着。补拉不挡首帧，也不预拉目录——`permissionPresets/catalog` 仍是点开弹窗才请求。
+  - 触发点三处兜底：`initState` 一次；流式通道首帧 snapshot 到齐后再试一次（那一刻链路确实通了）；断线重连回 online 也补一次。新建会话可能晚一拍才进 `session/list`，所以拿不到时按 2 秒退避再重试 `kPermissionHydrateRetries`（=2）次收手。并发用 `_permissionHydrating` 去重，值为空只问不写。
+  - 回归测试 `test/session_chat_permission_test.dart` 由 4 条增到 6 条：新增「新建会话手上那行没投影 → 进页补拉后入口自己出现且不预拉目录」与「会话晚一拍才进列表 → 退避重试后入口出现」，原有「无投影不出现」补断言补拉次数 ≥ 1。
 
 ### app 1.2.4+9
 

@@ -19,3 +19,6 @@ Thumbs.db
 
 # 代理记账与巡检笔记（含真实主机/路径/凭据痕迹，不进公开仓库）
 .agi/
+
+# 图标生成器的中间产物（design source 是 generate_icon.py，预览图本地看就行）
+packages/app/tool/icon/preview/

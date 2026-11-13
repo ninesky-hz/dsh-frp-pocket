@@ -6,11 +6,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../app_scope.dart';
-import '../models/app_settings.dart';
 import '../models/assistant_draft.dart';
-import '../models/chat_note.dart';
-import '../models/chat_notes.dart';
 import '../models/dsh_queue.dart';
 import '../models/dsh_skill.dart';
 import '../models/host.dart';
@@ -24,9 +20,14 @@ import '../services/dsh_api.dart';
 import '../services/dsh_remote.dart';
 import '../services/outbox_store.dart';
 import '../services/probe.dart';
+import '../widgets/chat/chat_bubbles.dart';
+import '../widgets/chat/chat_scroll.dart';
 import '../widgets/chrome.dart';
 import '../widgets/status_dot.dart';
 import '../theme/app_icons.dart';
+
+/// 补拉权限值时最多再重试几次：新建会话可能晚一拍才进 `session/list`。
+const int kPermissionHydrateRetries = 2;
 
 /// 原生聊天页：`session/follow` 拿快照 → `session/page` 拉历史 → 后续事件追加。
 ///
@@ -82,7 +83,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
 
   /// 滚动控制器：除了驱动视图，还在布局阶段顺手做两件事 —— 插入历史后按
   /// 锚点行在同一帧重试、首次布局直接落到底。
-  late final _ChatScrollController _scroll = _ChatScrollController(
+  late final ChatScrollController _scroll = ChatScrollController(
     prependCorrection: _prependCorrection,
     startsAtBottom: () => _atBottom,
   );
@@ -218,6 +219,13 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   /// 正在写回权限：期间胶囊显示转圈，避免连点发出两次命令。
   bool _permissionBusy = false;
 
+  /// 正在补拉权限值：快照、重连可能同时触发，一次就够。
+  bool _permissionHydrating = false;
+
+  /// 补拉已重试次数与待触发的重试闹钟（新建会话晚一拍才进列表时用）。
+  int _permissionAttempts = 0;
+  Timer? _permissionRetry;
+
   /// 这一帧的行快照与 key→下标，sliver 构建器和锚点计算共用同一份。
   List<ChatMessage> _rows = const <ChatMessage>[];
   Map<String, int> _index = const <String, int>{};
@@ -253,6 +261,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     _scroll.addListener(_onScrollChanged);
     _linkSub = _remote.linkStates.listen(_onLinkState);
     _permission = widget.session.permission;
+    if (_permission == null) unawaited(_hydratePermission());
     _start();
     unawaited(_restoreOutbox());
     unawaited(_loadChildren());
@@ -264,6 +273,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     WidgetsBinding.instance.removeObserver(this);
     _snapshotTimer?.cancel();
     _childrenTimer?.cancel();
+    _permissionRetry?.cancel();
     unawaited(_sub?.cancel());
     unawaited(_eventsSub?.cancel());
     unawaited(_linkSub?.cancel());
@@ -316,7 +326,11 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   void _onLinkState(DshLinkState state) {
     if (!mounted || _disposed || _link == state) return;
     setState(() => _link = state);
-    if (state == DshLinkState.online) unawaited(_flushOutbox());
+    if (state == DshLinkState.online) {
+      unawaited(_flushOutbox());
+      // 断线期间补拉失败过就没再试了：链路回来时补一次。
+      if (_permission == null) unawaited(_hydratePermission());
+    }
   }
 
   /// 链路可用才允许直发；断线时消息进本地队列，等恢复后补发。
@@ -343,6 +357,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       case DshFrameKind.snapshot:
         _snapshotTimer?.cancel();
         _snapshotTimer = null;
+        // 快照到齐说明流式通道（顺带列表 RPC）确实通了：新建会话那行没带
+        // 权限值时，在这里再补一次，省得用户「退出去再进来」才看见入口。
+        if (_permission == null) unawaited(_hydratePermission());
         // 重连后服务端会重推一遍快照：上次连接留下的草稿已经没有下文了。
         _drafts.clear();
         final asOf = frame.asOfSeq;
@@ -1090,6 +1107,41 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     if (!mounted || catalog.isEmpty) return catalog;
     setState(() => _permissionCatalog = catalog);
     return catalog;
+  }
+
+  /// 手上那行 summary 没带权限值时，自己补一次。
+  ///
+  /// 新建会话能直接进页（不等列表刷新），但那一刻的 [SessionSummary] 是本地
+  /// 拼的，没有 `projections`，权限值必然是 null —— 于是「顶上没有权限设置，
+  /// 退出去再进来才有」。这里不阻塞首帧：后台问一次列表，拿到就点亮入口；
+  /// 拿不到（宿主真没装权限服务）就继续藏着。
+  ///
+  /// 新建的会话可能晚一拍才出现在列表里，所以拿不到时退避重试几次再收手
+  /// （[kPermissionHydrateRetries] 次，2 秒一次）。
+  Future<void> _hydratePermission() async {
+    if (_disposed || _permission != null || _permissionHydrating) return;
+    _permissionHydrating = true;
+    String? value;
+    try {
+      value = await _remote.permissionOf(widget.session.sessionId);
+    } on Object {
+      value = null;
+    } finally {
+      _permissionHydrating = false;
+    }
+    // 期间用户可能已经自己选过一档，别把新值冲掉。
+    if (!mounted || _disposed || _permission != null) return;
+    if (value != null) {
+      setState(() => _permission = value);
+      return;
+    }
+    if (_permissionAttempts >= kPermissionHydrateRetries) return;
+    _permissionAttempts++;
+    _permissionRetry?.cancel();
+    _permissionRetry = Timer(const Duration(seconds: 2), () {
+      if (!mounted || _disposed) return;
+      unawaited(_hydratePermission());
+    });
   }
 
   /// 写回权限：乐观更新胶囊，失败就退回原值并把宿主的话原样告诉用户。
@@ -2099,10 +2151,10 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     }
     final error = _loadError;
     if (error != null && _messages.isEmpty) {
-      return _ErrorView(message: error, onRetry: _retryLoad);
+      return ChatErrorView(message: error, onRetry: _retryLoad);
     }
     final items = _displayItems;
-    if (items.isEmpty) return const _EmptyView();
+    if (items.isEmpty) return const ChatEmptyView();
 
     // 顶部那一条：加载中 / 失败重试。hasMore == false 之后一个都不显示。
     final showOlderSlot = _loadingOlder || _olderError != null;
@@ -2216,14 +2268,14 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       key: ValueKey<String>(message.key),
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: outboxIndex >= 0
-          ? _OutboxBubble(
+          ? OutboxBubble(
               entry: _outbox[outboxIndex],
               onRetry: _retryOutbox,
               onDelete: _removeOutbox,
               onPromote: _promoteOutbox,
               thumbs: _thumbsFor(_outbox[outboxIndex]),
             )
-          : _MessageBubble(
+          : MessageBubble(
               message: message,
               onRetry: _retry,
               onDropQueued: _dropQueued,
@@ -2728,670 +2780,6 @@ class _SessionChatScreenState extends State<SessionChatScreen>
           );
         },
       ),
-    );
-  }
-}
-
-class _OutboxAction extends StatelessWidget {
-  const _OutboxAction({
-    super.key,
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final color = theme.colorScheme.onSurfaceVariant;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(icon, size: AppIcons.inline, color: color),
-            const SizedBox(width: 3),
-            Text(
-              label,
-              style: theme.textTheme.labelSmall?.copyWith(color: color),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({
-    required this.message,
-    required this.onRetry,
-    required this.onDropQueued,
-    required this.imageBytes,
-    required this.localBytesOf,
-    this.typing = false,
-  });
-
-  final ChatMessage message;
-  final ValueChanged<ChatMessage> onRetry;
-
-  /// 摘掉一条已受理、但还排在会话队列里的本地气泡。
-  final void Function(ChatMessage) onDropQueued;
-
-  /// 取一张图片字节（远端带缓存）；由 State 提供，气泡本身不碰网络。
-  final Future<Uint8List> Function(ChatImageRef image) imageBytes;
-
-  /// 本地占位图的字节；远端图返回 null。
-  final Uint8List? Function(ChatImageRef image) localBytesOf;
-
-  /// 正在逐字流式：正文末尾挂一个光标。
-  final bool typing;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isUser = message.role == ChatRole.user;
-    final foreground = isUser
-        ? theme.colorScheme.onPrimary
-        : theme.colorScheme.onSurface;
-    final maxWidth = MediaQuery.sizeOf(context).width * 0.78;
-
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-          constraints: BoxConstraints(maxWidth: maxWidth),
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: isUser
-                ? theme.colorScheme.primary
-                : theme.colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(16),
-              topRight: const Radius.circular(16),
-              bottomLeft: Radius.circular(isUser ? 16 : 4),
-              bottomRight: Radius.circular(isUser ? 4 : 16),
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              if (message.images.isNotEmpty) _buildImages(),
-              if (message.text.isNotEmpty || typing)
-                // 长按选字、拖选、复制一部分，靠系统文本框自己给；包
-                // `SelectionArea` 会跟我们的 `CustomScrollView(center:)` 抢
-                // 滚动容器，滚动中选字时还会拿已 defunct 的 element 取位置。
-                SelectableText(
-                  typing ? '${message.text}▌' : message.text,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: foreground,
-                    height: 1.45,
-                  ),
-                ),
-              if (message.notes.isNotEmpty)
-                Padding(
-                  padding: EdgeInsets.only(
-                    top: message.text.isEmpty ? 0 : 6,
-                  ),
-                  child: _NotesLine(
-                    notes: message.notes,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: foreground.withValues(alpha: 0.7),
-                    ),
-                  ),
-                ),
-              if (message.delivery == ChatDelivery.sending)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    '发送中…',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: foreground.withValues(alpha: 0.7),
-                    ),
-                  ),
-                ),
-              if (message.delivery == ChatDelivery.queued)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      SizedBox(
-                        width: 11,
-                        height: 11,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.6,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            foreground.withValues(alpha: 0.65),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        '排队中',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: foreground.withValues(alpha: 0.7),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      InkWell(
-                        key: ValueKey<String>('queued.drop.${message.key}'),
-                        onTap: () {
-                          onDropQueued(message);
-                        },
-                        borderRadius: BorderRadius.circular(8),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 2,
-                            vertical: 2,
-                          ),
-                          child: Text(
-                            '撤回',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: foreground.withValues(alpha: 0.85),
-                              decoration: TextDecoration.underline,
-                              decorationColor:
-                                  foreground.withValues(alpha: 0.5),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              if (message.retryable)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: InkWell(
-                    onTap: () => onRetry(message),
-                    child: Text(
-                      '发送失败，点这里重试',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: isUser ? foreground : theme.colorScheme.error,
-                        decoration: TextDecoration.underline,
-                        decorationColor: isUser ? foreground : null,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      );
-  }
-
-  /// 图片排在文字上方：手机上是先看图再看说明的习惯顺序。
-  Widget _buildImages() {
-    final images = message.images;
-    final hasText = message.text.isNotEmpty || typing;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        for (var i = 0; i < images.length; i++)
-          Padding(
-            padding: EdgeInsets.only(
-              bottom: i == images.length - 1 ? (hasText ? 8 : 0) : 6,
-            ),
-            child: _ChatImage(
-              image: images[i],
-              future: imageBytes(images[i]),
-              localBytes: localBytesOf(images[i]),
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-/// 气泡里的一张图。
-///
-/// 字节来源有两种：刚发出去的本地占位图（内存里就有）、历史图片（要等一次
-/// `session/attachment`）。两种情况都只在这里处理，外面的气泡不用关心。
-class _ChatImage extends StatelessWidget {
-  const _ChatImage({
-    required this.image,
-    required this.future,
-    this.localBytes,
-  });
-
-  final ChatImageRef image;
-  final Future<Uint8List> future;
-  final Uint8List? localBytes;
-
-  /// 加载中的灰块高度：给一个稳定的占位高度，图片到位时列表不会大幅跳动。
-  static const double _placeholderHeight = 96;
-  static const double _maxHeight = 260;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final bytes = localBytes;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(10),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: _maxHeight),
-        child: bytes != null
-            ? _buildImage(context, bytes)
-            : FutureBuilder<Uint8List>(
-                future: future,
-                builder: (context, snapshot) {
-                  final data = snapshot.data;
-                  if (data != null && data.isNotEmpty) {
-                    return _buildImage(context, data);
-                  }
-                  if (snapshot.hasError) return _buildFailed(context, theme);
-                  // 占位块只给尺寸，不给转圈：一屏十几张图同时转圈会很吵。
-                  return Container(
-                    height: _placeholderHeight,
-                    width: double.infinity,
-                    color: theme.colorScheme.surfaceContainerHighest.withValues(
-                      alpha: 0.5,
-                    ),
-                  );
-                },
-              ),
-      ),
-    );
-  }
-
-  Widget _buildImage(BuildContext context, Uint8List bytes) {
-    return Image.memory(
-      bytes,
-      width: double.infinity,
-      fit: BoxFit.cover,
-      // 本地占位图换成远端真图时会重建同一个 widget：保留上一帧画面，
-      // 避免闪一下空白。
-      gaplessPlayback: true,
-      errorBuilder: (context, error, stack) =>
-          _buildFailed(context, Theme.of(context)),
-    );
-  }
-
-  Widget _buildFailed(BuildContext context, ThemeData theme) {
-    return Container(
-      height: _placeholderHeight,
-      width: double.infinity,
-      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-      alignment: Alignment.center,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Icon(
-            AppIcons.imageBroken,
-            size: AppIcons.normal,
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '图片加载失败',
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-///
-/// 和 [_MessageBubble] 分开：它没有 seq、没有 durable 身份，样式也刻意压低
-/// 对比度 —— 让用户一眼看出「这条还在我手机里，没进会话」。
-class _OutboxBubble extends StatelessWidget {
-  const _OutboxBubble({
-    required this.entry,
-    required this.onRetry,
-    required this.onDelete,
-    required this.onPromote,
-    this.thumbs = const <Uint8List>[],
-  });
-
-  final OutboxEntry entry;
-  final ValueChanged<OutboxEntry> onRetry;
-  final ValueChanged<OutboxEntry> onDelete;
-  final ValueChanged<OutboxEntry> onPromote;
-
-  /// 已解码的缩略图字节；离线条目的图还没上传，只能从本机字节渲染。
-  final List<Uint8List> thumbs;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final foreground = theme.colorScheme.onSurface.withValues(alpha: 0.7);
-    final maxWidth = MediaQuery.sizeOf(context).width * 0.78;
-    return Align(
-      alignment: Alignment.centerRight,
-      child: Container(
-        constraints: BoxConstraints(maxWidth: maxWidth),
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest.withValues(
-            alpha: 0.7,
-          ),
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(16),
-            topRight: Radius.circular(16),
-            bottomLeft: Radius.circular(16),
-            bottomRight: Radius.circular(4),
-          ),
-          border: Border.all(
-            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-          ),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            if (thumbs.isNotEmpty)
-              Padding(
-                padding: EdgeInsets.only(bottom: entry.text.isEmpty ? 0 : 8),
-                child: Wrap(
-                  spacing: 4,
-                  runSpacing: 4,
-                  children: <Widget>[
-                    for (final bytes in thumbs)
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.memory(
-                          bytes,
-                          width: 56,
-                          height: 56,
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: <Widget>[
-                if (entry.text.isNotEmpty)
-                  Flexible(
-                    child: Text(
-                      entry.text,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: foreground,
-                        height: 1.45,
-                      ),
-                    ),
-                  ),
-                if (entry.text.isNotEmpty) const SizedBox(width: 8),
-                _buildStatus(theme, foreground),
-              ],
-            ),
-            // 还没发出去的条目才给「删除 / 置顶」：这两件事对一条从没被服务端
-            // 见过的消息成立；已经受理进会话队列的（另一个气泡样式）不在此列。
-            if (entry.status != OutboxStatus.sending)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    _OutboxAction(
-                      key: ValueKey<String>('outbox.delete.${entry.id}'),
-                      icon: AppIcons.delete,
-                      label: '删除',
-                      onTap: () => onDelete(entry),
-                    ),
-                    const SizedBox(width: 12),
-                    _OutboxAction(
-                      key: ValueKey<String>('outbox.promote.${entry.id}'),
-                      icon: AppIcons.collapse,
-                      label: '先发这条',
-                      onTap: () => onPromote(entry),
-                    ),
-                  ],
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatus(ThemeData theme, Color foreground) {
-    switch (entry.status) {
-      case OutboxStatus.pending:
-        return Tooltip(
-          message: '排队中，等待网络恢复后自动发送',
-          child: Icon(AppIcons.schedule, size: AppIcons.inline, color: foreground),
-        );
-      case OutboxStatus.sending:
-        return SizedBox(
-          key: ValueKey<String>('outbox.sending.${entry.id}'),
-          width: 14,
-          height: 14,
-          child: CircularProgressIndicator(
-            strokeWidth: 1.6,
-            color: foreground,
-          ),
-        );
-      case OutboxStatus.failed:
-        return InkWell(
-          key: ValueKey<String>('outbox.retry.${entry.id}'),
-          onTap: () => onRetry(entry),
-          borderRadius: BorderRadius.circular(10),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Icon(
-                  AppIcons.error,
-                  size: AppIcons.inline,
-                  color: theme.colorScheme.error,
-                ),
-                const SizedBox(width: 2),
-                Text(
-                  '重试',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.error,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-    }
-  }
-}
-
-class _EmptyView extends StatelessWidget {
-  const _EmptyView();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(
-              AppIcons.chat,
-              size: AppIcons.hero,
-              color: theme.colorScheme.outline,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              '还没有消息，说点什么吧',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.message, required this.onRetry});
-
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(
-              AppIcons.cloudOff,
-              size: AppIcons.hero,
-              color: theme.colorScheme.error,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 18),
-            FilledButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(AppIcons.refresh, size: AppIcons.small),
-              label: const Text('重试'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// 让「插入历史后视口不动」和「第一帧就落到底」都在布局阶段一次算清。
-///
-/// `applyContentDimensions` 里 `correctBy(correction)` 之后返回 `false`：Flutter
-/// 会用同一个 layout 再问一次，不会把这次修正当成滚动事件外传，也就不会打断
-/// 正在进行的拖拽或惯性。
-class _ChatScrollController extends ScrollController {
-  _ChatScrollController({
-    required this.prependCorrection,
-    required this.startsAtBottom,
-  });
-
-  /// 同一行在新旧两帧里的 sliver 坐标差；正数表示内容整体下沉了这么多像素。
-  final double Function() prependCorrection;
-
-  /// 视口此刻是否停在底部（extentAfter 小于阈值）。为真时每次内容尺寸变化
-  /// 都会在布局阶段把像素校正到底边，不会作为滚动事件外传。
-  final bool Function() startsAtBottom;
-
-  @override
-  ScrollPosition createScrollPosition(
-    ScrollPhysics physics,
-    ScrollContext context,
-    ScrollPosition? oldPosition,
-  ) {
-    return _ChatScrollPosition(
-      prependCorrection: prependCorrection,
-      startsAtBottom: startsAtBottom,
-      physics: physics,
-      context: context,
-      initialPixels: initialScrollOffset,
-      keepScrollOffset: keepScrollOffset,
-      oldPosition: oldPosition,
-      debugLabel: debugLabel,
-    );
-  }
-}
-
-class _ChatScrollPosition extends ScrollPositionWithSingleContext {
-  _ChatScrollPosition({
-    required this.prependCorrection,
-    required this.startsAtBottom,
-    required super.physics,
-    required super.context,
-    super.initialPixels,
-    super.keepScrollOffset,
-    super.oldPosition,
-    super.debugLabel,
-  });
-
-  final double Function() prependCorrection;
-  final bool Function() startsAtBottom;
-
-  /// 亚像素级别的差异不值得再重排一帧。
-  static const double _tolerance = 1e-9;
-
-  @override
-  bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
-    final correction = prependCorrection();
-    if (correction.abs() > _tolerance) {
-      // 同一帧里重试：位置和像素在同一帧对齐，用户看不到中间状态。
-      correctBy(correction);
-      return false;
-    }
-    if (startsAtBottom() && (pixels - maxScrollExtent).abs() > _tolerance) {
-      // 停在底部时，任何内容尺寸变化都要在**这一帧的布局里**跟到底边。
-      // 只靠 post-frame 回调量 maxScrollExtent 会用到旧值：新消息那一行
-      // 还没排完就跳，跳完 max 又长大，于是停在半路（少 48px）。
-      correctPixels(maxScrollExtent);
-      return false;
-    }
-    return super.applyContentDimensions(minScrollExtent, maxScrollExtent);
-  }
-}
-
-/// 气泡底下那行「思考 · 调用 read」小字。
-///
-/// 显示密度是全局设置（[ChatNotesMode]），所以这里跟着 `SettingsStore` 重建：
-/// 用 [AnimatedBuilder] 而不是在 `initState` 里读一次，设置页改完返回就能看到。
-/// 测试里没有 `AppScope`，退回「详细」，和以前逐字一致。
-///
-/// 详细模式逐项一行（带工具参数摘要，太长就省略号），简洁模式仍是一行统计。
-class _NotesLine extends StatelessWidget {
-  const _NotesLine({required this.notes, required this.style});
-
-  final List<ChatNote> notes;
-  final TextStyle? style;
-
-  @override
-  Widget build(BuildContext context) {
-    final settings = AppScope.maybeOf(context)?.settings;
-    if (settings == null) return _detailed();
-    return AnimatedBuilder(
-      animation: settings,
-      builder: (context, _) => settings.chatNotesMode == ChatNotesMode.compact
-          ? Text(noteSummaryCompact(notes), style: style)
-          : _detailed(),
-    );
-  }
-
-  Widget _detailed() {
-    final lines = noteLines(notes);
-    if (lines.length <= 1) return Text(lines.firstOrNull ?? '', style: style);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        for (final line in lines)
-          Text(
-            line,
-            style: style,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-      ],
     );
   }
 }

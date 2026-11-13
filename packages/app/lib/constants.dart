@@ -4,10 +4,10 @@
 library;
 
 /// App 版本（与 pubspec version 的版本段一致）。
-const String kAppVersion = '1.2.4';
+const String kAppVersion = '1.2.7';
 
 /// App 构建号（与 pubspec version 的 `+N` 一致）。
-const String kBuildNumber = '9';
+const String kBuildNumber = '12';
 
 /// 架构契约版本（见 docs/CONTRACT.md 标题 `v1`）。
 const String kContractVersion = 'v1';

@@ -38,11 +38,17 @@ const PermissionCatalog _catalog = PermissionCatalog(
 );
 
 class _PermRemote extends DshRemote {
-  _PermRemote({this.failSwitch = false}) : super(host: _host);
+  _PermRemote({this.failSwitch = false, this.listedPermission})
+    : super(host: _host);
 
   final bool failSwitch;
+
+  /// 列表侧（`session/list` 的投影）里这个会话的权限值：新建会话那一刻手上
+  /// 那行没有它，补拉时才拿得到。可变，用来模拟「会话晚一拍才进列表」。
+  String? listedPermission;
   final List<String> switches = <String>[];
   int catalogCalls = 0;
+  int permissionCalls = 0;
 
   final StreamController<DshStreamFrame> frames =
       StreamController<DshStreamFrame>.broadcast();
@@ -102,6 +108,12 @@ class _PermRemote extends DshRemote {
   }
 
   @override
+  Future<String?> permissionOf(String sessionId) async {
+    permissionCalls++;
+    return listedPermission;
+  }
+
+  @override
   Future<String> setPermission(String sessionId, String value) async {
     switches.add(value);
     if (failSwitch) {
@@ -120,9 +132,13 @@ class _PermRemote extends DshRemote {
 Future<_PermRemote> _pumpChat(
   WidgetTester tester, {
   String? permission,
+  String? listedPermission,
   bool failSwitch = false,
 }) async {
-  final remote = _PermRemote(failSwitch: failSwitch);
+  final remote = _PermRemote(
+    failSwitch: failSwitch,
+    listedPermission: listedPermission,
+  );
   await tester.pumpWidget(
     MaterialApp(
       home: SessionChatScreen(
@@ -156,6 +172,40 @@ void main() {
     final remote = await _pumpChat(tester);
     expect(find.byKey(const ValueKey<String>('permission-chip')), findsNothing);
     expect(remote.catalogCalls, 0);
+    // 进页补一次、快照到齐再补一次（后者容忍进页那次链路还没通）；问不到就保持隐藏。
+    expect(remote.permissionCalls, greaterThanOrEqualTo(1));
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('新建会话手上那行没投影：进页后补拉一次，入口自己出现', (tester) async {
+    final remote = await _pumpChat(
+      tester,
+      listedPermission: 'workspace-write',
+    );
+    await tester.pumpAndSettle();
+
+    expect(remote.permissionCalls, 1);
+    expect(find.byKey(const ValueKey<String>('permission-chip')), findsOneWidget);
+    expect(find.text('工作区内修改'), findsOneWidget);
+    // 只是点亮入口，不动宿主的权限：目录仍然等到用户点开才拉。
+    expect(remote.catalogCalls, 0);
+    expect(remote.switches, isEmpty);
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('新建会话晚一拍才进列表：重试一次后入口自己出现', (tester) async {
+    final remote = await _pumpChat(tester);
+    expect(find.byKey(const ValueKey<String>('permission-chip')), findsNothing);
+    final attempts = remote.permissionCalls;
+
+    // 宿主这时才把会话索引好。
+    remote.listedPermission = 'read-only';
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+
+    expect(remote.permissionCalls, greaterThan(attempts));
+    expect(find.byKey(const ValueKey<String>('permission-chip')), findsOneWidget);
+    expect(find.text('仅可查看'), findsOneWidget);
     await _disposeChat(tester, remote);
   });
 
@@ -165,6 +215,7 @@ void main() {
     expect(find.text('完全权限'), findsOneWidget);
     // 进入会话本身不该为权限多打一次 RPC。
     expect(remote.catalogCalls, 0);
+    expect(remote.permissionCalls, 0);
     await _disposeChat(tester, remote);
   });
 
