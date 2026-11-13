@@ -61,6 +61,7 @@ class MessageBubble extends StatelessWidget {
     required this.message,
     required this.onRetry,
     required this.onDropQueued,
+    required this.onSteerQueued,
     required this.imageBytes,
     required this.localBytesOf,
     this.typing = false,
@@ -72,6 +73,9 @@ class MessageBubble extends StatelessWidget {
 
   /// 摘掉一条已受理、但还排在会话队列里的本地气泡。
   final void Function(ChatMessage) onDropQueued;
+
+  /// 把排队里的这条插到当前轮前面（`session/updateQueue` 的 `steer`）。
+  final void Function(ChatMessage) onSteerQueued;
 
   /// 取一张图片字节（远端带缓存）；由 State 提供，气泡本身不碰网络。
   final Future<Uint8List> Function(ChatImageRef image) imageBytes;
@@ -194,7 +198,9 @@ class MessageBubble extends StatelessWidget {
                           color: foreground.withValues(alpha: 0.7),
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 18),
+                      // 撤回在前、插队在后：右边是这一行里唯一「改变顺序」的
+                      // 动作，手指从右往左扫过来先撞见它。
                       InkWell(
                         key: ValueKey<String>('queued.drop.${message.key}'),
                         onTap: () {
@@ -203,17 +209,52 @@ class MessageBubble extends StatelessWidget {
                         borderRadius: BorderRadius.circular(8),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 2,
+                            horizontal: 4,
                             vertical: 2,
                           ),
                           child: Text(
                             '撤回',
                             style: theme.textTheme.labelSmall?.copyWith(
-                              color: foreground.withValues(alpha: 0.85),
+                              color: foreground.withValues(alpha: 0.55),
                               decoration: TextDecoration.underline,
                               decorationColor:
-                                  foreground.withValues(alpha: 0.5),
+                                  foreground.withValues(alpha: 0.35),
                             ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      InkWell(
+                        key: ValueKey<String>('queued.steer.${message.key}'),
+                        onTap: () {
+                          onSteerQueued(message);
+                        },
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 2,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              Icon(
+                                AppIcons.send,
+                                size: 11,
+                                color: foreground.withValues(alpha: 0.9),
+                              ),
+                              const SizedBox(width: 2),
+                              Text(
+                                '插队',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: foreground.withValues(alpha: 0.9),
+                                  fontWeight: FontWeight.w600,
+                                  decoration: TextDecoration.underline,
+                                  decorationColor:
+                                      foreground.withValues(alpha: 0.5),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),

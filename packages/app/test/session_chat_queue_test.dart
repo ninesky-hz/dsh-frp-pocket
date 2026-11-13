@@ -61,6 +61,12 @@ class _QueueRemote extends DshRemote {
   /// false 表示宿主拒绝撤回（那一轮已经开始跑了）。
   bool removeAccepted = true;
 
+  /// `session/updateQueue` 里 `action.kind == steer` 收到的 itemId。
+  final List<String> steered = <String>[];
+
+  /// false 表示宿主拒绝把这条插队。
+  bool steerAccepted = true;
+
   @override
   DshLinkState get linkState => _current;
 
@@ -131,6 +137,22 @@ class _QueueRemote extends DshRemote {
     removed.add(itemId);
     if (!removeAccepted) return false;
     queue.removeWhere((item) => item.id == itemId);
+    return true;
+  }
+
+  @override
+  Future<bool> steerQueued(String sessionId, String itemId) async {
+    steered.add(itemId);
+    if (!steerAccepted) return false;
+    // 宿主把这一项挪到 steering：还在跑的这一轮会立刻把它读走。
+    final at = queue.indexWhere((item) => item.id == itemId);
+    if (at >= 0) {
+      queue[at] = DshQueuedItem(
+        id: queue[at].id,
+        placement: 'steering',
+        rpcId: queue[at].rpcId,
+      );
+    }
     return true;
   }
 
@@ -315,6 +337,74 @@ void main() {
     expect(remote.removed, isEmpty);
     expect(find.text('已经开始处理了，只能从界面移除'), findsOneWidget);
     expect(find.text('第二条'), findsNothing);
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('排队那一行的最右边是「插队」，点了走 updateQueue 的 steer', (
+    tester,
+  ) async {
+    final remote = await _pumpChat(tester);
+
+    await _send(tester, '第一条');
+    await _send(tester, '第二条');
+    remote.queue.add(
+      DshQueuedItem(
+        id: 'item-2',
+        placement: 'queued',
+        rpcId: remote.requestIds[1],
+      ),
+    );
+
+    final steer = find.byKey(const ValueKey<String>('queued.steer.local-2'));
+    final drop = find.byKey(const ValueKey<String>('queued.drop.local-2'));
+    expect(steer, findsOneWidget);
+    expect(drop, findsOneWidget);
+    // 「最右边」是布局事实，不是文案承诺：插队键必须在撤回键右边。
+    expect(
+      tester.getTopLeft(steer).dx,
+      greaterThan(tester.getTopRight(drop).dx),
+    );
+
+    final promptsBefore = remote.prompts.length;
+
+    await tester.tap(steer);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    // 插队不重发消息，只把宿主队列里的那一项改成 steering。
+    expect(remote.steered, <String>['item-2']);
+    expect(remote.removed, isEmpty);
+    expect(remote.prompts.length, promptsBefore);
+    expect(find.text('已插到这一轮前面'), findsOneWidget);
+    // 气泡还在等它跑完，所以「排队中」不该被提前抹掉。
+    expect(find.text('第二条'), findsOneWidget);
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('宿主拒绝插队时如实说，不假装成功', (tester) async {
+    final remote = await _pumpChat(tester);
+    remote.steerAccepted = false;
+
+    await _send(tester, '第一条');
+    await _send(tester, '第二条');
+    remote.queue.add(
+      DshQueuedItem(
+        id: 'item-2',
+        placement: 'queued',
+        rpcId: remote.requestIds[1],
+      ),
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('queued.steer.local-2')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    expect(find.text('宿主没有接受这次插队'), findsOneWidget);
+    expect(find.text('第二条'), findsOneWidget);
 
     await _disposeChat(tester, remote);
   });

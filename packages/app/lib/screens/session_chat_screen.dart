@@ -1811,6 +1811,43 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       _toast('撤回失败：${_permissionErrorText(error)}');
     }
   }
+  /// 把排队里的这条插到当前轮前面。
+  ///
+  /// 和发送键长按的插队（`session/prompt` 的 `mode: steer`）不是一回事：那个是
+  /// 「我再补一句新的」，这个是「已经排在那的这句，别等了」。所以这里不重新
+  /// 发消息 —— 重发会在宿主那边变成两条，只把队列项改成 `steering`。
+  Future<void> _steerQueued(ChatMessage message) async {
+    final requestId = message.requestId;
+    if (requestId == null) {
+      _toast('这条没有队列信息，插不了队');
+      return;
+    }
+    final sessionId = widget.session.sessionId;
+    try {
+      final items = await _remote.queuedItems(sessionId);
+      DshQueuedItem? target;
+      for (final item in items) {
+        if (item.rpcId == requestId) {
+          target = item;
+          break;
+        }
+      }
+      if (target == null) {
+        _toast('宿主队列里已经没有它了');
+        return;
+      }
+      if (!target.waiting) {
+        _toast('已经在处理了，不用再插队');
+        return;
+      }
+      final steered = await _remote.steerQueued(sessionId, target.id);
+      _toast(steered ? '已插到这一轮前面' : '宿主没有接受这次插队');
+    } on Object catch (error) {
+      debugPrint('SessionChat: 插队失败 $error');
+      _toast('插队失败：${_permissionErrorText(error)}');
+    }
+  }
+
 
   static String _outboxErrorLabel(Object error) {
     if (error is DshApiException) {
@@ -2531,6 +2568,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
               message: message,
               onRetry: _retry,
               onDropQueued: _dropQueued,
+              onSteerQueued: _steerQueued,
               // 草稿气泡带一个光标，等定稿到了就被 durable 气泡顶掉。
               typing: draftKeys.contains(message.key),
               imageBytes: _imageBytes,

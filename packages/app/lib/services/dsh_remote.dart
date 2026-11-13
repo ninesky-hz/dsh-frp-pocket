@@ -611,6 +611,25 @@ class DshRemote {
   /// 只有 `session/observeState` 报过、且还在 `queued` 的项撤得掉；已经开始跑
   /// 的那条宿主会拒（`accepted` 不是 true 或直接报错），此时调用方只能把它从
   /// 界面移除——消息已经在处理了。
+  /// 把排队里的这条插到当前轮前面（`session/updateQueue` 的 `steer`）。
+  ///
+  /// 和发送键长按的 `session/prompt(mode: steer)` 不是一回事：那个是「我现在
+  /// 再说一句新的」，这个是「已经排在那的那条，别等了」。宿主把 `steering` 的
+  /// 项交给正在跑的这一轮，排队顺序不再等它自己轮到。
+  Future<bool> steerQueued(String sessionId, String itemId) async {
+    final value = await call<Map<String, Object?>>(
+      'session/updateQueue',
+      <String, Object?>{
+        'request': <String, Object?>{
+          'sessionId': sessionId,
+          'itemId': itemId,
+          'action': <String, Object?>{'kind': 'steer'},
+        },
+      },
+    );
+    return value['accepted'] == true;
+  }
+
   Future<bool> removeQueued(String sessionId, String itemId) async {
     final value = await call<Map<String, Object?>>(
       'session/updateQueue',
