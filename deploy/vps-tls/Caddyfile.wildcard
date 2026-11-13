@@ -35,9 +35,9 @@
 	}
 }
 
-# 泛域名站点：一张 *.dsh.chenz.vip 证书覆盖所有随机子域（含 home. / studio.）。
+# 泛域名站点：一张 *.dsh.example.com 证书覆盖所有随机子域（含 home. / studio.）。
 # 证书由 acme-wildcard.sh 经阿里云 DNS-01 签出并自动续期（通配符不能走 HTTP-01/TLS-ALPN-01）。
-*.dsh.chenz.vip, dsh.chenz.vip {
+*.dsh.example.com, dsh.example.com {
 	tls /etc/caddy/certs/fullchain.pem /etc/caddy/certs/privkey.pem
 	import dsh_site_body
 }

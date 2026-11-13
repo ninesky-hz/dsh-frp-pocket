@@ -43,7 +43,7 @@ ls -l node_modules/dsh-frp-pocket   # 应为符号链接 → 仓库目录
 
 ```bash
 netstat -ano | grep ":3081" | grep LISTENING     # 网关在听
-curl -s https://home.dsh.chenz.vip/frp-pocket/api/info   # 200，hostId 与本地一致
+curl -s https://home.dsh.example.com/frp-pocket/api/info   # 200，hostId 与本地一致
 ```
 
 ## 预置配置（可选）
@@ -56,8 +56,8 @@ export DSH_HOME="C:/Users/<你>/.dsh"
 node packages/plugin/bin/dsh-frp-pocket.mjs config set frp.serverAddr "$VPS_IP"
 node packages/plugin/bin/dsh-frp-pocket.mjs config set frp.authToken "$FRP_TOKEN"
 node packages/plugin/bin/dsh-frp-pocket.mjs config set frp.mode customDomains
-node packages/plugin/bin/dsh-frp-pocket.mjs config set frp.customDomains home.dsh.chenz.vip
-node packages/plugin/bin/dsh-frp-pocket.mjs config set frp.publicUrl https://home.dsh.chenz.vip
+node packages/plugin/bin/dsh-frp-pocket.mjs config set frp.customDomains home.dsh.example.com
+node packages/plugin/bin/dsh-frp-pocket.mjs config set frp.publicUrl https://home.dsh.example.com
 ```
 
 写完后 `config get` 里 `authToken` 显示为空、`authTokenSet: true` 是**正常的**——读取时脱敏，落盘仍是明文（和 `frpc.toml` 同级风险，文件权限取决于用户目录）。

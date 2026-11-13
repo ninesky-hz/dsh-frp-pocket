@@ -1,6 +1,6 @@
 # DSH 远程接口实测记录（2026-11-12）
 
-公网入口：`https://pwq8t9.dsh.chenz.vip`（frp + Caddy 泛域名）→ 家里 DSH `127.0.0.1:3081`(gateway) → DSH web。
+公网入口：`https://pwq8t9.dsh.example.com`（frp + Caddy 泛域名）→ 家里 DSH `127.0.0.1:3081`(gateway) → DSH web。
 
 ## 1. 鉴权链
 

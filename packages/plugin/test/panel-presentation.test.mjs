@@ -11,7 +11,7 @@ const pkg = JSON.parse(
 );
 
 test('qrSvg：自适应尺寸（100% + viewBox），不再写死像素', () => {
-  const svg = qrSvg('dshfrp://add?url=https%3A%2F%2Fpqw8t9.dsh.chenz.vip&pin=x&name=y&hostId=z');
+  const svg = qrSvg('dshfrp://add?url=https%3A%2F%2Fhome.dsh.example.com&pin=x&name=y&hostId=z');
   assert.match(svg, /width="100%"/);
   assert.match(svg, /height="100%"/);
   assert.match(svg, /viewBox="0 0 \d+ \d+"/);

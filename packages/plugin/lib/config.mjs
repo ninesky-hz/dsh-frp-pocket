@@ -90,7 +90,7 @@ export function normalizeDomainSuffix(value) {
 
 /**
  * 6 位随机子域（泛域名场景）：去掉易混字符 0/o/1/l/i，只留 a-z + 2-9，
- * 用来拼 `<随机>.dsh.chenz.vip`，用户不用手工起名。
+ * 用来拼 `<随机>.dsh.example.com`，用户不用手工起名。
  */
 export function generateSubdomain(len = 6) {
   const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
@@ -153,7 +153,7 @@ export function defaultConfig(displayName) {
       subdomain: slugify(name),
       // 自有域名模式：直接写 customDomains，不依赖 frps 的 subDomainHost
       customDomains: [],
-      // 泛域名：填一次后缀（如 dsh.chenz.vip），autoDomain 打开后自动生成 6 位随机子域
+      // 泛域名：填一次后缀（如 dsh.example.com），autoDomain 打开后自动生成 6 位随机子域
       domainSuffix: '',
       autoDomain: false,
       remotePort: 0,

@@ -7,8 +7,8 @@ import { PAIR_NAME_PREFIX, pairName, qrText } from '../lib/qr.mjs';
 const base = {
   displayName: '家里',
   hostId: 'host-8630811a',
-  auth: { pin: 'kADUqUf5bvsH' },
-  frp: { publicUrl: 'https://pqw8t9.dsh.chenz.vip' },
+  auth: { pin: 'TESTPIN0001' },
+  frp: { publicUrl: 'https://home.dsh.example.com' },
   gateway: { port: 3081 },
 };
 
@@ -26,8 +26,8 @@ test('qrText：name 带前缀，字段顺序 url/pin/name/hostId，无 publicUrl
   assert.ok(text.startsWith('dshfrp://add?'), text);
   const q = new URLSearchParams(text.slice('dshfrp://add?'.length));
   assert.deepEqual([...q.keys()], ['url', 'pin', 'name', 'hostId']);
-  assert.equal(q.get('url'), 'https://pqw8t9.dsh.chenz.vip');
-  assert.equal(q.get('pin'), 'kADUqUf5bvsH');
+  assert.equal(q.get('url'), 'https://home.dsh.example.com');
+  assert.equal(q.get('pin'), 'TESTPIN0001');
   assert.equal(q.get('name'), 'FRP 远程 · 家里');
   assert.equal(q.get('hostId'), 'host-8630811a');
 

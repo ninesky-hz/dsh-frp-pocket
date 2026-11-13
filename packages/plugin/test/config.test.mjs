@@ -110,9 +110,9 @@ test('状态枚举与默认状态文件', () => {
 });
 
 test('normalizeDomains：字符串/数组都能收，非法项被丢掉', () => {
-  assert.deepEqual(normalizeDomains('https://Home.DSH.chenz.vip/, studio.dsh.chenz.vip:443'), [
-    'home.dsh.chenz.vip',
-    'studio.dsh.chenz.vip',
+  assert.deepEqual(normalizeDomains('https://Home.DSH.example.com/, studio.dsh.example.com:443'), [
+    'home.dsh.example.com',
+    'studio.dsh.example.com',
   ]);
   assert.deepEqual(normalizeDomains(['a.b', 'bad_domain!', 'a.b', 42]), ['a.b']);
   assert.deepEqual(normalizeDomains(undefined), []);
@@ -134,9 +134,9 @@ test('generateSubdomain：6 位、字符集无易混字符、不重复', () => {
 });
 
 test('normalizeDomainSuffix：去协议/通配符/路径，非法返回空', () => {
-  assert.equal(normalizeDomainSuffix('https://*.DSH.chenz.vip/'), 'dsh.chenz.vip');
-  assert.equal(normalizeDomainSuffix('*.dsh.chenz.vip'), 'dsh.chenz.vip');
-  assert.equal(normalizeDomainSuffix('dsh.chenz.vip:443'), 'dsh.chenz.vip');
+  assert.equal(normalizeDomainSuffix('https://*.DSH.example.com/'), 'dsh.example.com');
+  assert.equal(normalizeDomainSuffix('*.dsh.example.com'), 'dsh.example.com');
+  assert.equal(normalizeDomainSuffix('dsh.example.com:443'), 'dsh.example.com');
   assert.equal(normalizeDomainSuffix(''), '');
   assert.equal(normalizeDomainSuffix('not_a_domain!'), '');
   assert.equal(normalizeDomainSuffix(undefined), '');
@@ -145,11 +145,11 @@ test('normalizeDomainSuffix：去协议/通配符/路径，非法返回空', () 
 test('autoDomain：后缀 + 开关自动生成 6 位随机域名，落盘后不再变（幂等）', () => {
   const cfg = normalizeConfig({
     displayName: '测试机',
-    frp: { serverAddr: 'dsh.chenz.vip', domainSuffix: 'dsh.chenz.vip', autoDomain: true, mode: 'customDomains' },
+    frp: { serverAddr: 'dsh.example.com', domainSuffix: 'dsh.example.com', autoDomain: true, mode: 'customDomains' },
   });
   assert.equal(cfg.frp.customDomains.length, 1);
   const host = cfg.frp.customDomains[0];
-  assert.match(host, /^[a-z2-9]{6}\.dsh\.chenz\.vip$/);
+  assert.match(host, /^[a-z2-9]{6}\.dsh\.example\.com$/);
   assert.equal(cfg.frp.publicUrl, `https://${host}`);
 
   // 再归一化一次（等价于 reload）：域名与 publicUrl 都保持不变
@@ -158,22 +158,22 @@ test('autoDomain：后缀 + 开关自动生成 6 位随机域名，落盘后不�
   assert.equal(again.frp.publicUrl, cfg.frp.publicUrl);
 
   // 关掉自动域名不生成
-  const off = normalizeConfig({ frp: { domainSuffix: 'dsh.chenz.vip', autoDomain: false } });
+  const off = normalizeConfig({ frp: { domainSuffix: 'dsh.example.com', autoDomain: false } });
   assert.deepEqual(off.frp.customDomains, []);
 
   // 手动填了域名就尊重手填值
   const manual = normalizeConfig({
-    frp: { domainSuffix: 'dsh.chenz.vip', autoDomain: true, customDomains: ['home.dsh.chenz.vip'] },
+    frp: { domainSuffix: 'dsh.example.com', autoDomain: true, customDomains: ['home.dsh.example.com'] },
   });
-  assert.deepEqual(manual.frp.customDomains, ['home.dsh.chenz.vip']);
+  assert.deepEqual(manual.frp.customDomains, ['home.dsh.example.com']);
 });
 
 test('publicUrl：留空但有域名时按 https 推导，显式值优先', () => {
-  const derived = normalizeConfig({ frp: { customDomains: ['a.dsh.chenz.vip'] } });
-  assert.equal(derived.frp.publicUrl, 'https://a.dsh.chenz.vip');
+  const derived = normalizeConfig({ frp: { customDomains: ['a.dsh.example.com'] } });
+  assert.equal(derived.frp.publicUrl, 'https://a.dsh.example.com');
 
   const explicit = normalizeConfig({
-    frp: { customDomains: ['a.dsh.chenz.vip'], publicUrl: 'https://short.example.com/' },
+    frp: { customDomains: ['a.dsh.example.com'], publicUrl: 'https://short.example.com/' },
   });
   assert.equal(explicit.frp.publicUrl, 'https://short.example.com');
 });

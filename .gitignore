@@ -16,3 +16,6 @@ Thumbs.db
 # dsh-main-agent 的循环记账（每轮重写，不是源码）
 .agi/loop-state*.json
 .agi/BRIEF.md
+
+# 代理记账与巡检笔记（含真实主机/路径/凭据痕迹，不进公开仓库）
+.agi/

@@ -58,7 +58,7 @@ dsh plugin --profile desktop list
 | 端口 `serverPort` | `7000` | 与 frps `bindPort` 一致 |
 | 认证 token | `FRP_TOKEN` | 与 `/etc/frp/frps.toml` 的 `auth.token` 一致 |
 | 模式 `mode` | `customDomains` | 见下方三种模式的取舍；`remotePort` 仅排障用 |
-| 完整域名 `customDomains` | `home.dsh.chenz.vip` | `mode=customDomains` 时填；多个域名逗号分隔（最多 5 个） |
+| 完整域名 `customDomains` | `home.dsh.example.com` | `mode=customDomains` 时填；多个域名逗号分隔（最多 5 个） |
 | 子域名 `subdomain` | `home` | `mode=subdomain` 时填（frps 需配 `subDomainHost`） |
 | 显示名称 `displayName` | `家里` | 只影响 App 列表显示 |
 | 网关端口 | `3081` | 被占用才改；改了两边都要改 |
@@ -72,7 +72,7 @@ dsh plugin --profile desktop list
 | `remotePort` | `allowPorts` 里有该端口 | 没证书、只用 `http://IP:端口` 排障 |
 
 你现在这台 VPS 的 `frps.toml` 里**没有 `subDomainHost`**，所以选 `customDomains`，
-并把 `publicUrl` 填 `https://home.dsh.chenz.vip`（证书由 VPS 上的 Caddy 出，见 [VPS-TLS.md](VPS-TLS.md)）。
+并把 `publicUrl` 填 `https://home.dsh.example.com`（证书由 VPS 上的 Caddy 出，见 [VPS-TLS.md](VPS-TLS.md)）。
 
 保存后配置落在：
 

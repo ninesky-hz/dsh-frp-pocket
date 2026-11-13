@@ -58,21 +58,21 @@
 }
 
 # 一个域名一段。新增电脑（如工作室）时：先加 DNS A 记录，再在这里加一段并 reload。
-dsh.chenz.vip {
+dsh.example.com {
 	import dsh_site
 }
 
 # 需要多台电脑各一个域名时，把注释去掉（前提：DNS A 记录已存在，否则 ACME 会一直重试失败）：
-# home.dsh.chenz.vip {
+# home.dsh.example.com {
 # 	import dsh_site
 # }
-# studio.dsh.chenz.vip {
+# studio.dsh.example.com {
 # 	import dsh_site
 # }
 
 # 泛域名模式：插件自动掷 6 位子域时把上面几段替换成这一段
-# （证书先由 acme-wildcard.sh --suffix dsh.chenz.vip 签出来，通配符只能 DNS-01）：
-# *.dsh.chenz.vip, dsh.chenz.vip {
+# （证书先由 acme-wildcard.sh --suffix dsh.example.com 签出来，通配符只能 DNS-01）：
+# *.dsh.example.com, dsh.example.com {
 # 	tls /etc/caddy/certs/fullchain.pem /etc/caddy/certs/privkey.pem
 # 	import dsh_site_body
 # }

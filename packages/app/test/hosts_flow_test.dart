@@ -149,8 +149,8 @@ void main() {
 
     Future<void> addFromScan(String name) async {
       final payload = parseScanPayload(
-        'dshfrp://add?url=https%3A%2F%2Fpqw8t9.dsh.chenz.vip'
-        '&pin=kADUqUf5bvsH&name=${Uri.encodeQueryComponent(name)}'
+        'dshfrp://add?url=https%3A%2F%2Fhome.dsh.example.com'
+        '&pin=TESTPIN0001&name=${Uri.encodeQueryComponent(name)}'
         '&hostId=host-8630811a',
       );
       expect(payload, isNotNull);

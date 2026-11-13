@@ -11,7 +11,7 @@
 
 ```
 手机 App ──HTTPS 443──► frps(vhostHTTPSPort=443，按 SNI 透传，不解 TLS)
-                          │  SNI = dsh.chenz.vip
+                          │  SNI = dsh.example.com
                           ▼
                      frpc-bridge（VPS 本机，type=https → 127.0.0.1:9443）
                           ▼
@@ -19,7 +19,7 @@
                           │  反代 http://127.0.0.1:80，Host 原样保留
                           ▼
                      frps(vhostHTTPPort=80，按 Host 分发)
-                          │  Host = home.dsh.chenz.vip
+                          │  Host = home.dsh.example.com
                           ▼
      ┌────────────────────┴────────────────────┐
      ▼                                         ▼

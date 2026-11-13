@@ -4,6 +4,14 @@
 
 ## 2026-11-13
 
+### security：清理公开仓库里的真实环境信息
+
+- **测试里的 PIN 是生产 PIN**：`packages/{app,plugin}/test` 五个文件把 `auth.pin` 写成了本机真实网关 PIN（`pinCustom: false` 自动生成的那枚），仓库是公开的，等于把入口凭据一起发了出去。全部替换为占位 `TESTPIN0001`。
+- **真实 VPS IP** 从 `VPS_IP` 占位；`chenz.vip` 真实域名在 README / deploy / docs / 测试里统一改为 `example.com` 示例域（部署脚本本来就接受 `--suffix` / `--domains` 参数，占位不影响使用）。
+- **`.agi/` 移出版本库**：那是代理记账与巡检笔记，含真实主机名、域名、本机绝对路径，公开仓库没理由带它；已 `git rm --cached` + 加进 `.gitignore`，文件仍在本地。
+- 排查过 frps `auth.token`：历史与当前都只有占位符（`FRP_TOKEN` / `__FRP_TOKEN__` / 测试用的 `tok_demo`），没有真实值。
+- **注意**：历史提交里仍有旧 PIN / 旧 IP（公开仓库被 clone 过就有副本），所以真正有效的处置是**换 PIN**（插件设置页「换个 PIN」）与必要时换 frps token，改代码只是止血。
+
 ### app 1.2.4+9
 
 - **排队中的消息现在能真撤回了**：以前点「撤回」只是把气泡从界面摘掉，服务端那条还在队列里，回头照样会跑。现在客户端自己生成 `requestId` 发 `session/prompt`，宿主会把它记成队列项的 `rpcId`；撤回时用 `session/observeState` 读出队列、按 `rpcId` 认领这一条，再发 `session/updateQueue` 的 `{kind: 'remove'}` 撤掉，最后用 toast 如实告知结果（`已撤回这条排队消息` / `已经开始处理了，只能从界面移除` / `宿主没有撤回这条消息`）。
@@ -99,4 +107,4 @@ App 从「扫码 + 内置 WebView 看网页」升级成**原生客户端**：会
 
 ### 部署
 
-- 泛域名证书（`*.dsh.chenz.vip`，DNS-01 走阿里云）与 Caddy 站点见 `deploy/vps-tls/`、`docs/VPS-TLS.md`。
+- 泛域名证书（`*.dsh.example.com`，DNS-01 走阿里云）与 Caddy 站点见 `deploy/vps-tls/`、`docs/VPS-TLS.md`。

@@ -3,15 +3,15 @@
 #
 # 为什么必须是 DNS-01：
 #   80 端口被 frps 的 vhostHTTPPort 占着，443 的 TLS-ALPN-01 也只能证明「单个名字」。
-#   RFC 8555 明确禁止用 HTTP-01 / TLS-ALPN-01 签通配符证书，所以 *.dsh.chenz.vip
+#   RFC 8555 明确禁止用 HTTP-01 / TLS-ALPN-01 签通配符证书，所以 *.dsh.example.com
 #   只能走 DNS-01 —— 也就是要让 acme.sh 能调用 DNS 服务商的 API 写 TXT 记录。
-#   本机 chenz.vip 的 NS 是阿里云（vip1/vip2.alidns.com），所以用 acme.sh 的 dns_ali。
+#   本机 example.com 的 NS 是阿里云（vip1/vip2.alidns.com），所以用 acme.sh 的 dns_ali。
 #
 # 用法（VPS 上，root）：
 #   1) 先准备阿里云 RAM 子账号 AccessKey（只要 AliyunDNSFullAccess，别用主账号）：
 #        printf 'Ali_Key=LTAIxxxxxxxx\nAli_Secret=xxxxxxxx\n' > /etc/caddy/alidns.env
 #        chmod 600 /etc/caddy/alidns.env
-#   2) bash acme-wildcard.sh --suffix dsh.chenz.vip
+#   2) bash acme-wildcard.sh --suffix dsh.example.com
 #      （证书装到 /etc/caddy/certs/{fullchain,privkey}.pem，自动 reload caddy）
 #
 # 可重复执行：acme.sh 自带续期 cron（每天检查），续期后 --reloadcmd 自动 reload Caddy。
@@ -39,7 +39,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ "$(id -u)" -ne 0 ]; then echo '需要 root | run as root' >&2; exit 1; fi
-if [ -z "$SUFFIX" ]; then echo '缺少 --suffix（例如 dsh.chenz.vip）' >&2; exit 2; fi
+if [ -z "$SUFFIX" ]; then echo '缺少 --suffix（例如 dsh.example.com）' >&2; exit 2; fi
 case "$SUFFIX" in
   *[!a-z0-9.-]*) echo "后缀不合法: $SUFFIX" >&2; exit 2 ;;
 esac

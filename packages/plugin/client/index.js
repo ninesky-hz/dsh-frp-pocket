@@ -469,14 +469,14 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { style: styles.hint },
-            '服务器地址可以填域名（如 dsh.chenz.vip），frpc 会自己解析，不必写 IP。',
+            '服务器地址可以填域名（如 dsh.example.com），frpc 会自己解析，不必写 IP。',
           ),
           h(
             Field,
             { label: '服务器地址' },
             h('input', {
               style: styles.input,
-              placeholder: 'dsh.chenz.vip',
+              placeholder: 'dsh.example.com',
               value: form.serverAddr,
               onChange: (e) => setForm({ ...form, serverAddr: e.target.value }),
             }),
@@ -564,14 +564,14 @@ window.__ModuleLoader__.load({
                     { label: '域名后缀（泛域名）' },
                     h('input', {
                       style: styles.input,
-                      placeholder: 'dsh.chenz.vip',
+                      placeholder: 'dsh.example.com',
                       value: form.domainSuffix,
                       onChange: (e) => setForm({ ...form, domainSuffix: e.target.value }),
                     }),
                     h(
                       'div',
                       { style: styles.hint },
-                      '填已有泛解析的域名后缀（如 dsh.chenz.vip，要求 VPS 上备着 *.dsh.chenz.vip 证书）。开启下面的开关后，插件会自己掷一个 6 位子域，不用再手工起名。',
+                      '填已有泛解析的域名后缀（如 dsh.example.com，要求 VPS 上备着 *.dsh.example.com 证书）。开启下面的开关后，插件会自己掷一个 6 位子域，不用再手工起名。',
                     ),
                   ),
                   h(
@@ -792,7 +792,7 @@ window.__ModuleLoader__.load({
         const frp = status?.config?.frp ?? {};
         const suffix = String(frp.domainSuffix ?? '').trim();
         if (!suffix) {
-          setError('先在设置页填「域名后缀（泛域名）」，例如 dsh.chenz.vip');
+          setError('先在设置页填「域名后缀（泛域名）」，例如 dsh.example.com');
           return;
         }
         const host = `${randomSubdomain()}.${suffix}`;
@@ -925,7 +925,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { style: styles.sub },
-            'frps 地址可以是域名（如 dsh.chenz.vip），frpc 会自己解析；公网地址由泛域名后缀自动生成，换域名后重启隧道生效。',
+            'frps 地址可以是域名（如 dsh.example.com），frpc 会自己解析；公网地址由泛域名后缀自动生成，换域名后重启隧道生效。',
           ),
         ),
 

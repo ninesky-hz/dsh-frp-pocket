@@ -119,7 +119,7 @@ Host _host() => const Host(
   id: 'host-test',
   name: '家里',
   url: 'https://gw.example.com',
-  pin: 'kADUqUf5bvsH',
+  pin: 'TESTPIN0001',
 );
 
 void main() {

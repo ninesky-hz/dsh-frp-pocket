@@ -1,8 +1,8 @@
 # 本机桥接客户端：把 frps 在 443 上收到的 TLS 字节按 SNI 交给本机 Caddy(9443)。
 #
 # 关键点：这是「同一台机器上的 frpc」，不是家里的那台。
-#   frps(443) --type=https, customDomains=['dsh.chenz.vip']--> 本机 Caddy
-# 其他域名（imm.chenz.vip / ha.chenz.vip / x.chenz.vip …）的 SNI 匹配不到这条规则，
+#   frps(443) --type=https, customDomains=['dsh.example.com']--> 本机 Caddy
+# 其他域名（example.com / example.com / example.com …）的 SNI 匹配不到这条规则，
 # 仍由 frps 直接透传给各自的客户端 —— 因此不需要改动 frps.toml 一行。
 #
 # 真实文件由 deploy/vps-tls/install.sh 生成到 /opt/frp-bridge/frpc-bridge.toml，
@@ -24,4 +24,4 @@ name = "dsh-pocket-tls"
 type = "https"
 localIP = "127.0.0.1"
 localPort = 9443                   # Caddy 的 https_port
-customDomains = ["dsh.chenz.vip"]  # 与 Caddyfile 里 import dsh_site 的域名保持一致
+customDomains = ["dsh.example.com"]  # 与 Caddyfile 里 import dsh_site 的域名保持一致

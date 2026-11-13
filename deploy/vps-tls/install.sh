@@ -10,25 +10,25 @@
 #
 # 用法（在 VPS 上，root）：
 #   bash install.sh --token '<frps 的 auth.token>' \
-#                   --domains 'dsh.chenz.vip' \
+#                   --domains 'dsh.example.com' \
 #                   --caddy-tar /tmp/caddy.tar.gz \
 #                   --frp-tar /tmp/frp_0.72.0_linux_amd64.tar.gz
 #
-#   --domains 支持逗号分隔多个：'dsh.chenz.vip,home.dsh.chenz.vip,studio.dsh.chenz.vip'
+#   --domains 支持逗号分隔多个：'dsh.example.com,home.dsh.example.com,studio.dsh.example.com'
 #   ⚠ 每个域名都要先有指向本机的 DNS A 记录，否则 ACME 会持续失败重试。
 #
 # 泛域名模式（插件自动掷 6 位随机子域时用这个）：
-#   bash acme-wildcard.sh --suffix dsh.chenz.vip      # 先签 *.dsh.chenz.vip（DNS-01）
-#   bash install.sh --wildcard dsh.chenz.vip --token '<frps token>' --caddy-tar ... --frp-tar ...
-#   桥接收 "*.dsh.chenz.vip"，Caddy 站点写 "*.dsh.chenz.vip, dsh.chenz.vip"；
-#   插件掷出 ab12cd.dsh.chenz.vip 立刻可用（泛解析 A 记录本来就在，不用再动 DNS）。
+#   bash acme-wildcard.sh --suffix dsh.example.com      # 先签 *.dsh.example.com（DNS-01）
+#   bash install.sh --wildcard dsh.example.com --token '<frps token>' --caddy-tar ... --frp-tar ...
+#   桥接收 "*.dsh.example.com"，Caddy 站点写 "*.dsh.example.com, dsh.example.com"；
+#   插件掷出 ab12cd.dsh.example.com 立刻可用（泛解析 A 记录本来就在，不用再动 DNS）。
 #
 # 可重复执行：已安装的二进制、配置、systemd unit 都会覆盖为当前参数，
 # 证书与日志目录保留（不会重复签发）。
 set -euo pipefail
 
 TOKEN=''
-DOMAINS='dsh.chenz.vip'
+DOMAINS='dsh.example.com'
 WILDCARD=''
 CADDY_TAR='/tmp/caddy.tar.gz'
 FRP_TAR=''

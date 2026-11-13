@@ -19,7 +19,7 @@
 
 ```
 手机 ──TLS(443)──► frps(vhostHTTPSPort)
-                     │  SNI 命中 customDomains = dsh.chenz.vip
+                     │  SNI 命中 customDomains = dsh.example.com
                      ▼
                frpc-bridge（同机，回环 7000）
                      ▼
@@ -35,7 +35,7 @@
 
 **约束 A：不能占 80/443 重配 frps。**
 这台 frps 是生产共用的，`/api/proxy/http`、`/api/proxy/https` 里能看到
-`immich`(imm.chenz.vip)、`停车场`、`迪耐电脑商城`、`HA`(ha.chenz.vip)、`esxi8.0`(x.chenz.vip) 等站点。
+`immich`(imm.example.com)、`停车场`、`迪耐电脑商城`、`HA`(ha.example.com)、`esxi8.0`(x.example.com) 等站点。
 把 frps 改成「自己解 TLS」或加 `subDomainHost`/改端口，都会影响它们。
 
 **约束 B：frps 的 443 只做 SNI 透传，不解 TLS。**
@@ -50,14 +50,14 @@
 
 ## 2. DNS 需要什么
 
-在阿里云 DNS（`chenz.vip` 这个区域）加**泛解析** A 记录最省事：
+在阿里云 DNS（`example.com` 这个区域）加**泛解析** A 记录最省事：
 
 | 主机记录 | 类型 | 值 | 覆盖 |
 | --- | --- | --- | --- |
-| `*` | A | `VPS_IP` | `*.chenz.vip` 下所有名字（含 `dsh` / `home.dsh` / `studio.dsh` / 以后新加的） |
+| `*` | A | `VPS_IP` | `*.example.com` 下所有名字（含 `dsh` / `home.dsh` / `studio.dsh` / 以后新加的） |
 
-已实测（DoH 查询）：`dsh.chenz.vip`、`home.dsh.chenz.vip`、`studio.dsh.chenz.vip`、
-`x-test-123.dsh.chenz.vip` 全部解析到同一 IP —— 泛解析生效。
+已实测（DoH 查询）：`dsh.example.com`、`home.dsh.example.com`、`studio.dsh.example.com`、
+`x-test-123.dsh.example.com` 全部解析到同一 IP —— 泛解析生效。
 
 > **泛解析 ≠ 泛域名证书。** DNS 只是把名字指过来；**证书仍然是逐域名签发的**，
 > 所以 Caddy 里要有对应的站点段落，本机桥的 `customDomains` 也要包含这个名字。
@@ -67,8 +67,8 @@
 >
 > 加一台新机器的成本 = DNS 零成本（泛解析已覆盖）+ VPS 上重跑一次 `install.sh` 把新名字加进域名列表。
 
-命名约定：**`home.dsh.chenz.vip` / `studio.dsh.chenz.vip`**（在 `dsh.chenz.vip` 下再降一级）。
-`dsh.chenz.vip` 本身保留给「临时/单机排障」用。
+命名约定：**`home.dsh.example.com` / `studio.dsh.example.com`**（在 `dsh.example.com` 下再降一级）。
+`dsh.example.com` 本身保留给「临时/单机排障」用。
 
 ---
 
@@ -96,7 +96,7 @@ scp deploy/vps-tls/install.sh root@VPS_IP:/tmp/
 ssh root@VPS_IP
 bash /tmp/install.sh \
   --token 'FRP_TOKEN' \
-  --domains 'dsh.chenz.vip' \
+  --domains 'dsh.example.com' \
   --caddy-tar /tmp/caddy.tar.gz \
   --frp-tar /tmp/frp_0.72.0_linux_amd64.tar.gz
 ```
@@ -111,7 +111,7 @@ bash /tmp/install.sh \
 ```bash
 systemctl is-active caddy frpc-bridge          # 两个都要 active
 ss -tnlp | grep 9443                           # 127.0.0.1:9443 在听
-find /var/lib/caddy -name '*.crt'              # 证书签好后会有 dsh.chenz.vip.crt
+find /var/lib/caddy -name '*.crt'              # 证书签好后会有 dsh.example.com.crt
 ```
 
 首张证书一般 10–30 秒内签发完毕（TLS-ALPN-01 走 443 → frps → 桥 → Caddy）。
@@ -120,23 +120,23 @@ find /var/lib/caddy -name '*.crt'              # 证书签好后会有 dsh.chenz
 
 ## 4. 实测记录（2026-11-12，真机）
 
-环境：`VPS_IP`，Ubuntu 22.04.5，frps 0.72.0（生产共用），域名 `dsh.chenz.vip`。
+环境：`VPS_IP`，Ubuntu 22.04.5，frps 0.72.0（生产共用），域名 `dsh.example.com`。
 
 | 检查 | 命令 | 结果 |
 | --- | --- | --- |
 | Caddy 版本 | `caddy version` | `v2.11.9` |
 | 桥登录 frps | `tail /var/log/frp-bridge.log` | `login to server success` + `[dsh-pocket-tls] start proxy success` |
-| 证书签发 | `openssl s_client -connect 127.0.0.1:9443 -servername dsh.chenz.vip` | `subject=CN=dsh.chenz.vip`，`issuer=C=US, O=Let's Encrypt, CN=YE1`，有效至 2027-02-10 |
-| 公网 443 → 桥 → Caddy | `curl --resolve dsh.chenz.vip:443:127.0.0.1 https://dsh.chenz.vip/` | `tls_verify_result=0`（证书链有效） |
-| 全链路（到家里 DSH） | `curl --resolve dsh.chenz.vip:443:VPS_IP https://dsh.chenz.vip/frp-pocket/api/info` | `200` `{"ok":true,"hostId":"home-abcd1234","plugin":"dsh-frp-pocket","dsh":"0.2.2-rc.1"}` |
-| PIN 登录 | `curl -c jar "https://dsh.chenz.vip/?pin=<PIN>"` | `303` + `Set-Cookie: frp_auth=…; HttpOnly; SameSite=Lax; Max-Age=2592000` |
-| 进 DSH | `curl -b jar https://dsh.chenz.vip/`（同一会话） | `200` + 41,383 B 真实 DSH 页面（`<title>DeepSeek Harness</title>`） |
-| 既有站点未受影响 | `curl https://ha.chenz.vip/`、`https://x.chenz.vip/` | `200`（改造前后一致） |
-| 泛解析 DNS | DoH 查询 `home./studio./x-test-123.dsh.chenz.vip` | 全部 → `VPS_IP` |
-| 三张证书 | `find /var/lib/caddy -name '*.crt'` | `dsh.chenz.vip.crt` / `home.dsh.chenz.vip.crt` / `studio.dsh.chenz.vip.crt` |
-| `home.` 全链路 | `curl --resolve home.dsh.chenz.vip:443:VPS_IP https://home.dsh.chenz.vip/frp-pocket/api/info` | `200` `{"ok":true,"hostId":"home-abcd1234",…}` |
+| 证书签发 | `openssl s_client -connect 127.0.0.1:9443 -servername dsh.example.com` | `subject=CN=dsh.example.com`，`issuer=C=US, O=Let's Encrypt, CN=YE1`，有效至 2027-02-10 |
+| 公网 443 → 桥 → Caddy | `curl --resolve dsh.example.com:443:127.0.0.1 https://dsh.example.com/` | `tls_verify_result=0`（证书链有效） |
+| 全链路（到家里 DSH） | `curl --resolve dsh.example.com:443:VPS_IP https://dsh.example.com/frp-pocket/api/info` | `200` `{"ok":true,"hostId":"home-abcd1234","plugin":"dsh-frp-pocket","dsh":"0.2.2-rc.1"}` |
+| PIN 登录 | `curl -c jar "https://dsh.example.com/?pin=<PIN>"` | `303` + `Set-Cookie: frp_auth=…; HttpOnly; SameSite=Lax; Max-Age=2592000` |
+| 进 DSH | `curl -b jar https://dsh.example.com/`（同一会话） | `200` + 41,383 B 真实 DSH 页面（`<title>DeepSeek Harness</title>`） |
+| 既有站点未受影响 | `curl https://ha.example.com/`、`https://x.example.com/` | `200`（改造前后一致） |
+| 泛解析 DNS | DoH 查询 `home./studio./x-test-123.dsh.example.com` | 全部 → `VPS_IP` |
+| 三张证书 | `find /var/lib/caddy -name '*.crt'` | `dsh.example.com.crt` / `home.dsh.example.com.crt` / `studio.dsh.example.com.crt` |
+| `home.` 全链路 | `curl --resolve home.dsh.example.com:443:VPS_IP https://home.dsh.example.com/frp-pocket/api/info` | `200` `{"ok":true,"hostId":"home-abcd1234",…}` |
 | `home.` 登录+进站 | `?pin=` → 303，再取 `/` | 363 B 过渡页 → 41,383 B `<title>DeepSeek Harness</title>` |
-| `studio.` 未接入时 | `curl https://studio.dsh.chenz.vip/…` | `404`（Caddy 正常响应，只是 frps 上没有认领该域名的 PC 客户端） |
+| `studio.` 未接入时 | `curl https://studio.dsh.example.com/…` | `404`（Caddy 正常响应，只是 frps 上没有认领该域名的 PC 客户端） |
 
 > 第一屏会拿到一个 363 B 的「正在进入 DSH…」过渡页（网关用它把上游 `dsh-auth-*` cookie 落到浏览器），
 > 过渡页 `meta refresh` 后就是真实 DSH。手机浏览器/WebView 上表现为「闪现一下再进去」，属正常。
@@ -150,21 +150,21 @@ find /var/lib/caddy -name '*.crt'              # 证书签好后会有 dsh.chenz
 
 ## 5. 加第二台（工作室）
 
-1. DNS 不用动 —— 泛解析 `*.chenz.vip` 已经覆盖 `studio.dsh.chenz.vip`（实测已解析）。
+1. DNS 不用动 —— 泛解析 `*.example.com` 已经覆盖 `studio.dsh.example.com`（实测已解析）。
 2. 在 VPS 上把新名字加进域名列表并重跑脚本（幂等；证书按需签发，通常 10–30 秒）：
 
 ```bash
 bash /tmp/install.sh --token 'FRP_TOKEN' \
-  --domains 'dsh.chenz.vip,home.dsh.chenz.vip,studio.dsh.chenz.vip' \
+  --domains 'dsh.example.com,home.dsh.example.com,studio.dsh.example.com' \
   --caddy-tar /tmp/caddy.tar.gz
 # 加了新名字后立刻验：证书是否签出来 + 域名是否活着
 find /var/lib/caddy -name '*.crt' | xargs -n1 basename
 curl -sI --resolve <新域名>:443:VPS_IP https://<新域名>/ | head -1
 ```
 
-3. 家里那台把「暴露方式」改成 `customDomains`、域名填 `home.dsh.chenz.vip`；
-   工作室那台填 `studio.dsh.chenz.vip`（`docs/PC-SETUP.md` §3）。
-4. 手机 App 里两台主机各一条记录，地址分别是 `https://home.dsh.chenz.vip` / `https://studio.dsh.chenz.vip`。
+3. 家里那台把「暴露方式」改成 `customDomains`、域名填 `home.dsh.example.com`；
+   工作室那台填 `studio.dsh.example.com`（`docs/PC-SETUP.md` §3）。
+4. 手机 App 里两台主机各一条记录，地址分别是 `https://home.dsh.example.com` / `https://studio.dsh.example.com`。
 
 > 两台机器**不要**共用同一个域名：frps 会把同一 `customDomains` 的客户端当成一组轮询负载均衡，
 > 表现为「有时打开是家里、有时是工作室」。一个域名对应一台机器。
@@ -192,7 +192,7 @@ curl -sI --resolve <新域名>:443:VPS_IP https://<新域名>/ | head -1
 journalctl -u caddy -n 50 --no-pager
 systemctl restart frpc-bridge caddy
 sed 's/\x1b\[[0-9;]*m//g' /var/log/frp-bridge.log | tail -30
-curl -sI --resolve dsh.chenz.vip:443:127.0.0.1 https://dsh.chenz.vip/ | head -5
+curl -sI --resolve dsh.example.com:443:127.0.0.1 https://dsh.example.com/ | head -5
 ```
 
 ---
@@ -240,13 +240,13 @@ service   : active / enabled=enabled
 bridge    : active
 admin     : off
 listen    :   LISTEN 0 4096 127.0.0.1:9443
-站点      :   dsh.chenz.vip   home.dsh.chenz.vip   studio.dsh.chenz.vip
+站点      :   dsh.example.com   home.dsh.example.com   studio.dsh.example.com
 
 $ dsh-caddy certs
-dsh.chenz.vip              Feb 10 03:22:06 2027 GMT
-home.dsh.chenz.vip         Feb 10 03:40:57 2027 GMT
-studio.dsh.chenz.vip       Feb 10 03:40:55 2027 GMT
-SNI 自检: home.dsh.chenz.vip http=200
+dsh.example.com              Feb 10 03:22:06 2027 GMT
+home.dsh.example.com         Feb 10 03:40:57 2027 GMT
+studio.dsh.example.com       Feb 10 03:40:55 2027 GMT
+SNI 自检: home.dsh.example.com http=200
 ```
 
 ### 真想用「点界面」的方式
