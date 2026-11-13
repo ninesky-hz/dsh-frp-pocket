@@ -190,3 +190,39 @@ test('设置页：首帧 loading → 次帧有数据，hook 数量稳定（白�
   section.comp({ rpcCall });
   end();
 });
+
+test('主面板：显示插件版本号，二维码容器是固定正方形（不再溢出压字）', async () => {
+  const { registered, begin, end } = loadPlugin();
+  const main = registered.find((r) => r.meta.name === 'main');
+  assert.ok(main, '没有注册 main 面板');
+
+  // 真实 payload 里 qr.svg 是内联 SVG 字符串；这里给一份最小等价物
+  const statusWithQr = {
+    ...STATUS,
+    qr: { text: STATUS.qr.text, svg: '<svg width="100%" height="100%"></svg>' },
+  };
+  const rpcCall = async () => ({ ok: true, value: statusWithQr });
+  const store = [];
+
+  // 首帧无数据 → 走加载态，把 effect 跑起来拿 status
+  begin(store);
+  main.comp({ rpcCall });
+  for (const fn of end()) fn();
+  await flush();
+  await flush();
+
+  // 次帧有数据：标题 + 版本 chip + 二维码
+  begin(store);
+  const tree = main.comp({ rpcCall });
+  end();
+  const text = JSON.stringify(tree);
+  assert.ok(text.includes('FRP 远程'), '主面板应有标题');
+  assert.ok(text.includes('v0.1.0'), '主面板应显示 status.version（版本号来自宿主，不是写死）');
+  assert.ok(text.includes('dsh-frp-pocket 插件版本'), '版本 chip 应带说明');
+
+  // 二维码容器：宽高都是 168 且裁切，SVG 用 100% 填充
+  const qrNode = JSON.stringify(tree).match(/"width":168,"height":168[^}]*/);
+  assert.ok(qrNode, '二维码容器应固定为 168×168，避免 SVG 溢出压住右侧文字');
+  // SVG 经 dangerouslySetInnerHTML 渲染，JSON 里引号是转义过的，用正则宽松匹配
+  assert.match(text, /width=\\?"100%\\?"/, '二维码 SVG 应自适应容器宽度');
+});

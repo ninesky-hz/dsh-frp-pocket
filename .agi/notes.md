@@ -225,3 +225,17 @@ worker 第一版只判断「text 非空」就上屏，直接把 `[MNEMON] …`�
 ## 裸 TCP socket 上没有 pong 事件（2026-11-13）
 
 代理层的 `server.on("upgrade", (req, socket, head))` 拿到的 `socket` 是 `net.Socket`。想在这里做 WebSocket 心跳，不能依赖 `socket.on("pong")`——那是 `ws` 库解析完 pong 帧后自己 `emit` 的事件，而 pong 帧会被 `socket.pipe(proxySocket)` 原样转给上游 ws 库，我们这层永远收不到语义事件。唯一可靠的活性信号是 `socket` 上的 `data`（任何字节，包括客户端回的 pong 帧）。凡是「中间层代理 WS + 自己保活」的代码，写完必须问一句：这个事件的 emit 方到底是谁。
+
+## 插件版本号必须只有 package.json 一个来源（2026-11-13）
+
+0.2.0 发布后 `/api/info` 仍报 0.1.0：因为 `lib/index.js` 里还有一处 `const VERSION = '0.1.0'`，而网关/RPC 的 version 参数正是从它传下去的——`package.json` 改了也没用。教训：**发布前 grep 一遍版本字面量**（`grep -rn "0.1.0" lib/`），凡是能传给 `createGateway({version})`、`createRpcHandler({version})` 的地方都必须是 package.json 派生。现在 `index.js` 导出 `version`，测试直接断言它等于 package.json。
+
+## 二维码嵌进固定容器必须用 viewBox（2026-11-13）
+
+`qrSvg` 早先输出 `<svg width=240 height=240>`，容器只有 168px 又没有 `overflow: hidden`，多出的 72px 直接盖在右侧文字上（用户截图红框）。改法：SVG 输出 `width="100%" height="100%" viewBox="0 0 dim dim" preserveAspectRatio="xMidYMid meet"`，容器写死正方形 + `overflow: hidden`。测试里注意 SVG 走 `dangerouslySetInnerHTML`，JSON 序列化后引号是转义的，断言要用 `/width=\?"100%\?"/` 这种宽松匹配。
+
+### 重连不能复用可能已失效的会话凭据
+宿主重启等于把插件内存里的 `dsh-auth-*` 全部作废，但客户端 cookie jar 里两枚还在。任何「jar 里有 cookie 就直接用」的短路，在宿主重启后会变成永久失败循环。规矩：
+1. 连接层每次失败都置「下次强制重新握手」，不要指望 HTTP 层的 401 兜底（WS 握手失败没有 401 可看）。
+2. 用户点「重试」必须无条件作废凭据，不能因为 `_socket != null`（半死连接）就返回。
+3. 点击可能落在「一次连接在飞」的窗口里：用 `_retryNow` 记下意图，等这次失败立刻兑现；成功则由 ready 帧清掉，避免误踢好连接。

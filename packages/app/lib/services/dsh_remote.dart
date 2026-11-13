@@ -872,6 +872,17 @@ class _MuxConnection<T> {
   /// 已经在退避窗口里：同一个失败不能被 onError/onDone 各算一次。
   bool _reconnecting = false;
 
+  /// 下一次连接前先扔掉旧 cookie 重新握手。
+  ///
+  /// 必需要这个开关：`ensureAuth` 只要看到 `frp_auth` 与 `dsh-auth-*` 两枚
+  /// cookie 都在就直接返回，可 DSH（或插件）一重启，`dsh-auth-*` 那一枚就
+  /// 失效了。于是重连会一直带着过期凭据去握手 WS，被拒——再退避——再带同一
+  /// 枚过期凭据，永久卡死，只有新开一个页面（新的 DshApi，空 jar）才能恢复。
+  bool _forceAuth = false;
+
+  /// 用户点「重试」时正有一次连接在飞：等它结束立刻再连一次，别把这次点击吞掉。
+  bool _retryNow = false;
+
   void _start() {
     onLinkAttempt?.call();
     unawaited(_connect());
@@ -881,6 +892,12 @@ class _MuxConnection<T> {
     if (_closed || _connecting) return;
     _connecting = true;
     try {
+      // 上一次握手用的凭据可能已经失效（DSH 重启）：先清掉再握手，
+      // 否则 ensureAuth 会短路返回同一枚过期 cookie。
+      if (_forceAuth) {
+        api.clearAuth(host);
+        _forceAuth = false;
+      }
       // 先把 cookie 备齐：WS 握手带不上 http 包的 jar，只能自己塞头。
       await api.ensureAuth(host);
       if (_closed) return;
@@ -905,10 +922,26 @@ class _MuxConnection<T> {
       socket.add(jsonEncode(openFrame('s${++_streamSeq}')));
     } catch (error) {
       _report('stream_connect_failed', '$error');
+      // 连不上多半是凭据过期（DSH 重启后 dsh-auth-* 必然失效），
+      // 下一次尝试强制重新握手。
+      _forceAuth = true;
       _scheduleReconnect();
     } finally {
       _connecting = false;
+      // 注意：这里不能消费 `_retryNow`。用户点「重试」时那次尝试可能刚好连上
+      // 也刚好随后失败，点击的意图要留到下一次失败才兑现（见 `_scheduleReconnect`），
+      // 连成功则由 ready 帧把它清掉。
     }
+  }
+
+  /// 扔掉当前 socket（半死连接也要扔）。
+  void _dropSocket() {
+    final sub = _socketSub;
+    _socketSub = null;
+    unawaited(sub?.cancel());
+    final socket = _socket;
+    _socket = null;
+    unawaited(socket?.close());
   }
 
   void _onMessage(Object? data) {
@@ -926,7 +959,11 @@ class _MuxConnection<T> {
     final event = decode(decoded);
     if (event == null) return;
     onEvent?.call(event);
-    if (isReady?.call(event) ?? false) onLinkReady?.call();
+    if (isReady?.call(event) ?? false) {
+      // 连上了：之前点「重试」的意图已经兑现，别再留到下一次故障兑现。
+      _retryNow = false;
+      onLinkReady?.call();
+    }
     _emit(event);
   }
 
@@ -963,11 +1000,22 @@ class _MuxConnection<T> {
     _reconnecting = true;
     // 一次失败的连接尝试算一次失败；成功 ready 才会清零（在 DshRemote 里）。
     onLinkFailure?.call();
-    unawaited(_socketSub?.cancel());
-    _socketSub = null;
-    final socket = _socket;
-    _socket = null;
-    unawaited(socket?.close());
+    _dropSocket();
+    // 断开就作废旧凭据：DSH/插件重启后 dsh-auth-* 一定不认了，
+    // 继续拿它重试只会一直失败。下次尝试先重新握手。
+    _forceAuth = true;
+
+    // 用户在这次尝试还在飞的时候点过「重试」：现在它失败了，立刻兑现，
+    // 不进退避——否则点击就等于被吞掉（这正是「点重连没反应」的手感）。
+    if (_retryNow) {
+      _retryNow = false;
+      _retryTimer?.cancel();
+      _retryTimer = null;
+      _reconnecting = false;
+      _attempt = 0;
+      unawaited(_connect());
+      return;
+    }
 
     final shift = _attempt < 6 ? _attempt : 6;
     final backoff = 500 * (1 << shift);
@@ -981,17 +1029,25 @@ class _MuxConnection<T> {
     });
   }
 
-  /// 用户点「重试」：扔掉当前退避，立刻再连一次。
+  /// 用户点「重试」：扔掉退避和旧凭据，立刻再连一次。
   ///
-  /// 已经连着的时候什么也不做——重试按钮只在「已断开」时出现，正常路径上
-  /// 这里不会把一条好连接踢掉。
+  /// 不能因为「好像还连着」就返回：DSH 重启后这条 socket 往往是半死的——
+  /// 收不到 close 帧，`_socket` 仍然非空，而用户点的正是这种情况。
   void reconnectNow() {
-    if (_closed || _socket != null) return;
+    if (_closed) return;
     _retryTimer?.cancel();
     _retryTimer = null;
     _reconnecting = false;
     _attempt = 0;
+    // 用户主动重试＝怀疑旧凭据失效（DSH 重启最常见），强制重新握手。
+    _forceAuth = true;
     onLinkAttempt?.call();
+    if (_connecting) {
+      // 有一次连接正在飞：等它结束立刻再来一次，别把这次点击静默吞掉。
+      _retryNow = true;
+      return;
+    }
+    _dropSocket();
     unawaited(_connect());
   }
 

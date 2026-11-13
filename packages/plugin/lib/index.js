@@ -16,7 +16,23 @@ export const name = 'dsh-frp-pocket';
 /** webServer 供网关反代，connection 提供 launch token 与 RPC 栅栏。 */
 export const inject = ['connection', 'webServer'];
 
-const VERSION = '0.1.0';
+/**
+ * 插件版本：直接读自己的 package.json。
+ * 之前这里是硬编码常量，升版本只改了清单，面板与 /api/info 仍报旧号（0.2.0 发布时踩过）。
+ */
+function readOwnVersion() {
+  try {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    return typeof pkg.version === 'string' ? pkg.version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+const VERSION = readOwnVersion();
+
+/** 供测试与外部断言：插件版本一端取 package.json，只有这一个来源。 */
+export const version = VERSION;
 
 /** 从宿主入口向上找 @deepseek-ai/dsh 的 package.json，拿真实版本（契约 §4.1 要 dsh 字段）。 */
 function detectDshVersion() {

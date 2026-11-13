@@ -178,3 +178,9 @@
 - 新增根 CHANGELOG.md
 - 提交三段：31bf378 app 能力、affaa8f plugin 修复+版本、2e88844 文档与记录；已推送 origin/main=2e88844
 - 回归：app 223 全绿 / plugin 48 全绿；arm64 APK 36,733,030B md5 ffd9a52f332e02b8a6b7dc9a13a7be70，libapp.so 内确认 1.1.0
+
+## 2026-11-13 08:16 重连修复（app 1.1.1+3）
+- 根因：`DshApi.ensureAuth` 见到 `frp_auth` + `dsh-auth-*` 两枚 cookie 就短路返回；DSH 重启后插件内存里的那枚作废，重连一直带过期凭据握手 WS，被拒 → 退避 → 再拿同一枚，永久卡死。只有新开页面（新 DshApi、空 jar）才恢复，所以「退回列表再进」能好。
+- `_MuxConnection`：新增 `_forceAuth`（失败即清 jar，下一轮强制重新握手）、`_retryNow`（连接在飞时点击排队）、`_dropSocket()`（半死连接也扔）；`reconnectNow()` 不再因 `_socket != null` 早退。
+- 新增 `test/dsh_reconnect_auth_test.dart` 3 条；226 全绿。
+- 版本 1.1.1+3；APK 36,733,030B md5 c0157b3e1ffbba422f7bcd12d50be1c5。

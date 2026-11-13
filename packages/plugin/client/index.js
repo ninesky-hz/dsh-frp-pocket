@@ -88,7 +88,31 @@ window.__ModuleLoader__.load({
         overflow: 'auto',
         whiteSpace: 'pre-wrap',
       },
-      qr: { background: '#fff', padding: 8, borderRadius: 8, border: '1px solid #e5e7eb', width: 168 },
+      // 二维码容器：固定正方形 + 裁切，内层 SVG 自适应填满（宽/高 100%）。
+      // 早先只写 width:168 而 SVG 自带 240px 像素尺寸 → 溢出压到右侧配对串文字上。
+      qr: {
+        background: '#fff',
+        padding: 8,
+        borderRadius: 8,
+        border: '1px solid #e5e7eb',
+        width: 168,
+        height: 168,
+        boxSizing: 'border-box',
+        flex: '0 0 auto',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+      },
+      version: {
+        fontSize: 11,
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        color: '#6b7280',
+        border: '1px solid rgba(107,114,128,.35)',
+        borderRadius: 6,
+        padding: '1px 6px',
+        whiteSpace: 'nowrap',
+      },
     };
 
     function Field({ label, children }) {
@@ -828,6 +852,8 @@ window.__ModuleLoader__.load({
             : null,
           h('span', { style: pageStyles.dot(frpc.state) }),
           h('span', { style: styles.badge(frpc.state) }, frpc.state ?? 'stopped'),
+          // 插件版本（来自 RPC status.version，宿主实测值，不是页面写死）
+          h('span', { style: styles.version, title: 'dsh-frp-pocket 插件版本' }, `v${status?.version ?? '—'}`),
           h('div', { style: { flex: 1 } }),
           h('button', { style: styles.btn, disabled: Boolean(busy), onClick: () => load() }, '刷新'),
           h('button', { style: styles.btn, disabled: Boolean(busy), onClick: () => act('start') }, '启动'),

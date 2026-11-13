@@ -20,13 +20,18 @@ export function qrMatrix(text, errorCorrectionLevel = 'M') {
   };
 }
 
-/** 矩阵 → 内联 SVG 字符串（设置页直接 innerHTML，不依赖外部资源）。 */
-export function qrSvg(text, { size = 240, margin = 2, dark = '#111827', light = '#ffffff' } = {}) {
+/**
+ * 矩阵 → 内联 SVG 字符串（设置页直接 innerHTML，不依赖外部资源）。
+ *
+ * 输出**自适应尺寸**（width/height 100% + viewBox），由外层容器决定实际大小：
+ * 早先按像素写死 width/height，容器却只有 168px，SVG 溢出压到右侧的配对串文字上。
+ */
+export function qrSvg(text, { margin = 2, dark = '#111827', light = '#ffffff' } = {}) {
   const { count, isDark } = qrMatrix(text);
-  const total = count + margin * 2;
-  const scale = Math.max(1, Math.floor(size / total));
-  const px = total * scale;
-  const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${count + margin * 2} ${count + margin * 2}" role="img" aria-label="添加主机二维码">`];
+  const dim = count + margin * 2;
+  const parts = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 ${dim} ${dim}" preserveAspectRatio="xMidYMid meet" shape-rendering="crispEdges" role="img" aria-label="添加主机二维码">`,
+  ];
   parts.push(`<rect width="100%" height="100%" fill="${light}"/>`);
   let d = '';
   for (let r = 0; r < count; r++) {
