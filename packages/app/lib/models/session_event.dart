@@ -1,3 +1,5 @@
+import 'chat_note.dart';
+
 /// 一条 durable 会话事件（`session/page` 的 `records[].event`，以及 follow 增量）。
 ///
 /// DSH 的日志事件种类很多（`turn/start`、`step/end`、`session/title` …），
@@ -98,8 +100,76 @@ class SessionHistory {
 /// 气泡归属。
 enum ChatRole { user, assistant }
 
-/// 本地发送状态：正常 / 发送中 / 失败（可点重试）。
-enum ChatDelivery { none, sending, failed }
+/// 本地发送状态：正常 / 发送中 / 排队中 / 失败（可点重试）。
+///
+/// `sending` 是「HTTP 还没回来」——请求在路上；`queued` 是「服务端收了，
+/// 但这一轮还没轮到它」——会话正忙着上一轮，消息排在它后面。两者要分开：
+/// 前者是网络在等，后者是人/模型在等，用户看到「排队中」才知道不是卡住了。
+enum ChatDelivery {
+  none,
+  sending,
+  queued,
+  failed;
+
+  /// 还没有轮到这条消息被处理（发送中或排队中）。
+  bool get waiting => this == sending || this == queued;
+}
+
+/// 消息里一张图片的引用。
+///
+/// 历史消息（`session/page` / `session/follow`）只给引用、不给字节：真要显示
+/// 还得按 [attachmentId] 再打一次 `session/attachment`。模型层只负责把描述
+/// 解析出来，取字节的事交给界面（它才知道当前连的是哪个会话）。
+class ChatImageRef {
+  const ChatImageRef({
+    required this.attachmentId,
+    required this.mediaType,
+    this.name,
+    this.bytes,
+    this.width,
+    this.height,
+  });
+
+  /// 从 `{type:'image', attachment:{...}}` 或裸的 attachment 描述解析。
+  ///
+  /// 容错到「没有 attachmentId 就返回 null」：缺 id 的图片取不回来，留着只会
+  /// 在界面上渲染成一个永远转圈的灰块。
+  static ChatImageRef? fromJson(Object? value) {
+    final map = asObjectMap(value);
+    if (map.isEmpty) return null;
+    final nested = asObjectMap(map['attachment']);
+    final source = nested.isNotEmpty ? nested : map;
+    final attachmentId =
+        asText(source['attachmentId']) ?? asText(map['attachmentId']);
+    if (attachmentId == null) return null;
+    return ChatImageRef(
+      attachmentId: attachmentId,
+      // 缺 mediaType 时按 png 兜底：`Image.memory` 本来就按字节嗅探格式，
+      // 这个字段只用于展示与传给 attachment RPC。
+      mediaType: asText(source['mediaType']) ?? 'image/png',
+      name: asText(source['name']),
+      bytes: asInt(source['bytes']),
+      width: asInt(source['width']),
+      height: asInt(source['height']),
+    );
+  }
+
+  /// 本地占位图的 id 前缀：还没拿到服务端回执时，气泡里的图来自本机字节。
+  static const String localPrefix = 'local:';
+
+  final String attachmentId;
+  final String mediaType;
+  final String? name;
+  final int? bytes;
+  final int? width;
+  final int? height;
+
+  /// 本地占位图不能用 [attachmentId] 去取字节，得看界面缓存的本地副本。
+  bool get isLocal => attachmentId.startsWith(localPrefix);
+
+  @override
+  String toString() => 'ChatImageRef($attachmentId, $mediaType)';
+}
 
 /// 聊天页渲染用的一条消息。
 class ChatMessage {
@@ -109,9 +179,11 @@ class ChatMessage {
     required this.text,
     this.seq,
     this.time,
-    this.notes = const <String>[],
+    this.notes = const <ChatNote>[],
     this.delivery = ChatDelivery.none,
     this.localId,
+    this.images = const <ChatImageRef>[],
+    this.requestId,
   });
 
   /// 列表 key：durable 消息用 `seq:<n>`，本地待发消息用 `local:<n>`。
@@ -123,12 +195,20 @@ class ChatMessage {
   final int? seq;
   final DateTime? time;
 
-  /// 折叠的一行小字，例如「思考」「调用 ops_bash」。
-  final List<String> notes;
+  /// 折叠的小字：思考摘一句、每次工具调用带参数摘要。
+  final List<ChatNote> notes;
   final ChatDelivery delivery;
 
   /// 本地待发消息的临时 id（同时作为 prompt 的追踪键）。
   final String? localId;
+
+  /// 随消息一起出现的图片（纯图消息的 [text] 是空串）。
+  final List<ChatImageRef> images;
+
+  /// 发出去时用的 `session/prompt.requestId`。
+  ///
+  /// 宿主把队列项的 `rpcId` 记成它，撤回时靠它把本地气泡和队列项对上。
+  final String? requestId;
 
   /// 发送失败且还在列表里时，界面要给出可点重试的入口。
   bool get retryable => delivery == ChatDelivery.failed;
@@ -137,7 +217,9 @@ class ChatMessage {
     String? key,
     int? seq,
     ChatDelivery? delivery,
-    List<String>? notes,
+    List<ChatNote>? notes,
+    List<ChatImageRef>? images,
+    String? requestId,
   }) {
     return ChatMessage(
       key: key ?? this.key,
@@ -148,11 +230,14 @@ class ChatMessage {
       notes: notes ?? this.notes,
       delivery: delivery ?? this.delivery,
       localId: localId,
+      images: images ?? this.images,
+      requestId: requestId ?? this.requestId,
     );
   }
 
   @override
-  String toString() => 'ChatMessage($key, ${role.name}, ${text.length}字)';
+  String toString() =>
+      'ChatMessage($key, ${role.name}, ${text.length}字, ${images.length}图)';
 }
 
 /// 把一条 durable 事件翻译成气泡；不认识的事件返回 null。
@@ -165,25 +250,30 @@ ChatMessage? chatMessageOf(SessionLogEvent event) {
       final nested = asObjectMap(event.data['message']);
       final message = nested.isNotEmpty ? nested : event.data;
       if (!isRealUserMessage(message)) return null;
+      final images = contentImages(message['content']);
       final text =
           _contentText(message['content']) ??
           asText(message['text']) ??
           asText(event.data['text']);
-      if (text == null || text.trim().isEmpty) return null;
-      final body = text.trim();
+      // 纯图消息（只发了图、没打字）是合法的一条消息，不能因为文本为空丢掉。
+      if ((text == null || text.trim().isEmpty) && images.isEmpty) return null;
+      final body = text?.trim() ?? '';
       return ChatMessage(
         key: _keyOf(event, body),
         role: ChatRole.user,
         text: body,
         seq: event.seq,
         time: event.time,
+        images: images,
       );
 
     case 'assistant/message':
       final message = asObjectMap(event.data['message']);
       final content = message['content'];
       final texts = <String>[];
-      final notes = <String>[];
+      final notes = <ChatNote>[];
+      // 助手一般不回图，但真回了也不能丢：历史里看不到就是看不到。
+      final images = contentImages(content);
       if (content is List) {
         for (final part in content) {
           final map = asObjectMap(part);
@@ -192,10 +282,13 @@ ChatMessage? chatMessageOf(SessionLogEvent event) {
               final text = asText(map['text']);
               if (text != null && text.trim().isNotEmpty) texts.add(text.trim());
             case 'reasoning':
-              _addNote(notes, '思考');
+              final thought = asText(map['text']);
+              _addNote(notes, ChatNote.reasoning(thought ?? ''));
             case 'tool-call':
-              final name = asText(map['name']);
-              _addNote(notes, name == null ? '调用工具' : '调用 $name');
+              _addNote(
+                notes,
+                ChatNote.tool(asText(map['name']), asText(map['arguments'])),
+              );
             default:
               break;
           }
@@ -204,7 +297,7 @@ ChatMessage? chatMessageOf(SessionLogEvent event) {
         final text = _contentText(content) ?? asText(message['text']);
         if (text != null && text.trim().isNotEmpty) texts.add(text.trim());
       }
-      if (texts.isEmpty && notes.isEmpty) return null;
+      if (texts.isEmpty && notes.isEmpty && images.isEmpty) return null;
       final body = texts.join('\n\n');
       return ChatMessage(
         key: _assistantRowKey(event, body),
@@ -212,7 +305,8 @@ ChatMessage? chatMessageOf(SessionLogEvent event) {
         text: body,
         seq: event.seq,
         time: event.time,
-        notes: List<String>.unmodifiable(notes),
+        notes: List<ChatNote>.unmodifiable(notes),
+        images: images,
       );
   }
   return null;
@@ -235,7 +329,8 @@ bool isRealUserMessage(Map<String, Object?> message) {
   final text =
       (_contentText(message['content']) ?? asText(message['text']) ?? '')
           .trimLeft();
-  if (text.isEmpty) return false;
+  // 老数据里纯图消息没有文字：不能因为「没文字」就判成系统注入。
+  if (text.isEmpty) return contentImages(message['content']).isNotEmpty;
   return !_injectedPrefixes.any(text.startsWith);
 }
 
@@ -267,8 +362,9 @@ String _assistantRowKey(SessionLogEvent event, String body) {
   return _keyOf(event, body);
 }
 
-void _addNote(List<String> notes, String note) {
-  if (notes.isEmpty || notes.last != note) notes.add(note);
+void _addNote(List<ChatNote> notes, ChatNote note) {
+  // 同一种工具连着调很多次只留第一行：详细模式下逐行展示，几十行会把气泡压垮。
+  if (notes.isEmpty || notes.last.mergeKey != note.mergeKey) notes.add(note);
 }
 
 /// 消息 content 可能是字符串，也可能是 `[{type, text}]` 分片列表。
@@ -287,6 +383,19 @@ String? _contentText(Object? content) {
     if (text != null && text.trim().isNotEmpty) texts.add(text.trim());
   }
   return texts.isEmpty ? null : texts.join('\n');
+}
+
+/// 收集 content 里 `type == 'image'` 的 part。
+List<ChatImageRef> contentImages(Object? content) {
+  if (content is! List) return const <ChatImageRef>[];
+  final images = <ChatImageRef>[];
+  for (final part in content) {
+    final map = asObjectMap(part);
+    if (asText(map['type']) != 'image') continue;
+    final ref = ChatImageRef.fromJson(map);
+    if (ref != null) images.add(ref);
+  }
+  return images.isEmpty ? const <ChatImageRef>[] : List.unmodifiable(images);
 }
 
 /// 把任意 JSON 解码结果收敛成 `Map<String, Object?>`（键不是字符串就丢掉）。

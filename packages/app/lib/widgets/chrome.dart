@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../services/probe.dart';
 import 'status_dot.dart';
+import '../theme/app_icons.dart';
 
 /// 悬浮玻璃控件：一层模糊底 + 半透明填充 + 一像素描边。
 ///
@@ -158,7 +159,7 @@ class WebToolbar extends StatelessWidget {
     return Row(
       children: <Widget>[
         GlassIconButton(
-          icon: Icons.chevron_left_rounded,
+          icon: AppIcons.back,
           iconSize: 24,
           tooltip: '返回',
           onPressed: onBack,
@@ -199,13 +200,13 @@ class WebToolbar extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         GlassIconButton(
-          icon: Icons.refresh_rounded,
+          icon: AppIcons.refresh,
           tooltip: '刷新',
           onPressed: onRefresh,
         ),
         const SizedBox(width: 8),
         GlassIconButton(
-          icon: Icons.more_horiz_rounded,
+          icon: AppIcons.more,
           tooltip: '更多',
           onPressed: onMore,
         ),

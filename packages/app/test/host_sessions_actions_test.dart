@@ -435,7 +435,8 @@ void main() {
 
       // 行立刻消失，并且给出可撤销提示。
       expect(find.text('会话 A'), findsNothing);
-      expect(find.textContaining('已归档'), findsOneWidget);
+      // 只认 SnackBar 那条：底部还有一行「已归档 · N」，用 textContaining 会撞上。
+      expect(find.text('已归档「会话 A」'), findsOneWidget);
       expect(find.text('撤销'), findsOneWidget);
 
       await tester.tap(find.text('撤销'));

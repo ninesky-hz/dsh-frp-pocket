@@ -19,3 +19,24 @@ enum AppThemeMode {
     return AppThemeMode.system;
   }
 }
+
+/// 「思考 / 调用工具」那一行小字的显示密度。
+///
+/// - [detailed]：原样并列，`思考 · 调用 read · 调用 bash`；
+/// - [compact]：工具名收起来，只留次数，`思考 · 3 次工具调用`。
+enum ChatNotesMode {
+  detailed('detailed', '详细'),
+  compact('compact', '简洁');
+
+  const ChatNotesMode(this.storageKey, this.label);
+
+  final String storageKey;
+  final String label;
+
+  static ChatNotesMode fromStorage(String? raw) {
+    for (final mode in ChatNotesMode.values) {
+      if (mode.storageKey == raw) return mode;
+    }
+    return ChatNotesMode.detailed;
+  }
+}

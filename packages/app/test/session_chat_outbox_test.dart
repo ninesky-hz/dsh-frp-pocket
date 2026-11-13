@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dsh_frp_app/models/host.dart';
 import 'package:dsh_frp_app/models/host_event.dart';
 import 'package:dsh_frp_app/models/outbox.dart';
+import 'package:dsh_frp_app/models/prompt_image.dart';
 import 'package:dsh_frp_app/models/session_event.dart';
 import 'package:dsh_frp_app/models/session_summary.dart';
 import 'package:dsh_frp_app/screens/session_chat_screen.dart';
@@ -12,6 +13,7 @@ import 'package:dsh_frp_app/services/outbox_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:dsh_frp_app/theme/app_icons.dart';
 
 const Host _host = Host(
   id: 'host-outbox',
@@ -44,8 +46,8 @@ class _OutboxRemote extends DshRemote {
   DshLinkState _current;
 
   /// 每次 `prompt` 的实参（按调用顺序）。
-  final List<({String text, String? requestId})> prompts =
-      <({String text, String? requestId})>[];
+  final List<({String text, String? requestId, int images})> prompts =
+      <({String text, String? requestId, int images})>[];
 
   /// 命中这些文本的下一次 `prompt` 抛错；用掉即移除。
   final Set<String> failOnce = <String>{};
@@ -86,8 +88,9 @@ class _OutboxRemote extends DshRemote {
     String sessionId,
     String text, {
     String? requestId,
+    List<PromptImage> images = const <PromptImage>[],
   }) async {
-    prompts.add((text: text, requestId: requestId));
+    prompts.add((text: text, requestId: requestId, images: images.length));
     if (failOnce.remove(text)) {
       throw const DshApiException('gateway/timeout', '响应超时');
     }
@@ -175,7 +178,7 @@ void main() {
     );
     expect(find.text('断线时写的'), findsOneWidget);
     // 排队中图标。
-    expect(find.byIcon(Icons.schedule), findsOneWidget);
+    expect(find.byIcon(AppIcons.schedule), findsOneWidget);
 
     await _disposeChat(tester, remote);
   });
@@ -320,7 +323,7 @@ void main() {
     await _disposeChat(tester, remote);
   });
 
-  testWidgets('在线直发：不进队列，prompt 不带固定 requestId', (tester) async {
+  testWidgets('在线直发：不进队列，prompt 带自己生成的 requestId', (tester) async {
     final remote = await _pumpChat(
       tester,
       store: store,
@@ -330,10 +333,13 @@ void main() {
 
     expect(remote.prompts, hasLength(1));
     expect(remote.prompts.single.text, '在线直发');
-    expect(remote.prompts.single.requestId, isNull);
+    // 客户端自己生成 requestId：宿主把它记成队列项的 rpcId，撤回排队消息时
+    // 就靠它把本地气泡和服务端队列项对上。
+    expect(remote.prompts.single.requestId, isNotNull);
+    expect(remote.prompts.single.requestId, isNotEmpty);
     expect(await store.load('host-outbox', 'session-outbox'), isEmpty);
     // 没有队列行：排队图标不该出现在消息区。
-    expect(find.byIcon(Icons.schedule), findsNothing);
+    expect(find.byIcon(AppIcons.schedule), findsNothing);
 
     await _disposeChat(tester, remote);
   });

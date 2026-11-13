@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dsh_frp_app/widgets/chrome.dart';
+import 'package:dsh_frp_app/theme/app_icons.dart';
 
 Widget _host(Widget child) {
   return MaterialApp(
@@ -56,7 +57,7 @@ void main() {
     await tester.pumpWidget(
       _host(
         GlassIconButton(
-          icon: Icons.more_horiz_rounded,
+          icon: AppIcons.more,
           tooltip: '更多',
           onPressed: () => taps++,
         ),
@@ -64,22 +65,22 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byIcon(Icons.more_horiz_rounded), findsOneWidget);
+    expect(find.byIcon(AppIcons.more), findsOneWidget);
     expect(find.byTooltip('更多'), findsOneWidget);
-    await tester.tap(find.byIcon(Icons.more_horiz_rounded));
+    await tester.tap(find.byIcon(AppIcons.more));
     await tester.pumpAndSettle();
     expect(taps, 1);
 
     await tester.pumpWidget(
       _host(
         const GlassIconButton(
-          icon: Icons.more_horiz_rounded,
+          icon: AppIcons.more,
           tooltip: '更多',
         ),
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(Icons.more_horiz_rounded));
+    await tester.tap(find.byIcon(AppIcons.more));
     await tester.pumpAndSettle();
     expect(taps, 1, reason: 'onPressed 为空时不该有回调');
   });
@@ -88,7 +89,7 @@ void main() {
     await tester.pumpWidget(
       _host(
         GlassIconButton(
-          icon: Icons.more_horiz_rounded,
+          icon: AppIcons.more,
           tooltip: '更多',
           badge: true,
           onPressed: () {},

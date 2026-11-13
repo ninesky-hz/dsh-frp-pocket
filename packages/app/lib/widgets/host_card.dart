@@ -4,6 +4,7 @@ import '../models/host.dart';
 import '../services/probe.dart';
 import '../utils/time_format.dart';
 import 'status_dot.dart';
+import '../theme/app_icons.dart';
 
 /// 主机列表卡片。
 class HostCard extends StatelessWidget {
@@ -134,7 +135,7 @@ class HostCard extends StatelessWidget {
               ),
               IconButton(
                 tooltip: '更多',
-                icon: const Icon(Icons.more_vert),
+                icon: const Icon(AppIcons.more),
                 onPressed: onMenu,
               ),
             ],

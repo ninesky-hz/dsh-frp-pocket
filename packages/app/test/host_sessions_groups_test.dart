@@ -13,6 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:dsh_frp_app/theme/app_icons.dart';
 
 const Host _host = Host(
   id: 'host-1',
@@ -194,12 +195,12 @@ void main() {
     await _pump(tester, api: api, remote: remote, grouped: true);
     await _baseline(tester, remote);
 
-    expect(find.byIcon(Icons.view_list_outlined), findsOneWidget);
+    expect(find.byIcon(AppIcons.list), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey<String>('toggle-grouped')));
     await tester.pumpAndSettle();
 
-    expect(find.byIcon(Icons.view_list_outlined), findsNothing);
-    expect(find.byIcon(Icons.view_module_outlined), findsOneWidget);
+    expect(find.byIcon(AppIcons.list), findsNothing);
+    expect(find.byIcon(AppIcons.grid), findsOneWidget);
     expect(_header('w1'), findsNothing);
     expect(_header('w2'), findsNothing);
     expect(_card('s1'), findsOneWidget);
@@ -225,7 +226,7 @@ void main() {
     expect(_header('w2'), findsNothing);
     expect(_card('s1'), findsOneWidget);
     expect(_card('s3'), findsOneWidget);
-    expect(find.byIcon(Icons.view_module_outlined), findsOneWidget);
+    expect(find.byIcon(AppIcons.grid), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey<String>('toggle-grouped')));
     await tester.pumpAndSettle();
@@ -266,7 +267,7 @@ void main() {
     await _pump(tester, api: api, remote: remote, grouped: true);
     await _baseline(tester, remote);
 
-    await tester.tap(find.byIcon(Icons.more_horiz).first);
+    await tester.tap(find.byIcon(AppIcons.more).first);
     await tester.pumpAndSettle();
 
     expect(find.text('置顶'), findsOneWidget);

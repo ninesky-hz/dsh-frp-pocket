@@ -193,6 +193,53 @@ void main() {
       expect(summary.running, isTrue);
       expect(summary.tokens, 0);
     });
+
+    test('顶层会话：origin 缺失、没有父会话，不算子会话', () {
+      final summary = SessionSummary.fromJson(_fullItem());
+
+      expect(summary.origin, isNull);
+      expect(summary.parentSessionId, isNull);
+      expect(summary.blank, isFalse);
+      expect(summary.isSubagent, isFalse);
+      expect(summary.isHidden, isFalse);
+    });
+
+    test('worker 会话靠 origin=subagent 认出来，列表要隐藏', () {
+      final summary = SessionSummary.fromJson(<String, Object?>{
+        'sessionId': 'c5c6ace2-fa84-46e6',
+        'cwd': r'D:\Ai-Project\dsh-frp-pocket',
+        'origin': 'subagent',
+        'parentSessionId': 'session-0f18e12e-aaaa',
+        'projections': <String, Object?>{
+          'values': <String, Object?>{'title': '你是 DSH 口袋隧道 App（Flutter）'},
+        },
+      });
+
+      expect(summary.isSubagent, isTrue);
+      expect(summary.isHidden, isTrue);
+      expect(summary.parentSessionId, 'session-0f18e12e-aaaa');
+    });
+
+    test('只有 parentSessionId 没有 origin 也算子会话', () {
+      final summary = SessionSummary.fromJson(<String, Object?>{
+        'sessionId': 'child-1',
+        'parentSessionId': 'session-parent',
+      });
+
+      expect(summary.isSubagent, isTrue);
+      expect(summary.isHidden, isTrue);
+    });
+
+    test('建了没说话的 blank 会话不占列表位置', () {
+      final summary = SessionSummary.fromJson(<String, Object?>{
+        'sessionId': 'session-87689979-7',
+        'blank': true,
+      });
+
+      expect(summary.blank, isTrue);
+      expect(summary.isSubagent, isFalse);
+      expect(summary.isHidden, isTrue);
+    });
   });
 
   group('DshApi', () {

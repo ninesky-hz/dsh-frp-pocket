@@ -1,7 +1,6 @@
 import 'package:dsh_frp_app/models/host.dart';
 import 'package:dsh_frp_app/models/session_summary.dart';
 import 'package:dsh_frp_app/screens/host_sessions_screen.dart';
-import 'package:dsh_frp_app/screens/host_webview_screen.dart';
 import 'package:dsh_frp_app/services/dsh_api.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -138,7 +137,7 @@ void main() {
     expect(find.textContaining('无法连接 DSH'), findsNothing);
   });
 
-  testWidgets('点「完整面板」push 的是 HostWebviewScreen，且带上当前主机', (tester) async {
+  testWidgets('右上角是「新建会话」，不再有打不开的「完整面板」', (tester) async {
     final api = _FakeApi((_) async => <SessionSummary>[_runningSession()]);
     addTearDown(api.dispose);
     final observer = _RecordingObserver();
@@ -146,15 +145,62 @@ void main() {
     await _pump(tester, api, observer: observer);
     expect(observer.pushed, hasLength(1), reason: '只有首页一条路由');
 
-    await tester.tap(find.text('完整面板'));
-
-    // 不 pump：这里只验证被 push 的路由本身，避免在测试环境真的去建 WebView。
-    expect(observer.pushed, hasLength(2));
-    final route = observer.pushed.last as MaterialPageRoute<void>;
-    final built = route.builder(
-      tester.element(find.byType(HostSessionsScreen)),
+    expect(find.byKey(const ValueKey<String>('new-session')), findsOneWidget);
+    expect(find.text('完整面板'), findsNothing);
+    expect(
+      observer.pushed,
+      hasLength(1),
+      reason: '入口换了，但没点之前不该 push 任何路由',
     );
-    expect(built, isA<HostWebviewScreen>());
-    expect((built as HostWebviewScreen).host.id, _host.id);
+  });
+
+  testWidgets('worker 子会话与空会话不进列表', (tester) async {
+    final api = _FakeApi(
+      (_) async => <SessionSummary>[
+        _runningSession(),
+        SessionSummary(
+          sessionId: 'c5c6ace2-fa84-46e6',
+          title: '你是 DSH 口袋隧道 App（Flutter）',
+          cwd: r'D:\Ai-Project\dsh-frp-pocket',
+          origin: 'subagent',
+          parentSessionId: 'session-1',
+        ),
+        SessionSummary(
+          sessionId: 'session-87689979-7',
+          title: kUntitledSession,
+          cwd: '',
+          blank: true,
+        ),
+        _idleSession(),
+      ],
+    );
+    addTearDown(api.dispose);
+
+    await _pump(tester, api);
+
+    expect(find.byType(Card), findsNWidgets(2), reason: '只剩两条真会话');
+    expect(find.text('你是 DSH 口袋隧道 App（Flutter）'), findsNothing);
+    expect(find.text(kUntitledSession), findsNothing);
+    expect(find.text('FRP随机域名与设置页修复'), findsOneWidget);
+    expect(find.text('另一个会话'), findsOneWidget);
+  });
+
+  testWidgets('整表只剩子会话时显示空态，而不是一屏 worker', (tester) async {
+    final api = _FakeApi(
+      (_) async => <SessionSummary>[
+        SessionSummary(
+          sessionId: 'child-a',
+          title: 'Role: Flutter 工程师',
+          cwd: r'D:\Ai-Project\dsh-frp-pocket',
+          parentSessionId: 'session-gone',
+        ),
+      ],
+    );
+    addTearDown(api.dispose);
+
+    await _pump(tester, api);
+
+    expect(find.byType(Card), findsNothing);
+    expect(find.text('这台主机还没有会话'), findsOneWidget);
   });
 }

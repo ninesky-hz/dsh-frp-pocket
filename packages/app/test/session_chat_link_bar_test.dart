@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dsh_frp_app/models/host.dart';
 import 'package:dsh_frp_app/models/host_event.dart';
+import 'package:dsh_frp_app/models/prompt_image.dart';
 import 'package:dsh_frp_app/models/session_event.dart';
 import 'package:dsh_frp_app/models/session_summary.dart';
 import 'package:dsh_frp_app/screens/session_chat_screen.dart';
@@ -82,6 +83,7 @@ class _LinkRemote extends DshRemote {
     String sessionId,
     String text, {
     String? requestId,
+    List<PromptImage> images = const <PromptImage>[],
   }) async {
     prompts.add(text);
     return requestId ?? 'req-${prompts.length}';

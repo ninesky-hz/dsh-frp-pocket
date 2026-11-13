@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../services/scan_parser.dart';
+import '../theme/app_icons.dart';
 
 /// 扫码页：识别 `dshfrp://add?...` 或纯 URL 二维码，解析成功后把
 /// [ScanPayload] 通过 `Navigator.pop` 返回给调用方。
@@ -53,7 +54,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
         actions: <Widget>[
           IconButton(
             tooltip: _torchOn ? '关闭手电筒' : '打开手电筒',
-            icon: Icon(_torchOn ? Icons.flash_on : Icons.flash_off),
+            icon: Icon(_torchOn ? AppIcons.flashOn : AppIcons.flashOff),
             onPressed: () async {
               await _controller.toggleTorch();
               if (!mounted) return;
@@ -130,8 +131,8 @@ class _CameraError extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              const Icon(Icons.no_photography_outlined,
-                  color: Colors.white70, size: 48),
+              const Icon(AppIcons.noPhoto,
+                  color: Colors.white70, size: AppIcons.hero),
               const SizedBox(height: 16),
               Text(
                 denied ? '没有相机权限，请在系统设置里授权后重试' : '相机启动失败：${error.errorCode.name}',

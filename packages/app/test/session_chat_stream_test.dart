@@ -168,7 +168,7 @@ void main() {
       ),
     );
     await _push(tester, remote, _frame(_chunk(1, _delta('reasoning-delta', 0, '先想'))));
-    expect(find.text('思考'), findsOneWidget);
+    expect(find.text('思考 · 先想'), findsOneWidget);
     // 正文还没开始：气泡里只有光标，正文为空。
     expect(find.text('▌'), findsOneWidget);
     expect(find.text('先想'), findsNothing, reason: '思考过程不直接铺在正文里');

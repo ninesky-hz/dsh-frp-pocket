@@ -13,13 +13,14 @@ import '../services/dsh_api.dart';
 import '../services/dsh_remote.dart';
 import '../services/seen_store.dart';
 import '../utils/time_format.dart';
-import 'host_webview_screen.dart';
 import 'session_chat_screen.dart';
+import '../theme/app_icons.dart';
 
 /// 会话列表页：直接调 DSH 的 `session/list`，不加载网页。
 ///
 /// 加这一页是因为整条前端资源链太脆——DSH 升级或反代路径被改写就整页白屏。
-/// 这里只要 HTTP 通就能出列表；要看完整面板再从右上角进 WebView。
+/// 这里只要 HTTP 通就能出列表，也能直接开新会话（右上角「＋」）。
+/// 本页只走原生链路，不再挂 WebView 兜底页。
 ///
 /// 实时性分两层：
 /// - `workspace/follow` 走**增量状态机**（baseline/upsert/remove/order/archived/
@@ -97,6 +98,9 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
   bool _requesting = false;
   bool _refreshing = false;
 
+  /// 正在等 session/create 返回（按钮换成转圈，防连点）。
+  bool _creating = false;
+
   /// 本机已读水位（sessionId → epoch 毫秒）。行标记由它 + 会话快照算出来，
   /// 不是存下来的状态，所以下拉刷新 / live 帧重建时会自动重算。
   Map<String, int> _seen = const <String, int>{};
@@ -110,6 +114,11 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
   ///
   /// 用组 id 而不是下标：工作区增删/重排后，折叠状态仍然跟着同一个组走。
   final Set<String> _collapsed = <String>{};
+
+  /// 「已归档」那行是否展开。折叠时列表底部只留一行计数，点开才把归档卡片铺出来。
+  ///
+  /// 与 [_collapsed] 一样是纯浏览手势，不落盘：下次进来默认收起，列表保持干净。
+  bool _archivedOpen = false;
 
   /// 是否处于搜索态（AppBar 换成输入框）。纯 UI 状态，不落盘、不进 `_sessions`。
   bool _searching = false;
@@ -327,6 +336,7 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
       // 工作区状态还没到：退回快照原顺序，但仍要尊重「用户刚归档」这条本地
       // 乐观标记，否则点了归档的行会在下一次重建时闪回来。
       return _cache.values
+          .where((session) => !session.isHidden)
           .where((session) => !_workspace.isArchived(session.sessionId))
           .toList(growable: false);
     }
@@ -336,11 +346,16 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
     ];
     // 快照里有、但工作区流还没提到的会话（刚建的工作区还没推过来）：排在末尾。
     for (final session in _cache.values) {
+      if (session.isHidden) continue;
       if (listed.contains(session.sessionId)) continue;
       if (_workspace.mentions(session.sessionId)) continue;
+      if (_workspace.isArchived(session.sessionId)) continue;
       result.add(session);
     }
-    return result;
+    // 工作区帧里也可能列着子会话（子会话归属父会话的工作区），最后一刀统一滤掉。
+    return result
+        .where((session) => !session.isHidden)
+        .toList(growable: false);
   }
 
   /// 只从工作区流知道的会话：没有标题/运行状态，先用工作区信息占位。
@@ -455,12 +470,136 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
     return '无法连接 DSH: network_error\n$error';
   }
 
-  void _openFullPanel() {
-    Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => HostWebviewScreen(host: widget.host),
-      ),
+  /// 新建会话：选工作区（或手输目录）→ `session/create` → 直接进会话页。
+  ///
+  /// 列表是独立的帧流，刚建的会话不会立刻出现在手上，所以不靠刷新来「等它」：
+  /// 拿服务端返回的 sessionId 就地造一行推上去，返回列表时再静默对账。
+  Future<void> _newSession() async {
+    if (_creating) return;
+    final remote = _remote;
+    if (remote == null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('没有可用的连接通道')));
+      return;
+    }
+    final target = await _pickSessionTarget();
+    if (!mounted || target == null) return;
+    setState(() => _creating = true);
+    try {
+      // 挂了工作区就只发 workspaceId：再带 cwd 会让「用哪个目录」有两个来源。
+      // 工作区那条 `cwd` 只用来给这个新会话先造一个像样的标题。
+      final sessionId = await remote.createSession(
+        workspaceId: target.workspaceId,
+        cwd: target.workspaceId == null ? target.cwd : null,
+      );
+      if (!mounted) return;
+      final created = SessionSummary.fromJson(<String, Object?>{
+        'sessionId': sessionId,
+        'cwd': target.cwd ?? '',
+      });
+      setState(() {
+        _creating = false;
+        if (!_sessions.any((item) => item.sessionId == sessionId)) {
+          _sessions = <SessionSummary>[created, ..._sessions];
+        }
+      });
+      await _openSession(created);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _creating = false);
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(_describeActionError(error))));
+    }
+  }
+
+  /// 新建会话的目标选择：工作区列表 + 「其他目录…」。
+  ///
+  /// 返回 null 表示用户取消。
+  Future<({String? workspaceId, String? cwd})?> _pickSessionTarget() async {
+    final workspaces = _workspace.workspaces;
+    final choice = await showModalBottomSheet<({String? workspaceId, String? cwd})>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(sheetContext).size.height * 0.6,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                  child: Text(
+                    '在哪开新会话？',
+                    style: Theme.of(sheetContext).textTheme.titleMedium,
+                  ),
+                ),
+                if (workspaces.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+                    child: Text('还没有工作区，直接在下面输目录'),
+                  ),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: <Widget>[
+                      for (final workspace in workspaces)
+                        ListTile(
+                          key: ValueKey<String>(
+                            'new-session.${workspace.workspaceId}',
+                          ),
+                          leading: const Icon(AppIcons.folder),
+                          title: Text(
+                            workspace.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            workspace.path,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          onTap: () => Navigator.of(sheetContext).pop((
+                            workspaceId: workspace.workspaceId,
+                            cwd: workspace.path,
+                          )),
+                        ),
+                      ListTile(
+                        key: const ValueKey<String>('new-session.other'),
+                        leading: const Icon(AppIcons.edit),
+                        title: const Text('其他目录…'),
+                        onTap: () => Navigator.of(sheetContext).pop((
+                          workspaceId: null,
+                          cwd: '',
+                        )),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
+    if (!mounted || choice == null) return null;
+    // `cwd: ''` 是「其他目录」的暗号：收起弹窗后再问路径，
+    // 不然键盘一弹，sheet 和输入框会互相抢焦点。
+    if (choice.cwd == '' && choice.workspaceId == null) {
+      final path = await showDialog<String>(
+        context: context,
+        builder: (_) => const _PathDialog(),
+      );
+      if (!mounted || path == null || path.trim().isEmpty) return null;
+      return (workspaceId: null, cwd: path.trim());
+    }
+    return choice;
   }
 
   Future<void> _openSession(SessionSummary session) async {
@@ -498,20 +637,20 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
             children: <Widget>[
               ListTile(
                 leading: Icon(
-                  pinned ? Icons.push_pin : Icons.push_pin_outlined,
+                  pinned ? AppIcons.pinned : AppIcons.pin,
                 ),
                 title: Text(pinned ? '取消置顶' : '置顶'),
                 onTap: () =>
                     Navigator.of(sheetContext).pop(_SessionAction.togglePin),
               ),
               ListTile(
-                leading: const Icon(Icons.edit_outlined),
+                leading: const Icon(AppIcons.edit),
                 title: const Text('重命名'),
                 onTap: () =>
                     Navigator.of(sheetContext).pop(_SessionAction.rename),
               ),
               ListTile(
-                leading: const Icon(Icons.archive_outlined),
+                leading: const Icon(AppIcons.archive),
                 title: const Text('归档'),
                 subtitle: const Text('4 秒内可以撤销'),
                 onTap: () =>
@@ -810,7 +949,7 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
                   key: const ValueKey<String>('toggle-search'),
                   onPressed: _startSearch,
                   tooltip: '搜索会话',
-                  icon: const Icon(Icons.search),
+                  icon: const Icon(AppIcons.search),
                 ),
                 // 图标/提示词都描述「点下去会发生什么」：分组态提供平铺入口，反之亦然。
                 IconButton(
@@ -819,15 +958,26 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
                   tooltip: _grouped ? '平铺显示' : '按工作区分组',
                   icon: Icon(
                     _grouped
-                        ? Icons.view_list_outlined
-                        : Icons.view_module_outlined,
+                        ? AppIcons.list
+                        : AppIcons.grid,
                   ),
                 ),
-                TextButton.icon(
-                  onPressed: _openFullPanel,
-                  icon: const Icon(Icons.web_asset_outlined, size: 18),
-                  label: const Text('完整面板'),
-                ),
+                if (_creating)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 12),
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else
+                  IconButton(
+                    key: const ValueKey<String>('new-session'),
+                    onPressed: _newSession,
+                    tooltip: '新建会话',
+                    icon: const Icon(AppIcons.newSession),
+                  ),
                 const SizedBox(width: 8),
               ],
       ),
@@ -854,6 +1004,10 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
     if (visible.isEmpty) {
       // 两个空态必须分开：搜索没命中 ≠ 这台主机没有会话。前者是「换个词再试」，
       // 后者是「去宿主建一个」，给同一句文案会把用户带到错误的方向。
+      // 全部归档时列表看起来是空的，但底部那行「已归档 · N」得留着，否则没路退回去。
+      if (!_searching && _archivedSessions.isNotEmpty) {
+        return _grouped ? _buildGroupedList(visible) : _buildFlatList(visible);
+      }
       return _ScrollableMessage(
         child: _searching ? const _NoMatchState() : const _EmptyState(),
       );
@@ -869,11 +1023,21 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
   ///
   /// [sessions] 是**已过滤**的可见列表（非搜索态就是 `_sessions` 本身）。
   Widget _buildFlatList(List<SessionSummary> sessions) {
+    final archived = _archivedSessions;
+    // 归档项排在最后：先一行计数，展开后才是卡片，不打断正常会话的浏览节奏。
+    final trailing = archived.isEmpty
+        ? 0
+        : (_archivedOpen ? archived.length + 1 : 1);
     return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.only(top: 12, bottom: 24),
-      itemCount: sessions.length,
-      itemBuilder: (context, index) => _buildSessionCard(sessions[index]),
+      itemCount: sessions.length + trailing,
+      itemBuilder: (context, index) {
+        if (index < sessions.length) return _buildSessionCard(sessions[index]);
+        final offset = index - sessions.length;
+        if (offset == 0) return _buildArchivedFooter(archived.length);
+        return _buildArchivedCard(archived[offset - 1]);
+      },
     );
   }
 
@@ -897,6 +1061,15 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
         items.add(_GroupSessionItem(session: session));
       }
     }
+    final archived = _archivedSessions;
+    if (archived.isNotEmpty) {
+      items.add(_ArchivedFooterItem(count: archived.length));
+      if (_archivedOpen) {
+        for (final session in archived) {
+          items.add(_ArchivedSessionItem(session: session));
+        }
+      }
+    }
     return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.only(top: 12, bottom: 24),
@@ -911,6 +1084,8 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
             onToggle: () => _toggleCollapsed(group.id),
           ),
           _GroupSessionItem(:final session) => _buildSessionCard(session),
+          _ArchivedFooterItem(:final count) => _buildArchivedFooter(count),
+          _ArchivedSessionItem(:final session) => _buildArchivedCard(session),
         };
       },
     );
@@ -928,6 +1103,69 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
       onOpen: () => unawaited(_openSession(session)),
       onMore: () => unawaited(_showSessionActions(session)),
     );
+  }
+
+  /// 已归档、且值得摆出来的会话（worker 与空会话不算）。
+  ///
+  /// 取 `_cache` 而不是 `_sessions`：归档项本来就被 `_composeSessions` 挡在列表外，
+  /// 但它们仍在 `session/list` 的返回里，这里按工作区的归档集合再挑一遍。
+  List<SessionSummary> get _archivedSessions {
+    final list = <SessionSummary>[
+      for (final session in _cache.values)
+        if (!session.isHidden && _workspace.isArchived(session.sessionId))
+          session,
+    ];
+    list.sort((a, b) {
+      final x = a.updatedAt?.millisecondsSinceEpoch ?? 0;
+      final y = b.updatedAt?.millisecondsSinceEpoch ?? 0;
+      return y.compareTo(x);
+    });
+    return list;
+  }
+
+  void _toggleArchived() {
+    setState(() {
+      _archivedOpen = !_archivedOpen;
+    });
+  }
+
+  Widget _buildArchivedFooter(int count) {
+    return _ArchivedFooter(
+      key: const ValueKey<String>('archived-footer'),
+      count: count,
+      open: _archivedOpen,
+      onTap: _toggleArchived,
+    );
+  }
+
+  Widget _buildArchivedCard(SessionSummary session) {
+    return _ArchivedCard(
+      key: ValueKey<String>('archived.${session.sessionId}'),
+      session: session,
+      onRestore: () => unawaited(_restoreArchived(session)),
+    );
+  }
+
+  /// 从「已归档」里把会话放回来：先乐观放行，再补一次 unarchive。
+  ///
+  /// 失败要回滚：否则界面显示已恢复、服务端仍是归档态，下次刷新又跳回去。
+  Future<void> _restoreArchived(SessionSummary session) async {
+    final remote = _remote;
+    final messenger = ScaffoldMessenger.of(context);
+    if (remote == null) {
+      messenger.showSnackBar(const SnackBar(content: Text('当前连接不支持撤销归档')));
+      return;
+    }
+    _setArchived(session.sessionId, archived: false);
+    try {
+      await remote.unarchiveSession(session.sessionId);
+    } catch (error) {
+      if (!mounted) return;
+      _setArchived(session.sessionId, archived: true);
+      messenger.showSnackBar(
+        SnackBar(content: Text('撤销归档失败：${_describeActionError(error)}')),
+      );
+    }
   }
 }
 
@@ -948,6 +1186,20 @@ class _GroupHeaderItem extends _GroupedItem {
 
 class _GroupSessionItem extends _GroupedItem {
   const _GroupSessionItem({required this.session});
+
+  final SessionSummary session;
+}
+
+/// 列表底部那行「已归档 · N」。
+class _ArchivedFooterItem extends _GroupedItem {
+  const _ArchivedFooterItem({required this.count});
+
+  final int count;
+}
+
+/// 展开后的一条归档会话。
+class _ArchivedSessionItem extends _GroupedItem {
+  const _ArchivedSessionItem({required this.session});
 
   final SessionSummary session;
 }
@@ -1007,8 +1259,8 @@ class _GroupHeader extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             Icon(
-              collapsed ? Icons.chevron_right : Icons.expand_more,
-              size: 20,
+              collapsed ? AppIcons.forward : AppIcons.expand,
+              size: AppIcons.normal,
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ],
@@ -1052,8 +1304,8 @@ class _EmptyState extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           Icon(
-            Icons.forum_outlined,
-            size: 56,
+            AppIcons.forum,
+            size: AppIcons.hero,
             color: theme.colorScheme.outline,
           ),
           const SizedBox(height: 16),
@@ -1084,8 +1336,8 @@ class _NoMatchState extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           Icon(
-            Icons.search_off,
-            size: 56,
+            AppIcons.searchEmpty,
+            size: AppIcons.hero,
             color: theme.colorScheme.outline,
           ),
           const SizedBox(height: 16),
@@ -1123,8 +1375,8 @@ class _ErrorState extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           Icon(
-            Icons.cloud_off_outlined,
-            size: 56,
+            AppIcons.cloudOff,
+            size: AppIcons.hero,
             color: theme.colorScheme.error,
           ),
           const SizedBox(height: 16),
@@ -1138,7 +1390,7 @@ class _ErrorState extends StatelessWidget {
           const SizedBox(height: 20),
           FilledButton.icon(
             onPressed: () => onRetry(),
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(AppIcons.refresh),
             label: const Text('重试'),
           ),
         ],
@@ -1229,8 +1481,8 @@ class _SessionCard extends StatelessWidget {
                       // 置顶是个「我看得见的状态」，不能只靠菜单文案暗示。
                       if (pinned) ...<Widget>[
                         Icon(
-                          Icons.push_pin,
-                          size: 12,
+                          AppIcons.pinned,
+                          size: AppIcons.inline,
                           color: theme.colorScheme.primary,
                         ),
                         const SizedBox(width: 4),
@@ -1259,13 +1511,13 @@ class _SessionCard extends StatelessWidget {
                       IconButton(
                         onPressed: onOpen,
                         tooltip: '打开会话',
-                        icon: const Icon(Icons.chat_bubble_outline, size: 20),
+                        icon: const Icon(AppIcons.chat, size: AppIcons.normal),
                       ),
                       // 入口做成按钮而不是长按：长按没有可见提示，用户找不到。
                       IconButton(
                         onPressed: onMore,
                         tooltip: '更多操作',
-                        icon: const Icon(Icons.more_horiz, size: 20),
+                        icon: const Icon(AppIcons.more, size: AppIcons.normal),
                       ),
                     ],
                   ),
@@ -1394,4 +1646,166 @@ String _formatThousands(int value) {
     buffer.write(digits[i]);
   }
   return buffer.toString();
+}
+
+/// 「其他目录…」的路径输入框。
+///
+/// 控制器必须由对话框自己持有：`showDialog` 的 future 在 pop 那一刻就完成，
+/// 退出动画却还会重建这棵树，外面 new 一个控制器会踩到
+/// 「A TextEditingController was used after being disposed」。
+class _PathDialog extends StatefulWidget {
+  const _PathDialog();
+
+  @override
+  State<_PathDialog> createState() => _PathDialogState();
+}
+
+class _PathDialogState extends State<_PathDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop(_controller.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('新会话目录'),
+      content: TextField(
+        key: const ValueKey<String>('new-session.path'),
+        controller: _controller,
+        autofocus: true,
+        textInputAction: TextInputAction.done,
+        decoration: const InputDecoration(
+          labelText: '宿主上的绝对路径',
+          hintText: r'D:\Ai-Project\demo',
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('创建')),
+      ],
+    );
+  }
+}
+
+
+/// 列表底部那行「已归档 · N」：折叠时不占列表空间之外的东西，点开才铺卡片。
+///
+/// 单独一行而不是塞进组头：归档是**跨工作区**的状态，挂在任何组下面都会误导。
+class _ArchivedFooter extends StatelessWidget {
+  const _ArchivedFooter({
+    super.key,
+    required this.count,
+    required this.open,
+    required this.onTap,
+  });
+
+  final int count;
+  final bool open;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            child: Row(
+              children: <Widget>[
+                Icon(AppIcons.archiveBox, size: AppIcons.small, color: muted),
+                const SizedBox(width: 8),
+                Text(
+                  '已归档 · $count',
+                  style: theme.textTheme.bodyMedium?.copyWith(color: muted),
+                ),
+                const Spacer(),
+                Text(
+                  open ? '收起' : '查看',
+                  style: theme.textTheme.labelMedium?.copyWith(color: muted),
+                ),
+                Icon(
+                  open ? AppIcons.collapse : AppIcons.expand,
+                  size: AppIcons.small,
+                  color: muted,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 展开后的一条归档会话：只用来「看一眼 + 放回去」，不提供进会话的入口。
+///
+/// 刻意不做成可点的卡片：归档会话本来就不在手边，误点进去会以为它还在用。
+class _ArchivedCard extends StatelessWidget {
+  const _ArchivedCard({
+    super.key,
+    required this.session,
+    required this.onRestore,
+  });
+
+  final SessionSummary session;
+  final VoidCallback onRestore;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      elevation: 0,
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    session.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(color: muted),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    session.cwd,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(color: muted),
+                  ),
+                ],
+              ),
+            ),
+            TextButton(
+              key: ValueKey<String>('unarchive.${session.sessionId}'),
+              onPressed: onRestore,
+              child: const Text('恢复'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

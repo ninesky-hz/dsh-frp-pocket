@@ -7,17 +7,19 @@ import '../models/app_settings.dart';
 class SettingsStore extends ChangeNotifier {
   static const String _kTheme = 'dsh_frp.theme';
   static const String _kKeepAwake = 'dsh_frp.keepAwake';
-  static const String _kDesktopUa = 'dsh_frp.desktopUa';
+  static const String _kChatNotes = 'dsh_frp.chatNotes';
 
   AppThemeMode _themeMode = AppThemeMode.system;
   bool _keepAwake = false;
-  bool _desktopUserAgent = false;
+  ChatNotesMode _chatNotesMode = ChatNotesMode.detailed;
   bool _loaded = false;
 
   AppThemeMode get themeMode => _themeMode;
   ThemeMode get materialThemeMode => _themeMode.material;
   bool get keepAwake => _keepAwake;
-  bool get desktopUserAgent => _desktopUserAgent;
+
+  /// 会话里「思考 / 调用工具」小字的显示密度。
+  ChatNotesMode get chatNotesMode => _chatNotesMode;
   bool get isLoaded => _loaded;
 
   Future<void> load() async {
@@ -25,7 +27,7 @@ class SettingsStore extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       _themeMode = AppThemeMode.fromStorage(prefs.getString(_kTheme));
       _keepAwake = prefs.getBool(_kKeepAwake) ?? false;
-      _desktopUserAgent = prefs.getBool(_kDesktopUa) ?? false;
+      _chatNotesMode = ChatNotesMode.fromStorage(prefs.getString(_kChatNotes));
     } catch (_) {
       // 读失败就维持默认值，不影响使用。
     }
@@ -49,11 +51,11 @@ class SettingsStore extends ChangeNotifier {
     await prefs.setBool(_kKeepAwake, value);
   }
 
-  Future<void> setDesktopUserAgent(bool value) async {
-    if (_desktopUserAgent == value) return;
-    _desktopUserAgent = value;
+  Future<void> setChatNotesMode(ChatNotesMode mode) async {
+    if (_chatNotesMode == mode) return;
+    _chatNotesMode = mode;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_kDesktopUa, value);
+    await prefs.setString(_kChatNotes, mode.storageKey);
   }
 }

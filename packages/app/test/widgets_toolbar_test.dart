@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dsh_frp_app/services/probe.dart';
 import 'package:dsh_frp_app/widgets/chrome.dart';
+import 'package:dsh_frp_app/theme/app_icons.dart';
 
 Widget _host(Widget child, {Size size = const Size(360, 640)}) {
   return MediaQuery(
@@ -41,15 +42,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
 
-    expect(find.byIcon(Icons.chevron_left_rounded), findsOneWidget);
-    expect(find.byIcon(Icons.refresh_rounded), findsOneWidget);
-    expect(find.byIcon(Icons.more_horiz_rounded), findsOneWidget);
+    expect(find.byIcon(AppIcons.back), findsOneWidget);
+    expect(find.byIcon(AppIcons.refresh), findsOneWidget);
+    expect(find.byIcon(AppIcons.more), findsOneWidget);
     expect(find.text('家里'), findsOneWidget);
     expect(find.text('42ms'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.chevron_left_rounded));
-    await tester.tap(find.byIcon(Icons.refresh_rounded));
-    await tester.tap(find.byIcon(Icons.more_horiz_rounded));
+    await tester.tap(find.byIcon(AppIcons.back));
+    await tester.tap(find.byIcon(AppIcons.refresh));
+    await tester.tap(find.byIcon(AppIcons.more));
     await tester.tap(find.text('家里'));
     await tester.pumpAndSettle();
     expect(<int>[back, refresh, more, status], <int>[1, 1, 1, 1]);

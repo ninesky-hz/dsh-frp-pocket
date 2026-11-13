@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../app_scope.dart';
 import '../models/host.dart';
@@ -12,6 +11,7 @@ import 'host_edit_screen.dart';
 import 'host_sessions_screen.dart';
 import 'scanner_screen.dart';
 import 'settings_screen.dart';
+import '../theme/app_icons.dart';
 
 /// 首页：主机列表（CONTRACT §7.2.1）。
 class HostsScreen extends StatefulWidget {
@@ -73,7 +73,7 @@ class _HostsScreenState extends State<HostsScreen> {
   }
 
   /// 点主机默认进原生会话列表（只调 HTTP，不加载网页）；
-  /// 整条前端链坏掉时这里还能用，完整面板在会话页右上角。
+  /// 整条前端链坏掉时这里还能用；会话列表页不再挂 WebView，只有这里进得去。
   Future<void> _openHost(Host host) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(builder: (_) => HostSessionsScreen(host: host)),
@@ -110,12 +110,12 @@ class _HostsScreenState extends State<HostsScreen> {
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
               ListTile(
-                leading: const Icon(Icons.edit_outlined),
+                leading: const Icon(AppIcons.edit),
                 title: const Text('编辑'),
                 onTap: () => Navigator.of(sheetContext).pop('edit'),
               ),
               ListTile(
-                leading: const Icon(Icons.link),
+                leading: const Icon(AppIcons.link),
                 title: const Text('复制链接'),
                 subtitle: Text(
                   host.url,
@@ -125,19 +125,13 @@ class _HostsScreenState extends State<HostsScreen> {
                 onTap: () => Navigator.of(sheetContext).pop('copy'),
               ),
               ListTile(
-                leading: const Icon(Icons.open_in_browser),
+                leading: const Icon(AppIcons.browser),
                 title: const Text('在浏览器打开'),
                 onTap: () => Navigator.of(sheetContext).pop('browser'),
               ),
               ListTile(
-                leading: const Icon(Icons.cookie_outlined),
-                title: const Text('清除此主机的 Cookie'),
-                subtitle: const Text('下次进入需重新用 PIN 登录'),
-                onTap: () => Navigator.of(sheetContext).pop('cookie'),
-              ),
-              ListTile(
                 leading: Icon(
-                  Icons.delete_outline,
+                  AppIcons.delete,
                   color: Theme.of(sheetContext).colorScheme.error,
                 ),
                 title: Text(
@@ -163,20 +157,8 @@ class _HostsScreenState extends State<HostsScreen> {
       case 'browser':
         final ok = await _bridge.openExternal(host.url);
         if (!ok) _toast('没有找到可用的浏览器');
-      case 'cookie':
-        await _clearHostCookies(host);
       case 'delete':
         await _confirmDelete(host);
-    }
-  }
-
-  Future<void> _clearHostCookies(Host host) async {
-    try {
-      await CookieManager.instance().deleteCookies(url: WebUri(host.url));
-      await CookieManager.instance().deleteCookies(url: WebUri('${host.url}/'));
-      _toast('已清除「${host.name}」的 Cookie');
-    } catch (_) {
-      _toast('清除失败，请重试');
     }
   }
 
@@ -221,12 +203,12 @@ class _HostsScreenState extends State<HostsScreen> {
         actions: <Widget>[
           IconButton(
             tooltip: '扫码添加',
-            icon: const Icon(Icons.qr_code_scanner),
+            icon: const Icon(AppIcons.qrScan),
             onPressed: _scanAndAdd,
           ),
           IconButton(
             tooltip: '设置',
-            icon: const Icon(Icons.settings_outlined),
+            icon: const Icon(AppIcons.settings),
             onPressed: () {
               Navigator.of(context).push<void>(
                 MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
@@ -237,7 +219,7 @@ class _HostsScreenState extends State<HostsScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _openEdit(),
-        icon: const Icon(Icons.add),
+        icon: const Icon(AppIcons.add),
         label: const Text('添加主机'),
       ),
       body: AnimatedBuilder(
@@ -292,8 +274,8 @@ class _ExampleBanner extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Icon(
-              Icons.info_outline,
-              size: 18,
+              AppIcons.info,
+              size: AppIcons.small,
               color: theme.colorScheme.onSecondaryContainer,
             ),
             const SizedBox(width: 8),
@@ -327,8 +309,8 @@ class _EmptyState extends StatelessWidget {
       children: <Widget>[
           const SizedBox(height: 96),
           Icon(
-            Icons.dns_outlined,
-            size: 64,
+            AppIcons.dns,
+            size: AppIcons.hero,
             color: theme.colorScheme.outline,
           ),
           const SizedBox(height: 16),
@@ -348,13 +330,13 @@ class _EmptyState extends StatelessWidget {
           const SizedBox(height: 24),
           FilledButton.icon(
             onPressed: onAdd,
-            icon: const Icon(Icons.add),
+            icon: const Icon(AppIcons.add),
             label: const Text('手动添加'),
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: onScan,
-            icon: const Icon(Icons.qr_code_scanner),
+            icon: const Icon(AppIcons.qrScan),
             label: const Text('扫码添加'),
           ),
         ],

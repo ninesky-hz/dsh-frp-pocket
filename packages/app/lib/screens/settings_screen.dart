@@ -1,54 +1,19 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../app_scope.dart';
 import '../constants.dart';
 import '../models/app_settings.dart';
-
+import '../theme/app_icons.dart';
 /// 设置页（CONTRACT §7.2.4）。
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
-
-  Future<void> _clearCookies(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('清除全部 Cookie'),
-        content: const Text('所有主机的登录状态都会失效，下次进入 WebView 需要重新用 PIN 登录。'),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('清除'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    var ok = false;
-    try {
-      await CookieManager.instance().deleteAllCookies();
-      ok = true;
-    } catch (_) {
-      ok = false;
-    }
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(ok ? '已清除全部 Cookie' : '清除失败，请重试')),
-      );
-  }
 
   void _showAbout(BuildContext context) {
     showAboutDialog(
       context: context,
       applicationName: 'DSH 口袋隧道',
       applicationVersion: '$kAppVersion ($kBuildNumber)',
-      applicationIcon: const Icon(Icons.hub_outlined, size: 40),
+      applicationIcon: const Icon(AppIcons.hub, size: 40),
       children: const <Widget>[
         SizedBox(height: 12),
         Text('通过自建 frp 隧道，在手机上远程使用家里的 DeepSeek Harness。'),
@@ -64,7 +29,6 @@ class SettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final settings = AppScope.of(context).settings;
-    final theme = Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
@@ -82,17 +46,17 @@ class SettingsScreen extends StatelessWidget {
                     ButtonSegment<AppThemeMode>(
                       value: AppThemeMode.system,
                       label: Text('跟随系统'),
-                      icon: Icon(Icons.brightness_auto_outlined),
+                      icon: Icon(AppIcons.themeSystem),
                     ),
                     ButtonSegment<AppThemeMode>(
                       value: AppThemeMode.light,
                       label: Text('浅色'),
-                      icon: Icon(Icons.light_mode_outlined),
+                      icon: Icon(AppIcons.themeLight),
                     ),
                     ButtonSegment<AppThemeMode>(
                       value: AppThemeMode.dark,
                       label: Text('深色'),
-                      icon: Icon(Icons.dark_mode_outlined),
+                      icon: Icon(AppIcons.themeDark),
                     ),
                   ],
                   selected: <AppThemeMode>{settings.themeMode},
@@ -108,34 +72,46 @@ class SettingsScreen extends StatelessWidget {
                 onChanged: settings.setKeepAwake,
                 title: const Text('保持屏幕常亮'),
                 subtitle: const Text('用手机长时间盯着任务进度时不熄屏'),
-                secondary: const Icon(Icons.screen_lock_portrait_outlined),
+                secondary: const Icon(AppIcons.lock),
               ),
-              SwitchListTile(
-                value: settings.desktopUserAgent,
-                onChanged: settings.setDesktopUserAgent,
-                title: const Text('使用桌面 User-Agent'),
-                subtitle: const Text('排查 dsh web 布局差异用，改动后需重进 WebView'),
-                secondary: const Icon(Icons.desktop_windows_outlined),
-              ),
-              _SectionHeader(title: '数据'),
+              _SectionHeader(title: '会话'),
               ListTile(
-                leading: Icon(
-                  Icons.cleaning_services_outlined,
-                  color: theme.colorScheme.error,
+                leading: const Icon(AppIcons.notes),
+                title: const Text('工具调用显示'),
+                subtitle: Text(
+                  settings.chatNotesMode == ChatNotesMode.compact
+                      ? '折叠成「思考 · 2 次工具调用」'
+                      : '逐项列出，带工具参数摘要',
                 ),
-                title: const Text('清除全部 Cookie'),
-                subtitle: const Text('所有主机退出登录'),
-                onTap: () => _clearCookies(context),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: SegmentedButton<ChatNotesMode>(
+                  segments: const <ButtonSegment<ChatNotesMode>>[
+                    ButtonSegment<ChatNotesMode>(
+                      value: ChatNotesMode.detailed,
+                      label: Text('详细'),
+                    ),
+                    ButtonSegment<ChatNotesMode>(
+                      value: ChatNotesMode.compact,
+                      label: Text('简洁'),
+                    ),
+                  ],
+                  selected: <ChatNotesMode>{settings.chatNotesMode},
+                  onSelectionChanged: (selection) {
+                    settings.setChatNotesMode(selection.first);
+                  },
+                ),
               ),
               _SectionHeader(title: '关于'),
               ListTile(
-                leading: const Icon(Icons.info_outline),
+                leading: const Icon(AppIcons.info),
                 title: const Text('版本与契约'),
                 subtitle: Text('App $kAppVersion ($kBuildNumber) · 契约 $kContractVersion'),
                 onTap: () => _showAbout(context),
               ),
               ListTile(
-                leading: const Icon(Icons.link),
+                leading: const Icon(AppIcons.link),
                 title: const Text('接口前缀'),
                 subtitle: const Text('$kApiPrefix（info / login / health）'),
               ),

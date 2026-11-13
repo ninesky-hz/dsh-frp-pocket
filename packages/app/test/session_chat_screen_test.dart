@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dsh_frp_app/models/host.dart';
 import 'package:dsh_frp_app/models/host_event.dart';
+import 'package:dsh_frp_app/models/prompt_image.dart';
 import 'package:dsh_frp_app/models/session_event.dart';
 import 'package:dsh_frp_app/models/session_summary.dart';
 import 'package:dsh_frp_app/screens/session_chat_screen.dart';
@@ -75,6 +76,13 @@ class _FakeRemote extends DshRemote {
   /// 前 N 次发送失败（验证重试入口）。
   int failPrompts = 0;
 
+  /// 这台会话的子会话：审批过滤要看它（子智能体的审批归父会话答）。
+  List<SessionSummary> children = const <SessionSummary>[];
+
+  @override
+  Future<List<SessionSummary>> childSessions(String parentSessionId) async =>
+      children;
+
   void pushEvent(SessionLogEvent event) {
     frames.add(DshStreamFrame(kind: DshFrameKind.event, event: event));
   }
@@ -136,6 +144,7 @@ class _FakeRemote extends DshRemote {
     String sessionId,
     String text, {
     String? requestId,
+    List<PromptImage> images = const <PromptImage>[],
   }) async {
     prompts.add(text);
     if (failPrompts > 0) {
@@ -158,8 +167,11 @@ Future<_FakeRemote> _pumpChat(
   SessionHistory? history,
   Object? pageError,
   SessionSummary session = _session,
+  List<SessionSummary> children = const <SessionSummary>[],
 }) async {
-  final remote = _FakeRemote(history: history, pageError: pageError);
+  // 子会话在 `initState` 里就拉一次，必须在建树之前塞进假件。
+  final remote = _FakeRemote(history: history, pageError: pageError)
+    ..children = children;
   await tester.pumpWidget(
     MaterialApp(
       home: SessionChatScreen(
@@ -368,9 +380,9 @@ void main() {
     await _openSnapshot(tester, remote);
 
     expect(find.text('结果如下'), findsOneWidget);
-    expect(find.textContaining('调用 ops_bash'), findsOneWidget);
-    // 折叠行只有一行：reasoning 与 tool-call 拼在同一条里。
-    expect(find.text('思考 · 调用 ops_bash'), findsOneWidget);
+    // 详细模式逐项一行：思考一行，工具调用一行（带工具名与参数摘要）。
+    expect(find.text('思考'), findsOneWidget);
+    expect(find.text('工具调用 · ops_bash · ls'), findsOneWidget);
 
     await _disposeChat(tester, remote);
   });
@@ -401,6 +413,64 @@ void main() {
 
     expect(find.byKey(const Key('approval-card-evt-a')), findsNothing);
     expect(remote.approvals, <String>['evt-a:approve']);
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('别的会话的审批与提问不进这个会话', (tester) async {
+    final remote = await _pumpChat(tester);
+    await _openSnapshot(tester, remote);
+
+    remote.hostEvents.add(
+      const DshHostEventApproval(
+        eventId: 'evt-other',
+        agentId: 'session-other',
+        request: <String, Object?>{'toolName': 'bash'},
+      ),
+    );
+    remote.hostEvents.add(
+      DshHostEventQuestion(
+        eventId: 'evt-other-q',
+        agentId: 'session-other',
+        request: <String, Object?>{
+          'questions': <Object?>[
+            <String, Object?>{'id': 'q1', 'prompt': '别人会话的问题'},
+          ],
+        },
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(Card), findsNothing);
+    expect(find.text('需要你回答'), findsNothing);
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('子会话的审批归父会话：能在本会话里答', (tester) async {
+    final remote = await _pumpChat(
+      tester,
+      children: const <SessionSummary>[
+        SessionSummary(
+          sessionId: 'session-kid',
+          title: '子会话',
+          cwd: r'D:\Ai-Project\dsh-frp-pocket',
+        ),
+      ],
+    );
+    await _openSnapshot(tester, remote);
+    await tester.pump();
+
+    remote.hostEvents.add(
+      const DshHostEventApproval(
+        eventId: 'evt-kid',
+        agentId: 'session-kid',
+        request: <String, Object?>{'toolName': 'write'},
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('approval-card-evt-kid')), findsOneWidget);
 
     await _disposeChat(tester, remote);
   });

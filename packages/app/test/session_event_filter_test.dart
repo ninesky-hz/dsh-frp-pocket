@@ -123,7 +123,10 @@ void main() {
       expect(bubble, isNotNull);
       expect(bubble!.role, ChatRole.assistant);
       expect(bubble.text, '收到');
-      expect(bubble.notes, containsAll(<String>['思考', '调用 ops_bash']));
+      expect(
+        bubble.notes.map((note) => note.compactLabel),
+        containsAll(<String>['思考', '调用 ops_bash']),
+      );
     });
 
     test('只有 reasoning 没有正文时也保留一条（便于看到「思考过」）', () {
@@ -140,7 +143,7 @@ void main() {
         },
       ));
       expect(bubble?.text, isEmpty);
-      expect(bubble?.notes, contains('思考'));
+      expect(bubble?.notes.single.detailedText, '思考 · 长篇思考…');
     });
   });
 }

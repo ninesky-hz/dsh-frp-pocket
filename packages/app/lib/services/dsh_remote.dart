@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart'
     show VoidCallback, debugPrint, kIsWeb;
@@ -8,9 +9,14 @@ import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../models/dsh_queue.dart';
+import '../models/dsh_skill.dart';
 import '../models/host.dart';
 import '../models/host_event.dart';
+import '../models/permission_option.dart';
+import '../models/prompt_image.dart';
 import '../models/session_event.dart';
+import '../models/session_summary.dart';
 import '../models/workspace_view_state.dart';
 import '../utils/ids.dart';
 import 'dsh_api.dart';
@@ -289,8 +295,47 @@ class DshRemote {
   /// 给测试与排查用的只读视图：答复时用的就是这一代。
   String? get hostClientId => _hostClientId;
 
+  /// 这台主机上的会话全表（含子会话）。
+  ///
+  /// 子会话（`origin == 'subagent'`）**不能**单独 `session/page`——宿主会回
+  /// `session/agent-busy: subagent Sessions require their durable parent address`，
+  /// 只留 `subagents/prompt`、`subagents/interruptByParent` 两个写口。所以
+  /// 「子智能体在做什么」只能从这张表拿：每一条都带 `running`、`updatedAt`
+  /// 和 `projections.tokenUsage`（已解析进 [SessionSummary.tokens]）。
+  Future<List<SessionSummary>> listSessions() => _api.listSessions(host);
+
+  /// 这个会话派出去的子会话，最近更新的排在前面。
+  Future<List<SessionSummary>> childSessions(String parentSessionId) async {
+    final all = await listSessions();
+    final children = all
+        .where((session) => session.parentSessionId == parentSessionId)
+        .toList();
+    children.sort((a, b) {
+      final left = a.updatedAt?.millisecondsSinceEpoch ?? 0;
+      final right = b.updatedAt?.millisecondsSinceEpoch ?? 0;
+      return right.compareTo(left);
+    });
+    return children;
+  }
+
   final Set<_MuxConnection<dynamic>> _connections =
       <_MuxConnection<dynamic>>{};
+
+  // ------------------------------------------------------------ 图片附件
+
+  /// 已取回的图片字节，key 是 `attachmentId`。
+  ///
+  /// 聊天页会随列表重建反复要同一张图（滚动、流式增量都会触发 build），
+  /// 每次重发 RPC 既慢又费流量，所以在进程内留一份。条数上限 [kImageCacheLimit]
+  /// 用「插入顺序删最旧」压住，避免长时间浏览会话把内存吃穿。
+  final Map<String, Uint8List> _imageCache = <String, Uint8List>{};
+
+  /// 同一张图正在取：并发的 build 共用同一个 Future，不会同时打两次 RPC。
+  final Map<String, Future<Uint8List>> _imagePending =
+      <String, Future<Uint8List>>{};
+
+  /// 进程内图片缓存条数上限。
+  static const int kImageCacheLimit = 40;
 
   // ------------------------------------------------------------ 链路状态
 
@@ -369,17 +414,133 @@ class DshRemote {
     return SessionHistory.fromJson(value);
   }
 
+  /// 这个会话可见的、允许人手动触发的技能表。
+  ///
+  /// 只有元数据（名字 + 说明），技能正文由宿主在收到 `/名字` 时注入——这里
+  /// 拉它纯粹是为了输入框补全。失败时返回空表：补全挂掉不该拦住发消息。
+  Future<List<DshSkill>> listSkills(String sessionId) async {
+    try {
+      final Map<String, Object?> value = await call<Map<String, Object?>>(
+        'skills/list',
+        <String, Object?>{
+          'request': <String, Object?>{'sessionId': sessionId},
+        },
+      );
+      return DshSkill.parseList(value['skills']);
+    } on Object {
+      return const <DshSkill>[];
+    }
+  }
+
+  /// 这台主机上可选的权限预设（`permissionPresets/catalog`，无参数）。
+  ///
+  /// 宿主没装权限服务时这个 RPC 会失败，或者 `options` 为空——两种情况都返回
+  /// 空表，让界面把入口藏起来。[defaultPreset] 是新会话的默认值。
+  Future<PermissionCatalog> permissionCatalog() async {
+    try {
+      final Map<String, Object?> value = await call<Map<String, Object?>>(
+        'permissionPresets/catalog',
+        const <String, Object?>{},
+      );
+      return PermissionCatalog.fromJson(value);
+    } on Object {
+      return const PermissionCatalog.empty();
+    }
+  }
+
+  /// 这个会话当前的权限预设；拿不到就是 null。
+  ///
+  /// 权限是三个旋钮（`permission/preset`、`sandbox/mode`、`approval/policy`）
+  /// 折出来的投影值，只在 `session/list` 里以
+  /// `projections.values.permissions.currentValue` 出现，没有单独读口。
+  Future<String?> permissionOf(String sessionId) async {
+    try {
+      for (final session in await listSessions()) {
+        if (session.sessionId == sessionId) return session.permission;
+      }
+    } on Object {
+      // 读不到就当没有：界面留着上一次的值，不弹错。
+    }
+    return null;
+  }
+
+  /// 切换权限预设：走 `/permission <value>` 这条宿主命令。
+  ///
+  /// 没有专门的 RPC——宿主对外的写路径就是命令面板那条斜杠命令
+  /// （`commands/execute` 的 `line`），`agentId` 用的是会话 id。
+  /// 返回宿主自己的回执文案（`preset workspace-write` 这种）。
+  Future<String> setPermission(String sessionId, String value) async {
+    final Map<String, Object?> value2 = await call<Map<String, Object?>>(
+      'commands/execute',
+      <String, Object?>{
+        'agentId': sessionId,
+        'line': '/permission $value',
+        'submittedAttachments': const <Object?>[],
+      },
+    );
+    final result = value2['result'];
+    final map = result is Map ? result : const <String, Object?>{};
+    if (map['kind'] != 'success') {
+      final text = map['text'];
+      throw DshApiException(
+        'permission_failed',
+        text is String && text.isNotEmpty ? text : '宿主拒绝了这次权限切换',
+      );
+    }
+    final text = map['text'];
+    return text is String ? text : 'preset $value';
+  }
+
   /// 发一条消息。返回本次的 requestId（同 id 重试是幂等的）。
   ///
   /// [requestId] 用于离线队列重发：同一条消息必须复用入队时固定的那个 id，
   /// 否则服务端会把重发当成一条新消息。不传时每次生成新的，行为不变。
+  ///
+  /// [images] 是随消息一起发的图片；只有图片没有文字也合法（服务端接受纯图
+  /// 消息，助手一样能读到）。文本为空时整个 text part 都不出现——线上契约里
+  /// 空 text part 没有意义，留着反而可能被当成「有内容」。
   Future<String> prompt(
     String sessionId,
     String text, {
     String? requestId,
+    List<PromptImage> images = const <PromptImage>[],
+  }) =>
+      _prompt(
+        sessionId,
+        text,
+        requestId: requestId,
+        images: images,
+        mode: 'queue',
+      );
+
+  /// 插队发送：不排到队尾，直接打断当前这一轮、立刻把这条交给模型。
+  ///
+  /// 契约里 `mode` 只有 `queue` / `steer` 两个值；`steer` 的语义是「现在就说」，
+  /// 服务端会把本条插到正在跑的那一轮前面。排队中的消息给了这个入口，用户才
+  /// 能在「已经排了三条」的情况下把一句急话送进去。
+  Future<String> promptSteer(
+    String sessionId,
+    String text, {
+    String? requestId,
+    List<PromptImage> images = const <PromptImage>[],
+  }) =>
+      _prompt(
+        sessionId,
+        text,
+        requestId: requestId,
+        images: images,
+        mode: 'steer',
+      );
+
+  Future<String> _prompt(
+    String sessionId,
+    String text, {
+    required String mode,
+    String? requestId,
+    List<PromptImage> images = const <PromptImage>[],
   }) async {
     final body = text.trim();
-    if (body.isEmpty) {
+    if (body.isEmpty && images.isEmpty) {
       throw const DshApiException('bad_request', '消息内容不能为空');
     }
     final id = requestId ?? newDshRequestId();
@@ -387,14 +548,201 @@ class DshRemote {
       'request': <String, Object?>{
         'requestId': id,
         'sessionId': sessionId,
-        'mode': 'queue',
+        'mode': mode,
         'content': <Object?>[
-          <String, Object?>{'type': 'text', 'text': body},
+          if (body.isNotEmpty) <String, Object?>{'type': 'text', 'text': body},
+          ...images.map((image) => image.toJson()),
         ],
       },
     });
     return id;
   }
+
+  /// 读会话侧当前的排队项（`session/observeState` 的 `queue`）。
+  ///
+  /// 这个接口是 **stream-mode** Remote：走 HTTP `POST /api/session/observeState`
+  /// 会被网关拒（`gateway/signature-invalid: stream Remote methods must be
+  /// opened through the stream carrier`），必须开在 mux 上。它只喂一帧状态，
+  /// 拿到就主动关流，不长期订阅。
+  ///
+  /// 取不到就当队列为空：调用方是「撤回一条排队消息」，读不到只能退回本地
+  /// 行为，不能把界面卡住。
+  Future<List<DshQueuedItem>> queuedItems(String sessionId) async {
+    final completer = Completer<List<DshQueuedItem>>();
+    StreamSubscription<Map<String, Object?>>? sub;
+    void finish(List<DshQueuedItem> items) {
+      if (!completer.isCompleted) completer.complete(items);
+      unawaited(sub?.cancel());
+    }
+
+    sub = _openMuxStream<Map<String, Object?>>(
+      openFrame: (streamId) => <String, Object?>{
+        'type': 'open',
+        'streamId': streamId,
+        'endpoint': 'session/observeState',
+        'payload': <String, Object?>{
+          'args': <String, Object?>{
+            'request': <String, Object?>{'sessionId': sessionId},
+          },
+        },
+      },
+      // 只认 `{type:'item', value:{cursor, active, running, queue, …}}`。
+      decode: (raw) {
+        final frame = asObjectMap(raw);
+        if (asText(frame['type']) != 'item') return null;
+        return asObjectMap(frame['value']);
+      },
+    ).listen(
+      (value) => finish(DshQueuedItem.parseList(value['queue'])),
+      onError: (Object _) => finish(const <DshQueuedItem>[]),
+      onDone: () => finish(const <DshQueuedItem>[]),
+    );
+    return completer.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        finish(const <DshQueuedItem>[]);
+        return const <DshQueuedItem>[];
+      },
+    );
+  }
+
+  /// 把一条还在排队的输入从宿主队列里撤掉。
+  ///
+  /// 只有 `session/observeState` 报过、且还在 `queued` 的项撤得掉；已经开始跑
+  /// 的那条宿主会拒（`accepted` 不是 true 或直接报错），此时调用方只能把它从
+  /// 界面移除——消息已经在处理了。
+  Future<bool> removeQueued(String sessionId, String itemId) async {
+    final value = await call<Map<String, Object?>>(
+      'session/updateQueue',
+      <String, Object?>{
+        'request': <String, Object?>{
+          'sessionId': sessionId,
+          'itemId': itemId,
+          'action': <String, Object?>{'kind': 'remove'},
+        },
+      },
+    );
+    return value['accepted'] == true;
+  }
+
+  /// 取一张历史图片的原始字节。
+  /// 历史里用户图片 part 只有 `attachment` 描述（没有 `data`），必须再打一次
+  /// `session/attachment`。服务端对描述字段的要求有两代：优先发完整描述，
+  /// 被判定成参数不合法时退化成只给 id 再试一次——两种实现都覆盖住。
+  Future<Uint8List> attachment(
+    String sessionId, {
+    required String attachmentId,
+    String? mediaType,
+    int? bytes,
+    int? width,
+    int? height,
+    String? name,
+  }) async {
+    final descriptor = <String, Object?>{
+      'attachmentId': attachmentId,
+      'mediaType': ?mediaType,
+      'bytes': ?bytes,
+      'width': ?width,
+      'height': ?height,
+      'name': ?name,
+    };
+
+    Map<String, Object?> value;
+    try {
+      value = await call<Map<String, Object?>>('session/attachment', <
+        String,
+        Object?
+      >{
+        'request': <String, Object?>{
+          'sessionId': sessionId,
+          'attachment': descriptor,
+        },
+      });
+    } on DshApiException catch (error) {
+      if (!_looksLikeAttachmentShapeMismatch(error)) rethrow;
+      debugPrint('DshRemote: 附件描述被拒（${error.code}），退化只发 id');
+      value = await call<Map<String, Object?>>('session/attachment', <
+        String,
+        Object?
+      >{
+        'request': <String, Object?>{
+          'sessionId': sessionId,
+          'attachmentId': attachmentId,
+        },
+      });
+    }
+
+    final data = asText(value['data']);
+    if (data == null) {
+      throw const DshApiException('bad_response', '附件响应里没有 data');
+    }
+    return base64Decode(_stripBase64Prefix(data));
+  }
+
+  /// 带缓存的 [attachment]：同一 [attachmentId] 一个进程内只取一次。
+  Future<Uint8List> cachedAttachment(
+    String sessionId, {
+    required String attachmentId,
+    String? mediaType,
+    int? bytes,
+    int? width,
+    int? height,
+    String? name,
+  }) {
+    final cached = _imageCache[attachmentId];
+    if (cached != null) return Future<Uint8List>.value(cached);
+    final pending = _imagePending[attachmentId];
+    if (pending != null) return pending;
+
+    final future = attachment(
+      sessionId,
+      attachmentId: attachmentId,
+      mediaType: mediaType,
+      bytes: bytes,
+      width: width,
+      height: height,
+      name: name,
+    );
+    _imagePending[attachmentId] = future;
+    // 侧枝只负责收尾，不再把错误往外抛：错误已经通过返回给调用方的同一个
+    // Future 传播，这里再抛一次会变成没人接的 unhandled error。
+    unawaited(future.then((data) {
+      _imagePending.remove(attachmentId);
+      _rememberImage(attachmentId, data);
+    }, onError: (Object error, StackTrace stack) {
+      // 失败不缓存：下次重建还有机会重试（用户切回页面时链路多半已经好了）。
+      _imagePending.remove(attachmentId);
+    }));
+    return future;
+  }
+
+  /// 按插入顺序淘汰：`Map` 的 `keys.first` 就是最久没被写入的那张。
+  void _rememberImage(String attachmentId, Uint8List data) {
+    _imageCache[attachmentId] = data;
+    while (_imageCache.length > kImageCacheLimit) {
+      _imageCache.remove(_imageCache.keys.first);
+    }
+  }
+
+  /// 附件调用失败是不是「参数形状不对」这类可退化的错误。
+  ///
+  /// 只认这一类：真正的问题（找不到附件、没有权限）退化重试也是白搭，
+  /// 应该原样抛给界面。
+  static bool _looksLikeAttachmentShapeMismatch(DshApiException error) {
+    final code = error.code.toLowerCase();
+    return code.contains('arguments') ||
+        code.contains('input-invalid') ||
+        code.contains('bad_request');
+  }
+
+  /// `data` 理论上就是裸 base64；有的实现会带 `data:image/png;base64,` 前缀，
+  /// 直接解会抛 FormatException，所以先剥掉。
+  static String _stripBase64Prefix(String data) {
+    if (!data.startsWith('data:')) return data;
+    final comma = data.indexOf(',');
+    return comma < 0 ? data : data.substring(comma + 1);
+  }
+
 
   /// 中断当前 turn（空闲时服务端也回 `accepted:true`）。
   Future<void> cancel(String sessionId) async {
@@ -477,6 +825,37 @@ class DshRemote {
       },
     );
     return asText(value['title']) ?? body;
+  }
+
+  /// 新建会话：给 `workspaceId` 就挂到那个工作区（它的路径成为 cwd），
+  /// 只给 `cwd` 就是一个裸目录；两个都不给则由宿主用 `dsh web` 进程的工作目录。
+  ///
+  /// 返回服务端分配的 `sessionId`——会话列表是独立的帧流，新建后不会立刻
+  /// 出现在手上，所以要拿这个 id 直接进会话页，别等列表刷新。
+  Future<String> createSession({
+    String? cwd,
+    String? workspaceId,
+    String? agentPreset,
+  }) async {
+    if ((cwd == null || cwd.trim().isEmpty) &&
+        (workspaceId == null || workspaceId.trim().isEmpty)) {
+      throw const DshApiException('bad_request', '要指定工作区或目录');
+    }
+    final value = await call<Map<String, Object?>>(
+      'session/create',
+      <String, Object?>{
+        'request': <String, Object?>{
+          'cwd': ?cwd,
+          'workspaceId': ?workspaceId,
+          'agentPreset': ?agentPreset,
+        },
+      },
+    );
+    final id = asText(value['sessionId']);
+    if (id == null || id.isEmpty) {
+      throw const DshApiException('bad_response', '服务端没有返回 sessionId');
+    }
+    return id;
   }
 
   // ------------------------------------------------------------ 流式通道
@@ -648,6 +1027,8 @@ class DshRemote {
       connection.dispose();
     }
     _connections.clear();
+    _imageCache.clear();
+    _imagePending.clear();
     unawaited(_linkStates.close());
     if (_ownsApi) _api.dispose();
     if (_ownsClient) _client.close();

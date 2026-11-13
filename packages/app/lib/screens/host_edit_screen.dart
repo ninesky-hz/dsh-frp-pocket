@@ -7,6 +7,7 @@ import '../services/probe.dart';
 import '../services/scan_parser.dart';
 import '../widgets/status_dot.dart';
 import 'scanner_screen.dart';
+import '../theme/app_icons.dart';
 
 /// 添加 / 编辑主机（CONTRACT §7.2.2）。
 class HostEditScreen extends StatefulWidget {
@@ -195,7 +196,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
         actions: <Widget>[
           IconButton(
             tooltip: '分享二维码',
-            icon: const Icon(Icons.qr_code_2),
+            icon: const Icon(AppIcons.qrCode),
             onPressed: _showQr,
           ),
           TextButton(
@@ -216,7 +217,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
                 labelText: '名称',
                 hintText: '家里',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.label_outline),
+                prefixIcon: Icon(AppIcons.label),
               ),
               validator: (value) {
                 final text = (value ?? '').trim();
@@ -236,7 +237,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
                 hintText: 'https://home.dsh.example.com',
                 helperText: '只填域名也行：会自动补 https，并去掉路径',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.link),
+                prefixIcon: Icon(AppIcons.link),
               ),
               validator: (value) {
                 if (normalizeUrl(value ?? '').isEmpty) {
@@ -256,7 +257,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
                 hintText: '8–64 位字母数字',
                 helperText: '留空则进入后手动登录；PIN 只保存在本机',
                 border: const OutlineInputBorder(),
-                prefixIcon: const Icon(Icons.key_outlined),
+                prefixIcon: const Icon(AppIcons.key),
                 suffixIcon: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
@@ -264,8 +265,8 @@ class _HostEditScreenState extends State<HostEditScreen> {
                       tooltip: _obscurePin ? '显示' : '隐藏',
                       icon: Icon(
                         _obscurePin
-                            ? Icons.visibility_outlined
-                            : Icons.visibility_off_outlined,
+                            ? AppIcons.visible
+                            : AppIcons.hidden,
                       ),
                       onPressed: () {
                         setState(() => _obscurePin = !_obscurePin);
@@ -273,7 +274,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
                     ),
                     IconButton(
                       tooltip: '扫码填入',
-                      icon: const Icon(Icons.qr_code_scanner),
+                      icon: const Icon(AppIcons.qrScan),
                       onPressed: _scan,
                     ),
                   ],
@@ -310,7 +311,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
                             height: 16,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Icon(Icons.network_check),
+                        : const Icon(AppIcons.network),
                     label: Text(_testing ? '测试中…' : '测试连接'),
                   ),
                 ),
@@ -318,7 +319,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
                 Expanded(
                   child: FilledButton.icon(
                     onPressed: _saving ? null : _save,
-                    icon: const Icon(Icons.check),
+                    icon: const Icon(AppIcons.check),
                     label: const Text('保存'),
                   ),
                 ),

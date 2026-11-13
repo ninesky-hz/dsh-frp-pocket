@@ -14,6 +14,11 @@ class SessionSummary {
     this.updatedAt,
     this.tokens = 0,
     this.goalPhase,
+    this.parentSessionId,
+    this.origin,
+    this.blank = false,
+    this.subagentLabel,
+    this.permission,
   });
 
   /// 容错解析：任何字段缺失或类型不符都退回默认值，不抛异常。
@@ -32,6 +37,11 @@ class SessionSummary {
       updatedAt: _asDate(json['updatedAt']),
       tokens: _asInt(usage['uncachedInputTokens']) + _asInt(usage['outputTokens']),
       goalPhase: _asText(goal['phase']),
+      parentSessionId: _asText(json['parentSessionId']),
+      origin: _asText(json['origin']),
+      blank: _asBool(json['blank']),
+      subagentLabel: _asText(_asMap(values['subagent'])['label']),
+      permission: _asText(_asMap(values['permissions'])['currentValue']),
     );
   }
 
@@ -52,6 +62,35 @@ class SessionSummary {
   /// goal 阶段（`running | blocked | done` 等），没有 goal 时为 null。
   final String? goalPhase;
 
+  /// 派生子会话（worker）指回父会话的 id；顶层会话为 null。
+  final String? parentSessionId;
+
+  /// 会话来源：`subagent` 表示这是某个会话派出去的 worker。
+  final String? origin;
+
+  /// 建好但一句话都没说过：列表里不该占位置。
+  final bool blank;
+
+  /// 派生时起的那句话（`projections.values.subagent.label`）。
+  ///
+  /// 子会话没有用户起的标题，`title` 落的是它收到的第一条指令，长到没法看；
+  /// 这个 label 才是「这个 worker 是干什么的」。顶层会话为 null。
+  final String? subagentLabel;
+
+  /// 会话当前的权限预设机器值（`projections.values.permissions.currentValue`）。
+  ///
+  /// `read-only` / `workspace-write` / `danger-full-access` / `auto` / `custom`。
+  /// 为 null 表示这台主机没装权限服务，客户端应当把权限入口藏起来，而不是
+  /// 画一个点了没用的按钮。
+  final String? permission;
+
+  /// 列表/状态条上该显示的名字：优先派工时起的 label。
+  String get displayTitle => subagentLabel ?? title;  /// 这是被派出去的子会话（而不是用户自己开的一个）。
+  bool get isSubagent => origin == 'subagent' || parentSessionId != null;
+
+  /// 列表页是否该隐藏：子会话与空会话都不算「我的会话」。
+  bool get isHidden => isSubagent || blank;
+
   /// 只换标题的浅拷贝：重命名成功后**就地**替换这一行，不整表重拉。
   SessionSummary withTitle(String title) => SessionSummary(
     sessionId: sessionId,
@@ -62,6 +101,11 @@ class SessionSummary {
     updatedAt: updatedAt,
     tokens: tokens,
     goalPhase: goalPhase,
+    parentSessionId: parentSessionId,
+    origin: origin,
+    blank: blank,
+    subagentLabel: subagentLabel,
+    permission: permission,
   );
 
   /// `projections.values` 这一层在不同 DSH 版本里可能被省略，两种都认。

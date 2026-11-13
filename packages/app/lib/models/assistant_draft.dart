@@ -1,5 +1,6 @@
 import 'dart:collection';
 
+import 'chat_note.dart';
 import 'session_event.dart' show asInt, asObjectMap, asText;
 
 /// 草稿里的一个内容块，对应服务端的 ContentBlock。
@@ -85,8 +86,9 @@ class AssistantDraft {
   bool get isEmpty => blocks.isEmpty;
 
   /// 「思考」这类折叠注释；和 durable 气泡的口径保持一致。
-  List<String> get notes =>
-      hasReasoning ? const <String>['思考'] : const <String>[];
+  List<ChatNote> get notes => hasReasoning
+      ? <ChatNote>[ChatNote.reasoning(reasoningText)]
+      : const <ChatNote>[];
 
   String _join(String type) {
     final buffer = StringBuffer();

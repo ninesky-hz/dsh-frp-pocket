@@ -75,7 +75,7 @@ void main() {
     final draft = tracker.drafts.single;
     expect(draft.reasoningText, '先想');
     expect(draft.text, isEmpty);
-    expect(draft.notes, <String>['思考']);
+    expect(draft.notes.single.detailedText, '思考 · 先想');
 
     tracker.applyFrame(
       frames.chunk(<String, Object?>{

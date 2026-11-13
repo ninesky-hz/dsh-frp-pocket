@@ -126,12 +126,17 @@ Future<void> _pumpChat(WidgetTester tester, _PagingRemote remote) async {
 }
 
 ScrollPosition _position(WidgetTester tester) {
+  // `.first`：气泡正文是 `SelectableText`，它内部也带一个 `Scrollable`
+  // （`EditableText` 自己的滚动容器），深度优先里外层 `CustomScrollView`
+  // 的 `Scrollable` 排在前面。
   return tester
       .state<ScrollableState>(
-        find.descendant(
-          of: find.byKey(const Key('chat-list')),
-          matching: find.byType(Scrollable),
-        ),
+        find
+            .descendant(
+              of: find.byKey(const Key('chat-list')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
       )
       .position;
 }
