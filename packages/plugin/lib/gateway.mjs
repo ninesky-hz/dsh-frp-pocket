@@ -19,6 +19,14 @@ export const COOKIE_MAX_AGE = 30 * 24 * 60 * 60; // 30 天（秒）
 /** 破坏性动作必须带这枚自定义头（CONTRACT §4.6）：跨站表单发不出，挡住 CSRF。 */
 export const ACTION_HEADER = 'x-frp-pocket-action';
 
+/**
+ * 重启隧道前留给响应回程的时间（毫秒）。
+ *
+ * 重启请求是穿隧道进来的，frpc 一停，还在路上的响应就没了；所以先 flush、
+ * 再等一小会儿让 frps/Caddy 把包送给手机，最后才真正重拉 frpc。
+ */
+export const FRPC_RESTART_DELAY_MS = 400;
+
 /* ------------------------------------------------------------------ *
  * dsh-pocket 的移动端补丁（原样保留，data 属性用于判重）
  * ------------------------------------------------------------------ */
@@ -607,13 +615,26 @@ export function createGateway({
         jsonResponse(res, 503, { ok: false, error: 'frpc_unavailable' }, common);
         return true;
       }
-      const out = frpc.restart() ?? {};
-      const state = out.state ?? 'starting';
-      log.info?.(`frp-pocket: 隧道已重启 by=${clientIp(req)} state=${state}`);
+      // 关键顺序：这个请求本身就是经隧道送进来的，一旦 frpc 先停，
+      // 响应就再也回不到手机（frps 会直接把连接判成 404）。
+      // 所以先把 200 写回、等本地 socket 真正 flush 完，再动 frpc。
+      const by = clientIp(req);
       jsonResponse(res, 200, {
         ok: true,
-        frp: { state, since: Date.now() },
+        frp: { state: 'starting', since: Date.now() },
       }, common);
+      const arm = () => {
+        setTimeout(() => {
+          try {
+            const out = frpc.restart() ?? {};
+            log.info?.(`frp-pocket: 隧道已重启 by=${by} state=${out.state ?? 'starting'}`);
+          } catch (err) {
+            log.warn?.(`frp-pocket: 隧道重启失败 ${err?.message ?? err}`);
+          }
+        }, FRPC_RESTART_DELAY_MS);
+      };
+      if (res.writableEnded) arm();
+      else res.once('finish', arm);
       return true;
     }
 

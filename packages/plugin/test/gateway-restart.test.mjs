@@ -87,12 +87,15 @@ test('重启隧道：缺动作头 → 400（CSRF 闸门）', async () => {
   assert.equal(frpc.calls.restart, 0);
 });
 
-test('重启隧道：cookie + 动作头 → 200，frpc.restart 只调一次', async () => {
+test('重启隧道：cookie + 动作头 → 200，先回包、再晚一点才重拉 frpc', async () => {
   const res = await post('/frp-pocket/api/frpc/restart');
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.ok, true);
   assert.equal(body.frp.state, 'starting');
+  // 回包这一刻 frpc 必须还活着：它是这条响应的回程通道
+  assert.equal(frpc.calls.restart, 0);
+  await new Promise((resolve) => setTimeout(resolve, 500));
   assert.equal(frpc.calls.restart, 1);
 });
 

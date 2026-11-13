@@ -121,6 +121,25 @@ void main() {
     expect(find.text('重启隧道'), findsNothing);
   });
 
+  testWidgets('回包丢了不算失败：frps 的 404 之后仍然继续等隧道回来', (tester) async {
+    // 重启隧道的 POST 本身走隧道：frpc 一停，回程就断，手机侧只看到 404。
+    // 这种情况指令其实已经执行，必须继续等，而不是弹「重启失败」。
+    final api = _FakeApi(
+      times: const <int?>[1000, null, 2000],
+      tunnelError: const DshApiException('http_404', '重启请求失败（HTTP 404）'),
+    );
+    await _open(tester, api: api, kind: RestartKind.tunnel);
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.textContaining('指令多半已生效'), findsOneWidget);
+    expect(find.text('重试'), findsNothing);
+    expect(api.tunnelCalls, 1);
+
+    await _advance(tester);
+
+    expect(find.text('重启隧道'), findsNothing);
+  });
+
   testWidgets('隧道重启失败：留在对话框，只给重试 / 关闭', (tester) async {
     final api = _FakeApi(
       times: const <int?>[1000],

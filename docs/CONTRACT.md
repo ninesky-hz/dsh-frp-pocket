@@ -138,6 +138,7 @@ dsh-frp-pocket/
 - `405`：不是 POST。
 - `503 {"error":"frpc_unavailable"}`：frpc 关闭或还没就绪。
 - 手机端 cookie 仍然有效，不需要重新登录。
+- **回包必须先于 frpc 重拉**：这个请求自己就是经隧道进来的，先杀 frpc 会让响应失去回程，客户端只能拿到 frps 的 404 页面。服务端顺序固定为「写 200 → socket finish → 400ms → `frpc.restart()`」；客户端遇到 404 / 连接重置时应当视为「多半已执行」，继续轮询 `/info` 等隧道回来。
 
 **`POST /frp-pocket/api/dsh/restart`** —— 结束并重新拉起主机上的 DSH（桌面版连 Electron 主进程一起重启），任务会中断，5–20 秒回来。
 

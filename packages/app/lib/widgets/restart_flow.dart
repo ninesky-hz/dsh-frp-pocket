@@ -62,6 +62,13 @@ class _RestartProgressDialogState extends State<RestartProgressDialog> {
   bool _succeeded = false;
   String? _error;
 
+  /// 指令可能已经生效、但回包没走完时的说明（不当作失败）。
+  ///
+  /// 重启隧道时，这个 POST 自己就是经隧道送进来的：frpc 一停，回程就断了，
+  /// 手机这边看到的是 404 / 连接被重置。此时隧道其实已经在重启，硬报失败
+  /// 只会让用户以为没执行。
+  String? _softNote;
+
   bool get _isTunnel => widget.kind == RestartKind.tunnel;
 
   List<String> get _steps => _isTunnel
@@ -87,6 +94,7 @@ class _RestartProgressDialogState extends State<RestartProgressDialog> {
       _running = true;
       _succeeded = false;
       _error = null;
+      _softNote = null;
       _current = 0;
     });
 
@@ -101,7 +109,7 @@ class _RestartProgressDialogState extends State<RestartProgressDialog> {
 
     try {
       if (_isTunnel) {
-        await widget.api.restartTunnel(widget.host);
+        await _send(() => widget.api.restartTunnel(widget.host));
         _mark(1);
         final revived = await _waitForInfo(baseline, _tunnelTimeout);
         if (!revived) {
@@ -109,7 +117,7 @@ class _RestartProgressDialogState extends State<RestartProgressDialog> {
         }
         _mark(2);
       } else {
-        await widget.api.restartDsh(widget.host);
+        await _send(() => widget.api.restartDsh(widget.host));
         _mark(1);
         // 能观察到「下线」最好，观察不到也不算失败（重启可能比轮询还快）
         await _waitForOffline(_offlineWindow);
@@ -148,8 +156,36 @@ class _RestartProgressDialogState extends State<RestartProgressDialog> {
     }
   }
 
-  /// 等 `/info` 的服务器时间超过基线（即「新的一台网关起来了」）。
+  /// 发重启指令。
   ///
+  /// 有些失败不能当失败看：重启隧道时这个 POST 自己就是经隧道回来的，
+  /// frpc 一停回程就断，手机侧只会看到 404 或连接被重置——指令其实已经
+  /// 执行了。这类情形记一条说明，继续等主机回来。
+  Future<void> _send(Future<String> Function() request) async {
+    try {
+      await request();
+    } on DshApiException catch (error) {
+      switch (error.code) {
+        case 'unauthorized':
+        case 'restart_disabled':
+        case 'restart_unsupported':
+          rethrow;
+        case 'restarting':
+          _note('主机说它已经在重启了，继续等它回来');
+        default:
+          _note('回包没走完（${error.message}），指令多半已生效，继续等主机回来');
+      }
+    } on Object catch (error) {
+      _note('回包没走完（$error），指令多半已生效，继续等主机回来');
+    }
+  }
+
+  void _note(String text) {
+    if (!mounted) return;
+    setState(() => _softNote = text);
+  }
+
+  /// 等 `/info` 的服务器时间超过基线（即「新的一台网关起来了」）。
   /// 基线为空（重启前就读不到）时退化成「任意一次成功」，仍然比死等强。
   Future<bool> _waitForInfo(int? baseline, Duration timeout) async {
     final deadline = DateTime.now().add(timeout);
@@ -218,6 +254,28 @@ class _RestartProgressDialogState extends State<RestartProgressDialog> {
               ),
               const SizedBox(height: 14),
               for (var i = 0; i < _steps.length; i++) _stepRow(theme, i),
+              if (_softNote != null) ...<Widget>[
+                const SizedBox(height: 12),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Icon(
+                      AppIcons.info,
+                      size: AppIcons.inline,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        _softNote!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               if (_error != null) ...<Widget>[
                 const SizedBox(height: 12),
                 Row(
