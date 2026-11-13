@@ -31,7 +31,16 @@ APP = HERE.parent.parent
 RES = APP / "android" / "app" / "src" / "main" / "res"
 PREVIEW = HERE / "preview"
 
-DEFAULT = "A-prompt-cursor"
+DEFAULT = "A3-prompt-heavy"
+
+# 自适应图标是一块 108dp 画布，但系统只会露出**中间 72dp**（外圈留给视差与
+# 各家遮罩）。也就是说画布上画得再满，用户也只看得到 2/3 —— 图标显不显大，
+# 取决于 ink 占那 72dp 的多少，不是占 108dp 的多少。
+ADAPTIVE_CANVAS_DP = 108
+ADAPTIVE_SAFE_DP = 72
+# 图形宽度占可见区的比例。0.62 是照着一排真图标量出来的体量：四周都留气口，
+# 和 48px 的相邻图标站在一起不挤。
+ADAPTIVE_INK_FILL = 0.62
 
 
 def px(v: float) -> int:
@@ -212,6 +221,46 @@ def preview() -> None:
     print(f"preview -> {PREVIEW / 'sheet.png'}")
 
 
+def ink_fraction(m: Image.Image) -> float:
+    """图形 ink 宽度占整块画布的比例（用遮罩的包围盒量，不靠手写常量）。"""
+    left, _, right, _ = m.getbbox()
+    return (right - left) / m.size[0]
+
+
+def foreground(m: Image.Image) -> Image.Image:
+    """108dp 前景层：把图形缩到「可见区宽度的 ADAPTIVE_INK_FILL」。"""
+    scale = ADAPTIVE_INK_FILL * ADAPTIVE_SAFE_DP / (
+        ADAPTIVE_CANVAS_DP * ink_fraction(m)
+    )
+    canvas = 1024
+    inner = int(round(canvas * scale))
+    fg = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
+    fg.alpha_composite(down(paint(m), inner), ((canvas - inner) // 2,) * 2)
+    return fg
+
+
+def adaptive_icon(m: Image.Image, size: int = 1024) -> Image.Image:
+    """系统眼里的样子：前景取中间 72/108，压到石墨底上，再套圆角遮罩。
+
+    预览必须走这条路，否则本地看到的（整块 108dp）永远比手机上（裁到 72dp）
+    小一圈 —— 这是第一版预览骗过眼睛的原因。
+    """
+    fg = foreground(m)
+    canvas = fg.size[0]
+    visible = int(round(canvas * ADAPTIVE_SAFE_DP / ADAPTIVE_CANVAS_DP))
+    off = (canvas - visible) // 2
+    fg = fg.crop((off, off, off + visible, off + visible))
+
+    plate = Image.new("RGBA", (visible, visible), BG)
+    plate.alpha_composite(fg)
+    mask = Image.new("L", (visible, visible), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [0, 0, visible - 1, visible - 1], radius=int(visible * 0.225), fill=255
+    )
+    plate.putalpha(mask)
+    return plate.resize((size, size), Image.LANCZOS)
+
+
 def install(name: str = DEFAULT) -> None:
     if name not in CANDS:
         raise SystemExit(f"unknown candidate {name}; pick from {', '.join(CANDS)}")
@@ -230,12 +279,9 @@ def install(name: str = DEFAULT) -> None:
         down(big, size).save(target)
         print(f"wrote {target} ({size}px)")
 
-    # 自适应图标：108dp 画布。图形本身只占设计画布的 ~63%，再缩到 0.94
-    # 之后落在 ~60dp 上，正好收在系统遮罩的中心安全区内。
-    fg_canvas = 1024
-    inner = int(fg_canvas * 0.94)
-    fg = Image.new("RGBA", (fg_canvas, fg_canvas), (0, 0, 0, 0))
-    fg.alpha_composite(down(paint(m), inner), ((fg_canvas - inner) // 2,) * 2)
+    # 自适应图标：108dp 画布，图形缩到「可见区（72dp）的 62%」。这个比例是
+    # foreground() 按 ink 实测算的，不再手写 0.94 那种拍脑袋系数。
+    fg = foreground(m)
     for folder, size in (
         ("mipmap-mdpi", 108),
         ("mipmap-hdpi", 162),
@@ -327,7 +373,8 @@ def mock(name: str = DEFAULT) -> None:
     if name not in CANDS:
         raise SystemExit(f"unknown candidate {name}")
     PREVIEW.mkdir(parents=True, exist_ok=True)
-    icon = down(composite(CANDS[name]()), 1024)
+    # 桌面那枚必须按系统的裁切来画（中间 72/108），否则预览会系统性偏小
+    icon = adaptive_icon(CANDS[name](), 1024)
 
     def font(size):
         for p in (
