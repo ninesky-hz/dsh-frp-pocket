@@ -6,6 +6,8 @@ build/
 .flutter-plugins-dependencies
 .e2e/
 *.log
+.tmp-*
+*.bak-frp-*
 *.apk
 !packages/app/**/app-release.apk
 .DS_Store
