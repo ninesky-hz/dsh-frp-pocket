@@ -390,5 +390,7 @@ export function installRpc(ctx, deps) {
     deps.log?.warn?.('frp-pocket: 无 Connection RPC，设置页不可用 | connection rpc unavailable');
     return () => {};
   }
+  // 第三参 { authority: 'loopback' } 是旧宿主读的；0.2.2 起 rpc.handle 只吃 (channel, handler)，
+  // 多传的参数会被静默忽略，留着是为了向下兼容。
   return ctx.connection.rpc.handle(RPC_CHANNEL, handler, { authority: 'loopback' });
 }

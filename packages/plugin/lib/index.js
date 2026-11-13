@@ -8,8 +8,8 @@ import { createGateway } from './gateway.mjs';
 import { createFrpcManager } from './frpc.mjs';
 import { installRpc } from './rpc.mjs';
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readFileSync, statSync } from 'node:fs';
+import { detectDshVersion } from './dsh-version.mjs';
 
 export const name = 'dsh-frp-pocket';
 
@@ -33,28 +33,6 @@ const VERSION = readOwnVersion();
 
 /** 供测试与外部断言：插件版本一端取 package.json，只有这一个来源。 */
 export const version = VERSION;
-
-/** 从宿主入口向上找 @deepseek-ai/dsh 的 package.json，拿真实版本（契约 §4.1 要 dsh 字段）。 */
-function detectDshVersion() {
-  const env = String(process.env.DSH_VERSION ?? '').trim();
-  if (env) return env;
-  let dir = process.argv[1] ? dirname(process.argv[1]) : '';
-  for (let i = 0; dir && i < 8; i += 1) {
-    const pkgPath = join(dir, 'package.json');
-    if (existsSync(pkgPath)) {
-      try {
-        const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
-        if (pkg.name === '@deepseek-ai/dsh' && typeof pkg.version === 'string') return pkg.version;
-      } catch {
-        /* 继续向上 */
-      }
-    }
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return '';
-}
 
 function makeLog(ctx) {
   const logger = ctx?.logger;
