@@ -10,6 +10,7 @@ import '../../models/outbox.dart';
 import '../../models/session_event.dart';
 import '../../theme/app_icons.dart';
 import '../ignore_show_on_screen.dart';
+import 'chat_note_sheet.dart';
 
 // 聊天页的展示层：气泡、离线气泡、图片、空态/错误态、思考小字。
 //
@@ -612,29 +613,52 @@ class NotesLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final settings = AppScope.maybeOf(context)?.settings;
-    if (settings == null) return _detailed();
+    if (settings == null) return _detailed(context);
     return AnimatedBuilder(
       animation: settings,
       builder: (context, _) => settings.chatNotesMode == ChatNotesMode.compact
           ? Text(noteSummaryCompact(notes), style: style)
-          : _detailed(),
+          : _detailed(context),
     );
   }
 
-  Widget _detailed() {
-    final lines = noteLines(notes);
-    if (lines.length <= 1) return Text(lines.firstOrNull ?? '', style: style);
+  Widget _detailed(BuildContext context) {
+    if (notes.isEmpty) return Text('', style: style);
+    if (notes.length == 1) return _noteRow(context, notes.first);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        for (final line in lines)
-          Text(
-            line,
-            style: style,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
+        for (final note in notes) _noteRow(context, note),
       ],
+    );
+  }
+
+  /// 一行小字。有原文的行右上角挂个小箭头，点一下摊开全文。
+  Widget _noteRow(BuildContext context, ChatNote note) {
+    final label = Text(
+      note.detailedText,
+      style: style,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+    if (!note.expandable) return label;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => showChatNoteSheet(context, note),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Flexible(child: label),
+          Padding(
+            padding: const EdgeInsets.only(left: 4),
+            child: Icon(
+              AppIcons.expand,
+              size: 12,
+              color: style?.color?.withValues(alpha: 0.55),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

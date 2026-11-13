@@ -363,8 +363,13 @@ String _assistantRowKey(SessionLogEvent event, String body) {
 }
 
 void _addNote(List<ChatNote> notes, ChatNote note) {
-  // 同一种工具连着调很多次只留第一行：详细模式下逐行展示，几十行会把气泡压垮。
-  if (notes.isEmpty || notes.last.mergeKey != note.mergeKey) notes.add(note);
+  // 同一种工具连着调很多次只占一行，别让几十行把气泡压垮；但原文不能丢，
+  // 合并进 [ChatNote.bodies]，点开那一行就能看到全部。
+  if (notes.isNotEmpty && notes.last.mergeKey == note.mergeKey) {
+    notes[notes.length - 1] = notes.last.mergeWith(note);
+    return;
+  }
+  notes.add(note);
 }
 
 /// 消息 content 可能是字符串，也可能是 `[{type, text}]` 分片列表。
