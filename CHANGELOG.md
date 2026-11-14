@@ -1,3 +1,17 @@
+## 2026-11-14（会话页「更多」菜单可选人格预设）
+
+### app 1.3.15+30
+
+- **需求**：新建会话后想换一整套工具与提示词，手机上只能靠网页端的 `AgentPresetSeat`；App 的 ⋯「更多」菜单里没有入口。
+- **改法**：
+  - ⋯ 菜单在「会话权限」下面加一行 **人格预设**：`leading` 用 hub 图标，副标题给「当前人格 · 一句说明」，点开是全部预设的列表（当前那套打勾，`broken` 的置灰并给「暂时不可用：原因」）。
+  - 三个 RPC 走宿主原生接口，不再借斜杠命令：`agentPresets/list`（无参、无 scope，宿主没装预设服务时兜成空表）、`agentPresets/select`（scope 走 `agentId`，返回宿主提交后的 preset id）、读当前值走 `session/list` 的 `projections.values.agentPreset`。
+  - 目录懒加载：只在点开菜单或弹窗时拉一次，进会话页不多打 RPC。
+  - **语义按宿主来**：只有一句话都没说过的空白会话能换；已开首轮的会话 `select` 被宿主以 `agent-preset/locked` 拒掉，App 原样把 "This session has already started" 弹给用户，不在本地做假锁。
+  - 切换走乐观更新 + 失败回滚，和权限那条同一套（`_setAgentPreset` / `_hydrateAgentPreset`，进页补拉带 2s 退避、上限 `kPermissionHydrateRetries`）。
+- 新增 `lib/models/agent_preset_option.dart`：`AgentPresetOption`（容错解析、`usable`）与 `AgentPresetCatalog`（`empty/fromJson/isEmpty/defaultPreset/byId`），中文 `agentPresetLabel` / `agentPresetHint` 覆盖 main-agent / standard / unrestricted / redteam / cordis / ptc / minimal，其余 id 原样显示。
+- 测试：新增 `agent_preset_option_test.dart`(5) 与 `session_chat_preset_test.dart`(6)——入口显隐、晚一拍补拉后出现、弹窗目录只拉一次、`broken` 项禁用、成功写回副标题跟着变、失败回滚并显示宿主原文。全量 372 通过，`flutter analyze` 无问题。
+
 ## 2026-11-14（主机卡片的 DSH 版本缩小、让出宽度给标题）
 
 ### app 1.3.14+29

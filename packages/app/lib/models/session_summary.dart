@@ -19,6 +19,7 @@ class SessionSummary {
     this.blank = false,
     this.subagentLabel,
     this.permission,
+    this.agentPreset,
   });
 
   /// 容错解析：任何字段缺失或类型不符都退回默认值，不抛异常。
@@ -42,6 +43,7 @@ class SessionSummary {
       blank: _asBool(json['blank']),
       subagentLabel: _asText(_asMap(values['subagent'])['label']),
       permission: _asText(_asMap(values['permissions'])['currentValue']),
+      agentPreset: _asText(values['agentPreset']),
     );
   }
 
@@ -84,8 +86,16 @@ class SessionSummary {
   /// 画一个点了没用的按钮。
   final String? permission;
 
+  /// 会话当前的人格预设机器值（`projections.values.agentPreset`）。
+  ///
+  /// 为 null 表示这台主机没装预设服务、或部署本身不组任何预设；客户端此时
+  /// 应当把人格入口藏起来。
+  final String? agentPreset;
+
   /// 列表/状态条上该显示的名字：优先派工时起的 label。
-  String get displayTitle => subagentLabel ?? title;  /// 这是被派出去的子会话（而不是用户自己开的一个）。
+  String get displayTitle => subagentLabel ?? title;
+
+  /// 这是被派出去的子会话（而不是用户自己开的一个）。
   bool get isSubagent => origin == 'subagent' || parentSessionId != null;
 
   /// 列表页是否该隐藏：子会话与空会话都不算「我的会话」。
@@ -106,6 +116,7 @@ class SessionSummary {
     blank: blank,
     subagentLabel: subagentLabel,
     permission: permission,
+    agentPreset: agentPreset,
   );
 
   /// `projections.values` 这一层在不同 DSH 版本里可能被省略，两种都认。

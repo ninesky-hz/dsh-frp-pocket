@@ -7,6 +7,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../models/agent_preset_option.dart';
 import '../models/assistant_draft.dart';
 import '../models/dsh_queue.dart';
 import '../models/dsh_skill.dart';
@@ -288,6 +289,24 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   int _permissionAttempts = 0;
   Timer? _permissionRetry;
 
+  /// 这台主机上注册的人格预设；空表 = 还没拉过，或这台主机没有预设服务。
+  AgentPresetCatalog _presetCatalog = const AgentPresetCatalog.empty();
+
+  /// 这个会话当前的人格预设机器值（`main-agent` / `unrestricted` / …）。
+  ///
+  /// null = 手上这行 summary 没带投影（新建会话就是这样），会补拉一次。
+  String? _agentPreset;
+
+  /// 正在写回人格：期间入口显示转圈，避免连点发两次选择。
+  bool _presetBusy = false;
+
+  /// 正在补拉人格值：快照、重连可能同时触发，一次就够。
+  bool _presetHydrating = false;
+
+  /// 人格值补拉重试次数与闹钟，理由同权限那一对。
+  int _presetAttempts = 0;
+  Timer? _presetRetry;
+
   /// 这一帧的行快照与 key→下标，sliver 构建器和锚点计算共用同一份。
   List<ChatMessage> _rows = const <ChatMessage>[];
   Map<String, int> _index = const <String, int>{};
@@ -334,6 +353,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     _linkSub = _remote.linkStates.listen(_onLinkState);
     _permission = widget.session.permission;
     if (_permission == null) unawaited(_hydratePermission());
+    _agentPreset = widget.session.agentPreset;
+    if (_agentPreset == null) unawaited(_hydrateAgentPreset());
     _input.addListener(_onDraftChanged);
     _start();
     unawaited(_restoreOutbox());
@@ -349,6 +370,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     _snapshotTimer?.cancel();
     _childrenTimer?.cancel();
     _permissionRetry?.cancel();
+    _presetRetry?.cancel();
     unawaited(_sub?.cancel());
     unawaited(_eventsSub?.cancel());
     unawaited(_linkSub?.cancel());
@@ -1445,6 +1467,186 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     );
   }
 
+  /// 按需拉人格预设目录；拉不到就当这台主机没有预设服务。
+  Future<AgentPresetCatalog> _ensurePresetCatalog() async {
+    if (!_presetCatalog.isEmpty) return _presetCatalog;
+    AgentPresetCatalog catalog;
+    try {
+      catalog = await _remote.agentPresetCatalog();
+    } on Object {
+      catalog = const AgentPresetCatalog.empty();
+    }
+    if (!mounted || _disposed || catalog.isEmpty) return catalog;
+    setState(() => _presetCatalog = catalog);
+    return catalog;
+  }
+
+  /// 手上那行 summary 没带人格值时补一次。
+  ///
+  /// 新建会话能直接进页，但那一刻的 [SessionSummary] 是本地拼的，没有
+  /// `projections`，人格值必然是 null —— 不补的话「刚建好的会话没有人格入口，
+  /// 退出去再进来才有」。新建会话可能晚一拍才进列表，所以拿不到时退避重试
+  /// 几次再收手（和权限用同一组常量）。
+  Future<void> _hydrateAgentPreset() async {
+    if (_disposed || _agentPreset != null || _presetHydrating) return;
+    _presetHydrating = true;
+    String? value;
+    try {
+      value = await _remote.agentPresetOf(widget.session.sessionId);
+    } on Object {
+      value = null;
+    } finally {
+      _presetHydrating = false;
+    }
+    // 期间用户可能已经自己选过一套，别把新值冲掉。
+    if (!mounted || _disposed || _agentPreset != null) return;
+    if (value != null) {
+      setState(() => _agentPreset = value);
+      return;
+    }
+    if (_presetAttempts >= kPermissionHydrateRetries) return;
+    _presetAttempts++;
+    _presetRetry?.cancel();
+    _presetRetry = Timer(const Duration(seconds: 2), () {
+      if (!mounted || _disposed) return;
+      unawaited(_hydrateAgentPreset());
+    });
+  }
+
+  /// 写回人格：乐观更新入口，失败退回原值并把宿主的话原样告诉用户。
+  Future<void> _setAgentPreset(String preset) async {
+    final previous = _agentPreset;
+    if (preset == previous || _presetBusy) return;
+    setState(() {
+      _agentPreset = preset;
+      _presetBusy = true;
+    });
+    try {
+      final committed = await _remote.selectAgentPreset(
+        widget.session.sessionId,
+        preset,
+      );
+      if (!mounted) return;
+      // 宿主可能换了个实际生效的 id（别名/默认值），以它为准。
+      if (committed != preset) setState(() => _agentPreset = committed);
+      _toast('人格已切到${_presetLabel(committed)}');
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _agentPreset = previous);
+      _toast('切换人格失败：${_permissionErrorText(error)}');
+    } finally {
+      if (mounted) setState(() => _presetBusy = false);
+    }
+  }
+
+  /// 人格的展示名：目录里认得的用宿主给自己的名字，认不得的退回机器名映射。
+  String _presetLabel(String id) {
+    final known = _presetCatalog.byId(id);
+    return known == null ? agentPresetLabel(id) : known.label;
+  }
+
+  /// 菜单里那一行人格入口：会话没有人格投影、目录也拉不到时整块不出现。
+  ///
+  /// 和权限同理——人格不是每条消息都要动的东西，塞进「更多」里，标题也就有
+  /// 了整行可用。
+  Widget _buildPresetEntry(ThemeData theme, BuildContext sheetContext) {
+    final value = _agentPreset;
+    final catalog = _presetCatalog;
+    if (value == null && catalog.isEmpty) return const SizedBox.shrink();
+    final current = catalog.byId(value);
+    // 目录还没拉过时只能给机器名映射；连值都没有就说明只剩「点开去选」。
+    final subtitle = current != null
+        ? '${current.label} · ${current.hint}'
+        : (value == null ? '点开选择这个会话跑哪套工具与提示词' : agentPresetLabel(value));
+    return ListTile(
+      key: const ValueKey<String>('preset-entry'),
+      leading: Icon(AppIcons.hub, color: theme.colorScheme.onSurfaceVariant),
+      title: const Text('人格预设'),
+      subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
+      trailing: _presetBusy
+          ? const SizedBox(
+              width: AppIcons.inline,
+              height: AppIcons.inline,
+              child: CircularProgressIndicator(strokeWidth: 1.6),
+            )
+          : const Icon(AppIcons.forward),
+      onTap: _presetBusy
+          ? null
+          : () => Navigator.of(sheetContext).pop('preset'),
+    );
+  }
+
+  /// 底部弹窗：当前人格打勾，选完立刻写回。
+  ///
+  /// 换人格只在「一句话都还没说过」的会话成立，宿主对已开始的会话会直接
+  /// 拒掉，所以这里不做本地拦截 —— 把宿主那句 `agent-preset/locked` 原样
+  /// 显示，用户才知道为什么没生效。
+  Future<void> _showPresetSheet() async {
+    if (_presetBusy) return;
+    var catalog = _presetCatalog;
+    if (catalog.isEmpty) {
+      catalog = await _ensurePresetCatalog();
+      if (!mounted || _disposed) return;
+      if (catalog.isEmpty) {
+        _toast('这台主机没有可选的人格预设');
+        return;
+      }
+    }
+    final current = _agentPreset ?? catalog.defaultPreset?.id;
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        final theme = Theme.of(sheetContext);
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+                child: Text('人格预设', style: theme.textTheme.titleMedium),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                child: Text(
+                  '换人格等于换一整套工具与提示词；只有还没说过话的会话能换，'
+                  '开了首轮之后就锁住了。',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+              for (final preset in catalog.presets)
+                ListTile(
+                  key: ValueKey<String>('preset.${preset.id}'),
+                  enabled: preset.usable,
+                  leading: Icon(
+                    preset.id == current
+                        ? AppIcons.check
+                        : (preset.usable ? AppIcons.hub : AppIcons.error),
+                    color: preset.id == current
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.onSurfaceVariant,
+                  ),
+                  title: Text(preset.label),
+                  subtitle: Text(
+                    preset.hint,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  onTap: preset.usable
+                      ? () => Navigator.of(sheetContext).pop(preset.id)
+                      : null,
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+    if (picked == null) return;
+    await _setAgentPreset(picked);
+  }
+
   /// 状态条：子智能体数量 / 谁在跑。
   ///
   /// 没有子智能体时整条不出现——大多数会话是一个人在跟自己说话。
@@ -2042,6 +2244,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
               ),
               const Divider(height: 1),
               _buildPermissionEntry(theme, sheetContext),
+              _buildPresetEntry(theme, sheetContext),
               ListTile(
                 leading: const Icon(AppIcons.copy),
                 title: const Text('复制会话 ID'),
@@ -2063,6 +2266,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         await _copySessionId();
       case 'permission':
         await _showPermissionSheet();
+      case 'preset':
+        await _showPresetSheet();
       case 'cancel':
         await _cancelTurn();
     }

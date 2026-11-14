@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../models/agent_preset_option.dart';
 import '../models/dsh_queue.dart';
 import '../models/dsh_skill.dart';
 import '../models/host.dart';
@@ -489,6 +490,51 @@ class DshRemote {
     }
     final text = map['text'];
     return text is String ? text : 'preset $value';
+  }
+
+  /// 这台主机上注册的人格预设（`agentPresets/list`，无参数、不需要 scope）。
+  ///
+  /// 宿主没装预设服务时 RPC 会直接失败，或者 `presets` 为空——两种情况都返回
+  /// 空表，让界面把入口藏起来。
+  Future<AgentPresetCatalog> agentPresetCatalog() async {
+    try {
+      final Map<String, Object?> value = await call<Map<String, Object?>>(
+        'agentPresets/list',
+        const <String, Object?>{},
+      );
+      return AgentPresetCatalog.fromJson(value);
+    } on Object {
+      return const AgentPresetCatalog.empty();
+    }
+  }
+
+  /// 这个会话当前的人格预设；拿不到就是 null。
+  ///
+  /// 和权限一样没有单独读口，只在 `session/list` 的
+  /// `projections.values.agentPreset` 里出现。
+  Future<String?> agentPresetOf(String sessionId) async {
+    try {
+      for (final session in await listSessions()) {
+        if (session.sessionId == sessionId) return session.agentPreset;
+      }
+    } on Object {
+      // 读不到就当没有：界面留着上一次的值，不弹错。
+    }
+    return null;
+  }
+
+  /// 切换人格预设：`agentPresets/select`。
+  ///
+  /// scope 走会话（`agentId`），返回宿主提交后的 preset id。
+  ///
+  /// 只有一句话都还没说过的空白会话能换；已经开过 turn 的会话会被宿主以
+  /// `agent-preset/locked` 拒掉，文案原样抛给界面。
+  Future<String> selectAgentPreset(String sessionId, String preset) async {
+    final value = await call<String>('agentPresets/select', <String, Object?>{
+      'agentId': sessionId,
+      'agentPreset': preset,
+    });
+    return value.trim().isEmpty ? preset : value;
   }
 
   /// 发一条消息。返回本次的 requestId（同 id 重试是幂等的）。
