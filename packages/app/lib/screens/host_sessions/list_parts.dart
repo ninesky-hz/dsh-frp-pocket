@@ -242,7 +242,6 @@ class _SessionCard extends StatelessWidget {
     required this.rowState,
     required this.pinned,
     required this.onTap,
-    required this.onOpen,
     required this.onMore,
   });
 
@@ -254,7 +253,6 @@ class _SessionCard extends StatelessWidget {
   /// 是否置顶：决定右上角小图钉，也决定「⋯」菜单里的文案。
   final bool pinned;
   final VoidCallback onTap;
-  final VoidCallback onOpen;
   final VoidCallback onMore;
 
   @override
@@ -344,12 +342,8 @@ class _SessionCard extends StatelessWidget {
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
-                      IconButton(
-                        onPressed: onOpen,
-                        tooltip: '打开会话',
-                        icon: const Icon(AppIcons.chat, size: AppIcons.normal),
-                      ),
-                      // 入口做成按钮而不是长按：长按没有可见提示，用户找不到。
+                      // 只留「⋯」：整张卡片已经可点（onTap 进会话），再摆一个气泡
+                      // 按钮只是把行尾挤窄、把未读/运行圆点压到看不见。
                       IconButton(
                         onPressed: onMore,
                         tooltip: '更多操作',
@@ -377,10 +371,7 @@ class _SessionCard extends StatelessWidget {
 /// 刻意**不做无限动画**（旋转/呼吸）：列表页被 `pumpAndSettle` 驱动的测试会很
 /// 难收敛，静态圆点已经能表达状态，动效留给以后有设计稿再上。
 class _RowStateMarker extends StatelessWidget {
-  const _RowStateMarker({
-    required this.state,
-    required this.sessionId,
-  });
+  const _RowStateMarker({required this.state, required this.sessionId});
 
   final SessionRowState state;
   final String sessionId;
@@ -532,7 +523,6 @@ class _PathDialogState extends State<_PathDialog> {
     );
   }
 }
-
 
 /// 列表底部那行「已归档 · N」：折叠时不占列表空间之外的东西，点开才铺卡片。
 ///

@@ -80,7 +80,8 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
   /// 只有真实运行时才建流式通道：测试里注入了假 api 却拿不到 remote 时，
   /// 不能顺手去连真实 WebSocket。
   late final DshRemote? _remote =
-      widget.remote ?? (widget.api == null ? DshRemote(host: widget.host) : null);
+      widget.remote ??
+      (widget.api == null ? DshRemote(host: widget.host) : null);
   late final bool _ownsRemote = widget.remote == null && _remote != null;
 
   StreamSubscription<DshStreamFrame>? _liveSub;
@@ -355,9 +356,7 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
       result.add(session);
     }
     // 工作区帧里也可能列着子会话（子会话归属父会话的工作区），最后一刀统一滤掉。
-    return result
-        .where((session) => !session.isHidden)
-        .toList(growable: false);
+    return result.where((session) => !session.isHidden).toList(growable: false);
   }
 
   /// 只从工作区流知道的会话：没有标题/运行状态，先用工作区信息占位。
@@ -386,7 +385,9 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
       if (!mounted) return;
       _cache
         ..clear()
-        ..addEntries(sessions.map((session) => MapEntry(session.sessionId, session)));
+        ..addEntries(
+          sessions.map((session) => MapEntry(session.sessionId, session)),
+        );
       setState(() {
         _sessions = _composeSessions();
         _error = null;
@@ -423,7 +424,9 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
       if (!mounted) return;
       _cache
         ..clear()
-        ..addEntries(sessions.map((session) => MapEntry(session.sessionId, session)));
+        ..addEntries(
+          sessions.map((session) => MapEntry(session.sessionId, session)),
+        );
       final next = _composeSessions();
       if (_error != null || !_sameSessions(_sessions, next)) {
         setState(() {
@@ -521,75 +524,75 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
   /// 返回 null 表示用户取消。
   Future<({String? workspaceId, String? cwd})?> _pickSessionTarget() async {
     final workspaces = _workspace.workspaces;
-    final choice = await showModalBottomSheet<({String? workspaceId, String? cwd})>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(sheetContext).size.height * 0.6,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-                  child: Text(
-                    '在哪开新会话？',
-                    style: Theme.of(sheetContext).textTheme.titleMedium,
-                  ),
+    final choice =
+        await showModalBottomSheet<({String? workspaceId, String? cwd})>(
+          context: context,
+          showDragHandle: true,
+          isScrollControlled: true,
+          builder: (sheetContext) {
+            return SafeArea(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(sheetContext).size.height * 0.6,
                 ),
-                if (workspaces.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
-                    child: Text('还没有工作区，直接在下面输目录'),
-                  ),
-                Flexible(
-                  child: ListView(
-                    shrinkWrap: true,
-                    children: <Widget>[
-                      for (final workspace in workspaces)
-                        ListTile(
-                          key: ValueKey<String>(
-                            'new-session.${workspace.workspaceId}',
-                          ),
-                          leading: const Icon(AppIcons.folder),
-                          title: Text(
-                            workspace.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: Text(
-                            workspace.path,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          onTap: () => Navigator.of(sheetContext).pop((
-                            workspaceId: workspace.workspaceId,
-                            cwd: workspace.path,
-                          )),
-                        ),
-                      ListTile(
-                        key: const ValueKey<String>('new-session.other'),
-                        leading: const Icon(AppIcons.edit),
-                        title: const Text('其他目录…'),
-                        onTap: () => Navigator.of(sheetContext).pop((
-                          workspaceId: null,
-                          cwd: '',
-                        )),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                      child: Text(
+                        '在哪开新会话？',
+                        style: Theme.of(sheetContext).textTheme.titleMedium,
                       ),
-                    ],
-                  ),
+                    ),
+                    if (workspaces.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+                        child: Text('还没有工作区，直接在下面输目录'),
+                      ),
+                    Flexible(
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: <Widget>[
+                          for (final workspace in workspaces)
+                            ListTile(
+                              key: ValueKey<String>(
+                                'new-session.${workspace.workspaceId}',
+                              ),
+                              leading: const Icon(AppIcons.folder),
+                              title: Text(
+                                workspace.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Text(
+                                workspace.path,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              onTap: () => Navigator.of(sheetContext).pop((
+                                workspaceId: workspace.workspaceId,
+                                cwd: workspace.path,
+                              )),
+                            ),
+                          ListTile(
+                            key: const ValueKey<String>('new-session.other'),
+                            leading: const Icon(AppIcons.edit),
+                            title: const Text('其他目录…'),
+                            onTap: () => Navigator.of(
+                              sheetContext,
+                            ).pop((workspaceId: null, cwd: '')),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
-      },
-    );
     if (!mounted || choice == null) return null;
     // `cwd: ''` 是「其他目录」的暗号：收起弹窗后再问路径，
     // 不然键盘一弹，sheet 和输入框会互相抢焦点。
@@ -638,9 +641,7 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
               ListTile(
-                leading: Icon(
-                  pinned ? AppIcons.pinned : AppIcons.pin,
-                ),
+                leading: Icon(pinned ? AppIcons.pinned : AppIcons.pin),
                 title: Text(pinned ? '取消置顶' : '置顶'),
                 onTap: () =>
                     Navigator.of(sheetContext).pop(_SessionAction.togglePin),
@@ -958,11 +959,7 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
                   key: const ValueKey<String>('toggle-grouped'),
                   onPressed: _toggleGrouped,
                   tooltip: _grouped ? '平铺显示' : '按工作区分组',
-                  icon: Icon(
-                    _grouped
-                        ? AppIcons.list
-                        : AppIcons.grid,
-                  ),
+                  icon: Icon(_grouped ? AppIcons.list : AppIcons.grid),
                 ),
                 if (_creating)
                   const Padding(
@@ -983,10 +980,7 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
                 const SizedBox(width: 8),
               ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: _buildBody(context),
-      ),
+      body: RefreshIndicator(onRefresh: _load, child: _buildBody(context)),
     );
   }
 
@@ -1102,7 +1096,6 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
       rowState: _rowStateOf(session),
       pinned: _workspace.isPinned(session.sessionId),
       onTap: () => unawaited(_openSession(session)),
-      onOpen: () => unawaited(_openSession(session)),
       onMore: () => unawaited(_showSessionActions(session)),
     );
   }

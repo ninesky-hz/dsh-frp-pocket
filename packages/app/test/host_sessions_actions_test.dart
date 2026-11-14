@@ -215,12 +215,14 @@ void main() {
 
       expect(ids, <String>['session-1']);
       expect(sent.single.url.path, '/api/workspace/archiveSession');
-      expect((jsonDecode(sent.single.body) as Map<String, Object?>)['method'],
-          'workspace/archiveSession');
-      expect(_requestOf(jsonDecode(sent.single.body) as Map<String, Object?>), <
-        String,
-        Object?
-      >{'sessionId': 'session-1', 'stopActivity': true});
+      expect(
+        (jsonDecode(sent.single.body) as Map<String, Object?>)['method'],
+        'workspace/archiveSession',
+      );
+      expect(
+        _requestOf(jsonDecode(sent.single.body) as Map<String, Object?>),
+        <String, Object?>{'sessionId': 'session-1', 'stopActivity': true},
+      );
       remote.dispose();
     });
 
@@ -249,16 +251,15 @@ void main() {
         <String, Object?>{
           'pinnedSessionIds': <Object?>['session-2', 'session-1'],
         },
-        <String, Object?>{'pinnedSessionIds': <Object?>['session-1']},
+        <String, Object?>{
+          'pinnedSessionIds': <Object?>['session-1'],
+        },
       ];
       var index = 0;
       final remote = DshRemote(
         host: _host,
         api: _FakeAuthApi(),
-        client: _clientThat(
-          sent.add,
-          () => replies[index++],
-        ),
+        client: _clientThat(sent.add, () => replies[index++]),
       );
 
       expect(await remote.pinSession('session-2'), <String>[
@@ -267,15 +268,15 @@ void main() {
       ]);
       expect(await remote.unpinSession('session-2'), <String>['session-1']);
 
-      expect(
-        sent.map((request) => request.url.path).toList(),
-        <String>['/api/workspace/pinSession', '/api/workspace/unpinSession'],
-      );
+      expect(sent.map((request) => request.url.path).toList(), <String>[
+        '/api/workspace/pinSession',
+        '/api/workspace/unpinSession',
+      ]);
       for (final request in sent) {
-        expect(_requestOf(jsonDecode(request.body) as Map<String, Object?>), <
-          String,
-          Object?
-        >{'sessionId': 'session-2'});
+        expect(
+          _requestOf(jsonDecode(request.body) as Map<String, Object?>),
+          <String, Object?>{'sessionId': 'session-2'},
+        );
       }
       remote.dispose();
     });
@@ -294,10 +295,10 @@ void main() {
       final title = await remote.renameSession('session-1', '  新标题  ');
       expect(title, '服务端裁过的标题');
       expect(sent.single.url.path, '/api/session/rename');
-      expect(_requestOf(jsonDecode(sent.single.body) as Map<String, Object?>), <
-        String,
-        Object?
-      >{'sessionId': 'session-1', 'title': '新标题'});
+      expect(
+        _requestOf(jsonDecode(sent.single.body) as Map<String, Object?>),
+        <String, Object?>{'sessionId': 'session-1', 'title': '新标题'},
+      );
 
       await expectLater(
         remote.renameSession('session-1', '   '),
@@ -311,6 +312,30 @@ void main() {
   });
 
   group('会话行「⋯」菜单', () {
+    testWidgets('行尾只留「⋯」：不再有「打开会话」气泡按钮', (tester) async {
+      final api = _FakeApi(<SessionSummary>[
+        _summary(sessionId: 'session-1', title: '会话 A'),
+      ]);
+      final remote = _FakeRemote();
+      addTearDown(api.dispose);
+
+      await _pump(tester, api: api, remote: remote);
+      remote.workspaces.add(
+        DshStreamFrame(
+          kind: DshFrameKind.workspaceBaseline,
+          workspaceFrame: _baseline(<String>['session-1']),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+
+      // 卡片本身可点，气泡按钮只是重复入口：去掉后行尾只剩「⋯」，
+      // 未读/运行那颗小圆点才不会被挤到看不见。
+      expect(find.byTooltip('打开会话'), findsNothing);
+      expect(find.byTooltip('更多操作'), findsOneWidget);
+      await remote.workspaces.close();
+    });
+
     testWidgets('三项菜单齐全，且置顶文案随 pinned 状态切换', (tester) async {
       final api = _FakeApi(<SessionSummary>[
         _summary(sessionId: 'session-1', title: '会话 A'),
@@ -380,7 +405,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(remote.methods, <String>['workspace/pinSession']);
-      expect(remote.requests.single, <String, Object?>{'sessionId': 'session-2'});
+      expect(remote.requests.single, <String, Object?>{
+        'sessionId': 'session-2',
+      });
       expect(
         tester.getTopLeft(find.text('会话 B')).dy <
             tester.getTopLeft(find.text('会话 A')).dy,
@@ -392,10 +419,10 @@ void main() {
       await tester.tap(find.text('取消置顶'));
       await tester.pumpAndSettle();
 
-      expect(
-        remote.methods,
-        <String>['workspace/pinSession', 'workspace/unpinSession'],
-      );
+      expect(remote.methods, <String>[
+        'workspace/pinSession',
+        'workspace/unpinSession',
+      ]);
       expect(remote.requests.last, <String, Object?>{'sessionId': 'session-2'});
       expect(api.calls, 1, reason: '行操作不整表重拉 session/list');
 
@@ -443,10 +470,10 @@ void main() {
       await tester.pump();
       await tester.pumpAndSettle();
 
-      expect(
-        remote.methods,
-        <String>['workspace/archiveSession', 'workspace/unarchiveSession'],
-      );
+      expect(remote.methods, <String>[
+        'workspace/archiveSession',
+        'workspace/unarchiveSession',
+      ]);
       expect(remote.requests.last, <String, Object?>{'sessionId': 'session-1'});
       expect(find.text('会话 A'), findsOneWidget);
       expect(api.calls, 1, reason: '撤销只发 unarchive，不重拉列表');
