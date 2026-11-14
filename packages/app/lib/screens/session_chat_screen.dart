@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -38,6 +39,12 @@ const int kPermissionHydrateRetries = 2;
 /// follow 的 snapshot 帧里才有（`projections.asOfSeq`）。所以顺序是固定的：
 /// 先开流拿快照，再用快照的 seq 拉最近 30 条。
 class SessionChatScreen extends StatefulWidget {
+  /// 首屏之后最多在后台预取几页。
+  ///
+  /// 这个会话一页常有几百 KB（正文是长回复和工具输出），预取两页足够
+  /// 抵掉第一次向上翻的等待，又不至于把几千条的老会话全拉进内存。
+  static const int prefetchPages = 2;
+
   const SessionChatScreen({
     super.key,
     required this.host,
@@ -48,6 +55,7 @@ class SessionChatScreen extends StatefulWidget {
     this.pendingStore,
     this.pickImage,
     this.snapshotTimeout = const Duration(seconds: 8),
+    this.prefetchHistory = true,
   });
 
   final Host host;
@@ -76,6 +84,12 @@ class SessionChatScreen extends StatefulWidget {
   /// 等快照的超时；传 `Duration.zero` 可以关掉（测试里用）。
   final Duration snapshotTimeout;
 
+  /// 首屏之后要不要在后台预取更早的一页。
+  ///
+  /// 只为「翻页语义」写单测时关掉：那些用例数的是 `page` 调用次数，
+  /// 后台预取会多出一次，跟被测行为无关。
+  final bool prefetchHistory;
+
   @override
   State<SessionChatScreen> createState() => _SessionChatScreenState();
 }
@@ -95,7 +109,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   /// 锚点行在同一帧重试、首次布局直接落到底。
   late final ChatScrollController _scroll = ChatScrollController(
     prependCorrection: _prependCorrection,
-    startsAtBottom: () => _atBottom,
+    startsAtBottom: () => _stickBottom,
   );
   final TextEditingController _input = TextEditingController();
   final FocusNode _focus = FocusNode();
@@ -235,6 +249,18 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   bool _loadingOlder = false;
   String? _olderError;
 
+  /// 一次要回多少条历史。
+  ///
+  /// 每页都是一次隧道往返 + 一次 JSON 解码，条目越多单页越重；30 条是
+  /// 「一屏半」的量，配合预取刚好，再大就变成一次卡更久。
+  static const int _historyPageSize = 30;
+
+  int _prefetchedPages = 0;
+
+  /// 有没有还没刷到界面上的流式变更。
+  bool _flushPending = false;
+  bool _flushScheduled = false;
+
   // ------------------------------------------------------------ 子智能体
 
   /// 这个会话派出去的子会话，最近更新的排在前面。
@@ -281,6 +307,14 @@ class _SessionChatScreenState extends State<SessionChatScreen>
 
   /// 贴底阈值：`extentAfter` 小于它就当用户还在底部。
   static const double _bottomSlack = 32;
+
+  /// 「用户还停在底部」——布局阶段据此决定要不要把像素跟到新底边。
+  ///
+  /// 不能用 [_atBottom]：那个带 32px 容差，手指往上挪十几像素依旧算「在底部」，
+  /// 于是每帧都被拽回去，看起来就是「怎么拉都拉不动，得猛甩一下才行」。
+  /// 这里只在内容自己长大时保持为真；用户一旦往上走（像素变小）立刻松开。
+  bool _stickBottom = true;
+  double _lastPixels = 0;
 
   /// 自动贴底动画在飞：这期间不要把 `_atBottom` 降级，否则新消息会被当成
   /// 「用户自己往上翻了」。
@@ -399,6 +433,34 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     });
   }
 
+  /// 滚动是不是还在飞（手指拖着，或者惯性还在滑）。
+  bool get _scrollBusy =>
+      _scroll.hasClients && _scroll.position.isScrollingNotifier.value;
+
+  /// 流式帧与事件到达时不要「每帧一次 setState」。
+  ///
+  /// 一轮对话里 chunk 能到每秒几十帧；以前每个 chunk 都整张列表重建一遍，
+  /// 连着正在变长的草稿气泡一起重排。用户这时候往上翻，手势就在跟重建
+  /// 抢主线程，看起来就是「卡住，过很久才动」。
+  ///
+  /// 现在合并成「下一个 frame 刷一次」，而且**滚动期间干脆不刷**：数据照收，
+  /// 等滚动停下来再补一次界面。文字晚几十毫秒出现没人会在意，滚动掉帧
+  /// 每个人都能感觉到。
+  void _scheduleFlush() {
+    _flushPending = true;
+    if (_flushScheduled) return;
+    _flushScheduled = true;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _flushScheduled = false;
+      if (!mounted) return;
+      if (_scrollBusy) return; // 滚完再补，见 _onScrollChanged
+      if (!_flushPending) return;
+      _flushPending = false;
+      setState(() {});
+    });
+    SchedulerBinding.instance.scheduleFrame();
+  }
+
   void _onFrame(DshStreamFrame frame) {
     if (!mounted) return;
     switch (frame.kind) {
@@ -431,10 +493,10 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         final payload = frame.assistantFrame;
         if (payload == null) break;
         if (_drafts.applyFrame(payload)) {
-          final started = asText(payload['type']) == 'start';
-          setState(() {
-            if (started) _streaming = true;
-          });
+          if (asText(payload['type']) == 'start') {
+            setState(() => _streaming = true);
+          }
+          _scheduleFlush();
         }
       case DshFrameKind.error:
         debugPrint('SessionChat: ${frame.errorCode} ${frame.errorMessage}');
@@ -648,9 +710,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       added = true;
     }
     if (!changed || !mounted) return;
-    setState(() {
-      if (added && !_atBottom) _hasNew = true;
-    });
+    if (added && !_atBottom) _hasNew = true;
+    _scheduleFlush();
     if (added && _atBottom) _scrollToBottom();
   }
 
@@ -743,37 +804,54 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   ///
   /// 并发/到底两道闸都在最前面：加载中不重复触发，`hasMore == false` 之后
   /// 一次请求都不发。失败只加一行「点这里重试」，原列表一条不动。
-  Future<void> _loadOlder() async {
+  Future<void> _loadOlder({bool quiet = false}) async {
     if (_loadingOlder || !_hasMoreHistory) return;
     final before = _oldestSeq;
     final through = _asOfSeq ?? (_lastSeq > 0 ? _lastSeq : null);
     if (before == null || through == null) return;
     _loadingOlder = true;
-    if (mounted) setState(() => _olderError = null);
+    if (mounted && !quiet) setState(() => _olderError = null);
     try {
       final history = await _remote.page(
         widget.session.sessionId,
         throughSeq: through,
         beforeSeq: before,
-        maxMessages: 30,
+        maxMessages: _historyPageSize,
       );
       if (!mounted) return;
       _mergeOlder(history);
       setState(() {
         _hasMoreHistory = history.hasMore;
       });
+      _prefetchOlder();
     } on DshApiException catch (error) {
       if (!mounted) return;
       debugPrint('SessionChat: 加载更早的消息失败 ${error.code}');
-      setState(() => _olderError = '加载更早的消息失败，点这里重试');
+      if (!quiet) setState(() => _olderError = '加载更早的消息失败，点这里重试');
     } catch (error) {
       if (!mounted) return;
       debugPrint('SessionChat: 加载更早的消息失败 $error');
-      setState(() => _olderError = '加载更早的消息失败，点这里重试');
+      if (!quiet) setState(() => _olderError = '加载更早的消息失败，点这里重试');
     } finally {
       _loadingOlder = false;
       if (mounted) setState(() {});
     }
+  }
+
+  /// 主动预取：不等用户翻到顶，先在后台把更早的一页取回来。
+  ///
+  /// 一页 30 条历史在这个会话里能到几百 KB（正文全是长回复和工具输出摘要），
+  /// 手机上要等隧道传完、再 decode，才轮得到「刚才那一页」。等用户真翻到
+  /// 顶再发请求，看到的就是「卡住几秒，然后才动」。
+  ///
+  /// 预取的页数有上限（[SessionChatScreen.prefetchPages]），不然一个几千条的老会话会把内存吃光。
+  void _prefetchOlder() {
+    if (!widget.prefetchHistory) return;
+    if (!_hasMoreHistory || _loadingOlder) return;
+    if (_prefetchedPages >= SessionChatScreen.prefetchPages) return;
+    if ((_oldestSeq ?? 0) <= 0) return;
+    _prefetchedPages += 1;
+    unawaited(_loadOlder(quiet: true));
   }
 
   Future<void> _loadHistory({
@@ -784,7 +862,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       final history = await _remote.page(
         widget.session.sessionId,
         throughSeq: throughSeq,
-        maxMessages: 30,
+        maxMessages: _historyPageSize,
       );
       if (!mounted) return;
       var added = false;
@@ -800,6 +878,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         if (added && !quiet && !_atBottom) _hasNew = true;
       });
       if (added) _scrollToBottom(animate: quiet);
+      // 首屏站稳之后就把上一页悄悄取回来：用户第一次往上翻时，
+      // 等的是「已经在路上的那一页」，而不是「现在才发出去的请求」。
+      _prefetchOlder();
       // 历史到了再对一次账：回填的气泡如果已经变成历史，就地收掉。
       if (_restoredLocalIds.isNotEmpty) unawaited(_reconcilePending());
     } on DshApiException catch (error) {
@@ -2012,6 +2093,16 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   void _onScrollChanged() {
     if (!mounted) return;
     final atBottom = _atBottomNow();
+    if (_scroll.hasClients) {
+      final pixels = _scroll.position.pixels;
+      if (pixels < _lastPixels - 0.5) {
+        // 往上翻了：立刻交还滚动权，别再往底边贴。
+        _stickBottom = false;
+      } else if (atBottom) {
+        _stickBottom = true;
+      }
+      _lastPixels = pixels;
+    }
     if (atBottom != _atBottom) {
       // 自动贴底动画还在飞：途中会经过「没到底」的位置，别把用户的意图改掉。
       if (_autoScrolling && !atBottom) return;
@@ -2020,6 +2111,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         if (atBottom) _hasNew = false;
       });
     }
+    if (!_scrollBusy && _flushPending) _scheduleFlush();
     _maybeLoadOlder();
   }
 
@@ -2035,20 +2127,25 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     return position.extentAfter <= _bottomSlack;
   }
 
-  /// 离视觉顶部（历史段的起点，也就是 `minScrollExtent`）不到 200 像素就
+  /// 离视觉顶部（历史段的起点，也就是 `minScrollExtent`）不到 800 像素就
   /// 再要一页。
+  ///
+  /// 宁可早发：一页要过隧道、还要解码，等真的贴到顶再发，手指就停住了。
+  /// 800 像素差不多是两屏，够把来回的路上时间藏进去。
   void _maybeLoadOlder() {
     if (!_scroll.hasClients) return;
     final position = _scroll.position;
     if (!position.hasContentDimensions) return;
     if (position.maxScrollExtent - position.minScrollExtent <= 0) return;
-    if (position.pixels > position.minScrollExtent + 200) return;
+    if (position.pixels > position.minScrollExtent + 800) return;
     unawaited(_loadOlder());
   }
 
   void _scrollToBottom({bool animate = true}) {
     // 用户正在选字：别把视口拽走，他手上的那句话会跑。
     if (_selecting) return;
+    // 这是我们自己要落到底，不是用户往上翻：重新贴回去。
+    _stickBottom = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_selecting) return;
       if (!mounted || !_scroll.hasClients) return;

@@ -68,7 +68,17 @@ class ChatScrollPosition extends ScrollPositionWithSingleContext {
       correctBy(correction);
       return false;
     }
-    if (startsAtBottom() && (pixels - maxScrollExtent).abs() > _tolerance) {
+    // 手指还按在屏幕上（或者刚甩出去、还在惯性里）：这时候把像素拽回底边，
+    // 等于每一帧都把用户拖出来的那点位移抹掉 —— 小步往上拉会「卡住」，
+    // 得猛地甩一下、单帧位移超过贴底阈值才跑得掉。
+    //
+    // 所以贴底只在「没有手势在跑」时生效：内容自己长大（流式、新消息）时
+    // 照旧跟到底边，用户主动往上翻时一秒都不拦。
+    final holding =
+        activity is DragScrollActivity || activity is BallisticScrollActivity;
+    if (!holding &&
+        startsAtBottom() &&
+        (pixels - maxScrollExtent).abs() > _tolerance) {
       // 停在底部时，任何内容尺寸变化都要在**这一帧的布局里**跟到底边。
       // 只靠 post-frame 回调量 maxScrollExtent 会用到旧值：新消息那一行
       // 还没排完就跳，跳完 max 又长大，于是停在半路（少 48px）。

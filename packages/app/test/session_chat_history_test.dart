@@ -10,11 +10,7 @@ import 'package:dsh_frp_app/services/dsh_remote.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const Host _host = Host(
-  id: 'h1',
-  name: '家里的机器',
-  url: 'http://127.0.0.1:8080',
-);
+const Host _host = Host(id: 'h1', name: '家里的机器', url: 'http://127.0.0.1:8080');
 
 const SessionSummary _session = SessionSummary(
   sessionId: 'session-1',
@@ -112,13 +108,13 @@ Future<void> _pumpChat(WidgetTester tester, _PagingRemote remote) async {
         session: _session,
         remote: remote,
         snapshotTimeout: Duration.zero,
+        // 这些用例数的是「翻到顶要了几页」，后台预取会多打一次，先关掉。
+        prefetchHistory: false,
       ),
     ),
   );
   await tester.pump();
-  remote.frames.add(
-    DshStreamFrame(kind: DshFrameKind.snapshot, asOfSeq: 3422),
-  );
+  remote.frames.add(DshStreamFrame(kind: DshFrameKind.snapshot, asOfSeq: 3422));
   await tester.pump();
   await tester.pump();
   // 首屏加载完会自动滚到底（180ms 的动画），等它结束再动手。
@@ -175,11 +171,7 @@ void main() {
     await _scrollToTop(tester);
 
     expect(remote.pageCalls, 2, reason: '翻到顶触发第二页');
-    expect(
-      remote.beforeSeqs[1],
-      100,
-      reason: 'beforeSeq 必须是列表里最老那条的 seq',
-    );
+    expect(remote.beforeSeqs[1], 100, reason: 'beforeSeq 必须是列表里最老那条的 seq');
 
     // 合并后新的一页排在列表头部，翻到顶就能看到（reverse: true 里 dy 越小越靠上）。
     await _scrollToTop(tester);
@@ -192,11 +184,7 @@ void main() {
     expect(third, lessThan(newest), reason: '100 在更早的一页之后');
 
     // 重复的 100 号没有变成两条：同文案只该出现一次。
-    expect(
-      find.text(_textOf(100)),
-      findsOneWidget,
-      reason: '两页重叠的 seq 必须被去重',
-    );
+    expect(find.text(_textOf(100)), findsOneWidget, reason: '两页重叠的 seq 必须被去重');
 
     // hasMore == false 之后一次请求都不发，顶部也不再有 loading。
     expect(remote.pageCalls, 2);
@@ -210,7 +198,9 @@ void main() {
     final remote = _PagingRemote(
       pages: <SessionHistory>[
         _page(<int>[for (var seq = 100; seq <= 119; seq += 1) seq]),
-        _page(<int>[for (var seq = 80; seq <= 99; seq += 1) seq], hasMore: false),
+        _page(<int>[
+          for (var seq = 80; seq <= 99; seq += 1) seq,
+        ], hasMore: false),
       ],
     );
     await _pumpChat(tester, remote);
@@ -247,7 +237,9 @@ void main() {
     final remote = _PagingRemote(
       pages: <SessionHistory>[
         _page(<int>[for (var seq = 100; seq <= 119; seq += 1) seq]),
-        _page(<int>[for (var seq = 80; seq <= 99; seq += 1) seq], hasMore: false),
+        _page(<int>[
+          for (var seq = 80; seq <= 99; seq += 1) seq,
+        ], hasMore: false),
       ],
     );
     await _pumpChat(tester, remote);
@@ -329,7 +321,9 @@ void main() {
     final remote = _PagingRemote(
       pages: <SessionHistory>[
         _page(<int>[for (var seq = 100; seq <= 119; seq += 1) seq]),
-        _page(<int>[for (var seq = 80; seq <= 99; seq += 1) seq], hasMore: false),
+        _page(<int>[
+          for (var seq = 80; seq <= 99; seq += 1) seq,
+        ], hasMore: false),
       ],
     );
     await _pumpChat(tester, remote);
@@ -359,11 +353,7 @@ void main() {
       lessThan(beforeMin - 100),
       reason: '更早的一页确实插进了历史段',
     );
-    expect(
-      position.pixels,
-      closeTo(beforePixels, 0.51),
-      reason: '插入历史不该改滚动像素',
-    );
+    expect(position.pixels, closeTo(beforePixels, 0.51), reason: '插入历史不该改滚动像素');
     expect(
       tester.getRect(find.text(watched)).top,
       closeTo(beforeTop, 0.51),
@@ -376,7 +366,9 @@ void main() {
   testWidgets('贴底时新消息自动贴底', (tester) async {
     final remote = _PagingRemote(
       pages: <SessionHistory>[
-        _page(<int>[for (var seq = 100; seq <= 109; seq += 1) seq], hasMore: false),
+        _page(<int>[
+          for (var seq = 100; seq <= 109; seq += 1) seq,
+        ], hasMore: false),
       ],
     );
     await _pumpChat(tester, remote);

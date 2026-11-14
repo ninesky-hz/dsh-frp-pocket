@@ -238,8 +238,10 @@ void main() {
         ),
       ),
     );
+    // 事件到达后的重建被合并到下一帧（见 `_scheduleFlush`），多走一帧。
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump();
 
     expect(remote.attachments, <String>['sha256:c414']);
 

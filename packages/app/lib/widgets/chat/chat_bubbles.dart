@@ -11,7 +11,14 @@ import '../../models/session_event.dart';
 import '../../theme/app_icons.dart';
 import '../ignore_show_on_screen.dart';
 import 'chat_note_sheet.dart';
+import 'text_viewer.dart';
 import 'image_viewer.dart';
+
+/// 超过这个字数的气泡只渲染预览，全文点开阅读页看。
+const int kLongTextChars = 1200;
+
+/// 预览保留几行。
+const int kLongTextPreviewLines = 12;
 
 // 聊天页的展示层：气泡、离线气泡、图片、空态/错误态、思考小字。
 //
@@ -31,6 +38,7 @@ class OutboxAction extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
 
+  @override
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -91,6 +99,63 @@ class MessageBubble extends StatelessWidget {
   /// 否则长按之后想微调选区，一动就把整条列表带着滑走。
   final ValueChanged<TextSelection>? onSelectionChanged;
 
+  /// 气泡正文：短的就地可选，长的先给预览。
+  ///
+  /// 一条消息几千字时，`SelectableText` 的排版与选区几何要按整段小作文算，
+  /// 滚动进来一次能卡住上百毫秒；连着几条就把「往上翻」变成「卡住」。
+  /// 超过 [kLongTextChars] 字只渲染前 [kLongTextPreviewLines] 行，其余点开
+  /// 阅读页看——那里一次只有一条，选字、复制都还在。
+  Widget _bubbleText(
+    BuildContext context,
+    ThemeData theme,
+    Color foreground,
+    bool typing,
+  ) {
+    final style = theme.textTheme.bodyMedium?.copyWith(
+      color: foreground,
+      height: 1.45,
+    );
+    if (typing) {
+      // 流式期间正文每一帧都在变长：用普通 Text。`SelectableText` 每次重排
+      // 都要重算整段选区几何，正在滚动的列表能明显感到掉帧。
+      return Text('${message.text}▌', style: style);
+    }
+    if (message.text.length <= kLongTextChars) {
+      return SelectableText(
+        message.text,
+        onSelectionChanged: (selection, cause) =>
+            onSelectionChanged?.call(selection),
+        style: style,
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Text(
+          message.text,
+          maxLines: kLongTextPreviewLines,
+          overflow: TextOverflow.ellipsis,
+          style: style,
+        ),
+        TextButton(
+          onPressed: () => showTextSheet(
+            context,
+            text: message.text,
+            label: '全文（${message.text.length} 字）',
+          ),
+          style: TextButton.styleFrom(
+            foregroundColor: foreground,
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            minimumSize: const Size(0, 32),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: const Text('展开全文'),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -143,15 +208,7 @@ class MessageBubble extends StatelessWidget {
                     selectionColor: foreground.withValues(alpha: 0.32),
                     selectionHandleColor: foreground,
                   ),
-                  child: SelectableText(
-                    typing ? '${message.text}▌' : message.text,
-                    onSelectionChanged: (selection, cause) =>
-                        onSelectionChanged?.call(selection),
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: foreground,
-                      height: 1.45,
-                    ),
-                  ),
+                  child: _bubbleText(context, theme, foreground, typing),
                 ),
               ),
             if (message.notes.isNotEmpty)
