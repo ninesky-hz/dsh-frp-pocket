@@ -20,6 +20,15 @@ const int kLongTextChars = 1200;
 /// 预览保留几行。
 const int kLongTextPreviewLines = 12;
 
+/// 气泡底下「思考 / 工具调用」每行的最小热区高度。
+///
+/// 12sp 的小字单行只有二十来像素，两行叠在一起时两个箭头几乎贴在一起，
+/// 手指很容易点错；撑到 40 既够得着，又不会把小字行撑成正文那种块。
+const double kNoteRowMinHeight = 40;
+
+/// 相邻两条小字行之间额外留的空隙。
+const double kNoteRowGap = 2;
+
 // 聊天页的展示层：气泡、离线气泡、图片、空态/错误态、思考小字。
 //
 // 这些类原来都塞在 `session_chat_screen.dart` 尾部（那个文件 3400 行，状态机、
@@ -771,38 +780,59 @@ class NotesLine extends StatelessWidget {
 
   Widget _detailed(BuildContext context) {
     if (notes.isEmpty) return Text('', style: style);
-    if (notes.length == 1) return _noteRow(context, notes.first);
+    if (notes.length == 1) return _noteRow(context, notes.first, 0);
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[for (final note in notes) _noteRow(context, note)],
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        for (var i = 0; i < notes.length; i++)
+          Padding(
+            padding: EdgeInsets.only(top: i == 0 ? 0 : kNoteRowGap),
+            child: _noteRow(context, notes[i], i),
+          ),
+      ],
     );
   }
 
-  /// 一行小字。有原文的行右上角挂个小箭头，点一下摊开全文。
-  Widget _noteRow(BuildContext context, ChatNote note) {
+  /// 一行小字。有原文的行整行可点，右侧挂个小箭头，点开摊全文。
+  ///
+  /// 这里刻意把行撑到 [kNoteRowMinHeight]：思考和工具调用经常一上一下连着
+  /// 出现，两个箭头只隔一行 12sp 小字的时候，手指按下十有八九点错那一行。
+  /// 行高、行距、整行热区（`Expanded` 把标签撑满、箭头贴右边）一起改，
+  /// 现在两行之间至少隔出 [kNoteRowGap] + 两份内边距。
+  Widget _noteRow(BuildContext context, ChatNote note, int index) {
     final label = Text(
       note.detailedText,
       style: style,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
-    if (!note.expandable) return label;
+    if (!note.expandable) {
+      return Padding(
+        key: ValueKey<String>('note-row.$index'),
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: label,
+      );
+    }
     return GestureDetector(
+      key: ValueKey<String>('note-row.$index'),
       behavior: HitTestBehavior.opaque,
       onTap: () => showChatNoteSheet(context, note),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Flexible(child: label),
-          Padding(
-            padding: const EdgeInsets.only(left: 4),
-            child: Icon(
-              AppIcons.expand,
-              size: 12,
-              color: style?.color?.withValues(alpha: 0.55),
-            ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: kNoteRowMinHeight),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            children: <Widget>[
+              Expanded(child: label),
+              const SizedBox(width: 6),
+              Icon(
+                AppIcons.expand,
+                size: 14,
+                color: style?.color?.withValues(alpha: 0.55),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
