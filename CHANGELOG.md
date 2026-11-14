@@ -2,6 +2,17 @@
 
 本项目两个包各自记版本：`packages/app`（Android 客户端，`dsh_frp_app`）与 `packages/plugin`（DSH 宿主插件，`dsh-frp-pocket`）。
 
+## 2026-11-14（重启 DSH 真正落地）
+
+### plugin 0.3.2
+
+- **「重启 DSH」以前只是写了个状态文件，PC 端什么都没发生**。202 正常返回、`restart.json` 也写了，看起来像受理了，实际上助手脚本一次都没启动过。原因在启动命令的拼法：`cmd.exe /d /s /c "start "" /b powershell.exe …"` 这一整串是手工拼的，Node 又给整串套了一层引号，`/s` 把外层剥掉后 `start` 收到的参数已经被拆坏，于是 cmd 默默退出，PowerShell 根本没被叫起来（实测：同一脚本直接调用能写日志，用旧命令行调用则一片空白）。
+  - 改成参数数组：`spawn('cmd.exe', ['/c','start','','/b','powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File', script])`——标题位显式留空，cmd 原样转发。
+  - 自退条件收紧：只有助手进程真的拿到 pid 才 `exit(0)`；助手起不来时**保持存活**并把错误写日志——否则插件先把自己弄死，主机连网关都没了，人只能跑到机器前。
+  - 接住 `spawn` 的异步 `error` 事件，避免 ENOENT 变成未捕获异常带崩宿主。
+  - 演练验证（真实模板 + 一次性替身进程）：日志依次出现 `helper start` → `target name=powershell` → `taskkill /F /T` → `old process gone=True`，替身进程确认已被杀。
+  - 测试新增 2 条：cmd 参数必须逐项传且不含 `/s`；助手起不来时不调用 `exit`。`node --test` 全绿（95）。
+
 ## 2026-11-13（重启隧道 404 修复）
 
 ### plugin 0.3.1

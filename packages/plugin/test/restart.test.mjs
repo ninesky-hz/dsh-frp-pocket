@@ -222,3 +222,50 @@ test('status：锁定窗口内 restarting=true，超时后只留历史记录', (
   assert.equal(later.restarting, false);
   assert.equal(later.mode, 'app');
 });
+
+// ------------------------------------------------------------ 真正启动助手
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function launcherFor({ spawnImpl, exit }) {
+  const calls = [];
+  const ctl = createRestartController({
+    getConfig: () => ({}),
+    log: { info() {}, warn() {}, error: () => {} },
+    now: () => 1700000000000,
+    runtime: { platform: 'win32', versions: { electron: '33' }, ppid: 4242, env: {}, execPath: 'C:\\x\\DSH.exe' },
+    spawn: (file, args, opts) => {
+      calls.push({ file, args, opts });
+      return spawnImpl ? spawnImpl(file, args, opts) : { pid: 1234, unref() {}, on() {} };
+    },
+    exit,
+    delayMs: 0,
+  });
+  return { ctl, calls };
+}
+
+test('win32 起助手：cmd 的参数必须逐项传，不能拼 /s 整串（拼了助手根本不执行）', async () => {
+  const exits = [];
+  const { ctl, calls } = launcherFor({ exit: (code) => exits.push(code) });
+  ctl.requestDsh({ by: 'x' });
+  await sleep(80);
+
+  assert.equal(calls.length, 1);
+  const { file, args, opts } = calls[0];
+  assert.equal(file, 'cmd.exe');
+  assert.deepEqual(args.slice(0, 5), ['/c', 'start', '', '/b', 'powershell.exe']);
+  assert.ok(args.includes('-File'), '要把脚本路径交给 powershell');
+  assert.ok(!args.includes('/s'), '带 /s 会把引号剥坏，助手静默不跑');
+  assert.equal(opts.detached, true);
+  assert.equal(opts.stdio, 'ignore');
+  assert.deepEqual(exits, [0], '助手起来了才允许自退');
+});
+
+test('助手起不来：不自退，主机不至于连网关都没了', async () => {
+  const exits = [];
+  const { ctl } = launcherFor({ spawnImpl: () => ({ pid: undefined, unref() {}, on() {} }), exit: (code) => exits.push(code) });
+  const out = ctl.requestDsh({ by: 'x' });
+  assert.equal(out.ok, true, '202 语义不变：请求已受理');
+  await sleep(80);
+  assert.deepEqual(exits, []);
+});

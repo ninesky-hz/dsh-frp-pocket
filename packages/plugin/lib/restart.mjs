@@ -285,11 +285,15 @@ export function createRestartController({
 
   function arm({ rt, marker }) {
     const timer = setTimeout(() => {
+      let launched = false;
       try {
         launchHelper({ rt, marker });
+        launched = true;
       } catch (error) {
         log.error?.(`frp-pocket: 重启助手启动失败：${error?.message ?? error}`);
       }
+      // 助手没起来就绝不能自退：进程一没，主机连网关都没了，用户只能跑到机器前。
+      if (!launched) return;
       // 让 cmd/脚本先落地，再把自己的进程让出来
       const t = setTimeout(() => exit(0), 50);
       t.unref?.();
@@ -321,14 +325,31 @@ export function createRestartController({
         mode: rt.mode,
       });
       writeFileSync(p.scriptPs1, script, { encoding: 'utf8' });
-      // start 让 powershell 脱离进程树：中间 cmd 立刻退出，之后 /T 打不到它
-      const cmd = `start "" /b powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${p.scriptPs1}"`;
-      const child = spawn('cmd.exe', ['/d', '/s', '/c', cmd], {
+      // 这里必须把参数一项项交给 cmd，不能自己拼成 `cmd /d /s /c "start "" /b ..."`
+      // 一整串：Node 会再套一层引号，/s 剥完第一层后 start 收到的参数已经被拆坏，
+      // 结果是助手脚本一次都没执行、PC 端毫无反应（2026-11-14 实测）。
+      // 用数组形式、把 start 的标题位显式留空，cmd 才会按原样转发。
+      const child = spawn('cmd.exe', [
+        '/c',
+        'start',
+        '',
+        '/b',
+        'powershell.exe',
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        p.scriptPs1,
+      ], {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
       });
       child.unref?.();
+      if (!child.pid) throw new Error('helper_spawn_failed');
+      // spawn 失败是异步事件；不接住会变成未捕获异常把宿主带崩
+      child.on?.('error', (error) => log.error?.(`frp-pocket: 重启助手 spawn 失败：${error?.message ?? error}`));
     } else {
       const script = buildPosixScript({
         logPath: p.log,
@@ -346,6 +367,7 @@ export function createRestartController({
       }
       const child = spawn('bash', [p.scriptSh], { detached: true, stdio: 'ignore', cwd: workDir });
       child.unref?.();
+      if (!child.pid) throw new Error('helper_spawn_failed');
     }
     log.info?.(`frp-pocket: DSH 重启已排程 mode=${rt.mode} pid=${rt.targetPid} at=${marker.at}`);
   }
