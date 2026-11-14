@@ -55,10 +55,16 @@ const AgentPresetCatalog _catalog = AgentPresetCatalog(
 );
 
 class _PresetRemote extends DshRemote {
-  _PresetRemote({this.failSwitch = false, this.listedPreset})
-    : super(host: _host);
+  _PresetRemote({
+    this.failSwitch = false,
+    this.listedPreset,
+    this.catalog = _catalog,
+  }) : super(host: _host);
 
   final bool failSwitch;
+
+  /// 宿主给的预设目录；默认是上面那三套，长列表的用例自己换。
+  final AgentPresetCatalog catalog;
 
   /// 列表侧（`session/list` 的投影）里这个会话的人格值：新建会话那一刻手上
   /// 那行没有它，补拉时才拿得到。可变，用来模拟「会话晚一拍才进列表」。
@@ -120,7 +126,7 @@ class _PresetRemote extends DshRemote {
   @override
   Future<AgentPresetCatalog> agentPresetCatalog() async {
     catalogCalls++;
-    return _catalog;
+    return catalog;
   }
 
   @override
@@ -153,10 +159,12 @@ Future<_PresetRemote> _pumpChat(
   String? agentPreset,
   String? listedPreset,
   bool failSwitch = false,
+  AgentPresetCatalog catalog = _catalog,
 }) async {
   final remote = _PresetRemote(
     failSwitch: failSwitch,
     listedPreset: listedPreset,
+    catalog: catalog,
   );
   await tester.pumpWidget(
     MaterialApp(
@@ -292,6 +300,49 @@ void main() {
     );
     await _openMenu(tester);
     expect(find.textContaining('主智能体'), findsOneWidget);
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('预设多到装不下时弹窗自己滚：滑到底能选中最后一项', (tester) async {
+    // 12 套 ×（标题+说明）在 800×600 的测试画布上一定超出弹窗高度。
+    final many = AgentPresetCatalog(
+      presets: <AgentPresetOption>[
+        for (var i = 0; i < 12; i++)
+          AgentPresetOption(
+            id: 'p$i',
+            isDefault: i == 0,
+            name: '人格 $i',
+            description: '第 $i 套的工具与提示词',
+            order: i,
+          ),
+      ],
+    );
+    final remote = await _pumpChat(
+      tester,
+      agentPreset: 'p0',
+      catalog: many,
+    );
+    await _openPresetSheet(tester);
+
+    // 老写法（Column 撑出屏幕）在这里会抛 RenderFlex overflow，且最后一项
+    // 根本进不了树——这条用例就是钉住「能滚」这件事。
+    expect(tester.takeException(), isNull);
+
+    final list = find.byKey(const ValueKey<String>('preset-sheet-list'));
+    expect(list, findsOneWidget);
+    final last = find.byKey(const ValueKey<String>('preset.p11'));
+    expect(last, findsNothing, reason: '一屏放不下，粗列表不该一次建完');
+
+    await tester.scrollUntilVisible(
+      last,
+      200,
+      scrollable: find.descendant(of: list, matching: find.byType(Scrollable)),
+    );
+    expect(last, findsOneWidget);
+
+    await tester.tap(last);
+    await tester.pumpAndSettle();
+    expect(remote.selects, <String>['p11']);
     await _disposeChat(tester, remote);
   });
 }

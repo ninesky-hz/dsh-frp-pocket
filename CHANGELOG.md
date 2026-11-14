@@ -1,3 +1,15 @@
+## 2026-11-14（人格预设弹窗能往上滑了）
+
+### app 1.3.16+31
+
+- **现场症状**：点开「人格预设」后列表停在最上面，手指往下拖不动，屏幕上还有一半预设（标准 / PTC / 极简 / 创造模式 / Main Agent…）看不到也点不到。
+- **根因**：弹窗是 `Column(mainAxisSize: min)` 平铺所有 `ListTile`，靠默认的 9/16 屏高「撑到高为止」。预设五套时内容已经超出上限，超出部分不是被裁掉就是溢出错位，而且这层根本没有任何可滚动部件——所以只能看到开头几项。
+- **改法**：
+  - 弹窗改 `isScrollControlled: true` + `ConstrainedBox(maxHeight: 屏高 × 0.8)`：内容少时仍是贴着内容的矮弹窗，多了就被限高。
+  - 标题与说明留在 Column 里钉住，列表换成 `Flexible` + `ListView(shrinkWrap: true)`，key `preset-sheet-list`——滚到底也一直看得见自己在选什么。
+- 测试：`session_chat_preset_test.dart` 新增「预设多到装不下时弹窗自己滚」（12 套预设，断言无 overflow 异常、末尾项一开始不在树里、滚到底能选中并写回 `p11`）。把修复 stash 掉这条用例必红，确实是钉住了真 bug。
+- 回归：`flutter analyze` No issues，全量 373 通过。
+
 ## 2026-11-14（会话页「更多」菜单可选人格预设）
 
 ### app 1.3.15+30

@@ -1596,49 +1596,65 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     final picked = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
+      // 预设数量不受我们控制（本机五套，别人可能更多），弹窗必须自己能滚：
+      // 走「撑到多高算多高」的老写法时，超出屏幕的那些项永远滚不到。
+      isScrollControlled: true,
       builder: (sheetContext) {
         final theme = Theme.of(sheetContext);
+        final maxHeight = MediaQuery.of(sheetContext).size.height * 0.8;
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
-                child: Text('人格预设', style: theme.textTheme.titleMedium),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                child: Text(
-                  '换人格等于换一整套工具与提示词；只有还没说过话的会话能换，'
-                  '开了首轮之后就锁住了。',
-                  style: theme.textTheme.bodySmall,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxHeight),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+                  child: Text('人格预设', style: theme.textTheme.titleMedium),
                 ),
-              ),
-              for (final preset in catalog.presets)
-                ListTile(
-                  key: ValueKey<String>('preset.${preset.id}'),
-                  enabled: preset.usable,
-                  leading: Icon(
-                    preset.id == current
-                        ? AppIcons.check
-                        : (preset.usable ? AppIcons.hub : AppIcons.error),
-                    color: preset.id == current
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.onSurfaceVariant,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                  child: Text(
+                    '换人格等于换一整套工具与提示词；只有还没说过话的会话能换，'
+                    '开了首轮之后就锁住了。',
+                    style: theme.textTheme.bodySmall,
                   ),
-                  title: Text(preset.label),
-                  subtitle: Text(
-                    preset.hint,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  onTap: preset.usable
-                      ? () => Navigator.of(sheetContext).pop(preset.id)
-                      : null,
                 ),
-              const SizedBox(height: 8),
-            ],
+                // 标题与说明钉住，只有列表滚：滑到底也不会看不见自己在选什么。
+                Flexible(
+                  child: ListView(
+                    key: const ValueKey<String>('preset-sheet-list'),
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.only(bottom: 8),
+                    children: <Widget>[
+                      for (final preset in catalog.presets)
+                        ListTile(
+                          key: ValueKey<String>('preset.${preset.id}'),
+                          enabled: preset.usable,
+                          leading: Icon(
+                            preset.id == current
+                                ? AppIcons.check
+                                : (preset.usable ? AppIcons.hub : AppIcons.error),
+                            color: preset.id == current
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.onSurfaceVariant,
+                          ),
+                          title: Text(preset.label),
+                          subtitle: Text(
+                            preset.hint,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          onTap: preset.usable
+                              ? () => Navigator.of(sheetContext).pop(preset.id)
+                              : null,
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
