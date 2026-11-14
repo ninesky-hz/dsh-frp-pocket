@@ -18,7 +18,7 @@
 
 import { spawn as nodeSpawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { paths } from './config.mjs';
 
@@ -156,7 +156,7 @@ Start-Sleep -Milliseconds 800
 
 $exe = ${psQuote(exePath)}
 $wd = ${psQuote(workDir ?? '')}
-$args = ${argList}
+$launchArgs = ${argList}
 $target = ${Number(targetPid)}
 $expected = ${psQuote(expectedName ?? '')}
 
@@ -179,19 +179,41 @@ for ($i = 0; $i -lt 120; $i++) {
 }
 Write-RestartLog ('old process gone=' + $gone)
 
+$launched = $false
+$lastError = ''
 for ($try = 1; $try -le 20; $try++) {
   Start-Sleep -Milliseconds 250
-  if ($wd -ne '' -and (Test-Path -LiteralPath $wd)) {
-    $p = Start-Process -FilePath $exe -WorkingDirectory $wd -ArgumentList $args -PassThru
-  } else {
-    $p = Start-Process -FilePath $exe -ArgumentList $args -PassThru
+  # Only put parameters we actually need into the splat: an empty ArgumentList
+  # is rejected by parameter validation ("cannot validate argument on parameter
+  # ArgumentList ... empty collection"), which leaves $p null and turns every
+  # attempt into "launch failed" - that is exactly what kept the PC closed on
+  # 2026-11-14. Also never name a variable $args: PowerShell owns that one.
+  #
+  # Keep this file ASCII-only: Windows PowerShell 5.1 reads a .ps1 without a
+  # BOM as ANSI. UTF-8 Chinese comments then decode into mojibake whose trail
+  # bytes can end a comment line with a backtick, swallowing the next line
+  # ($start = ...) and leaving $start null.
+  $start = @{ FilePath = $exe; PassThru = $true }
+  if ($wd -ne '' -and (Test-Path -LiteralPath $wd)) { $start['WorkingDirectory'] = $wd }
+  if ($launchArgs.Count -gt 0) { $start['ArgumentList'] = $launchArgs }
+  $p = $null
+  try {
+    $p = Start-Process @start
+  } catch {
+    $lastError = $_.Exception.Message
+    Write-RestartLog ('launch error try=' + $try + ': ' + $lastError)
   }
   if (-not $p) { Write-RestartLog ('launch failed try=' + $try); continue }
   Start-Sleep -Milliseconds 900
   $p.Refresh()
-  if (-not $p.HasExited) { Write-RestartLog ('launched pid=' + $p.Id + ' try=' + $try); break }
+  if (-not $p.HasExited) {
+    Write-RestartLog ('launched pid=' + $p.Id + ' try=' + $try)
+    $launched = $true
+    break
+  }
   Write-RestartLog ('early exit pid=' + $p.Id + ' code=' + $p.ExitCode + ' try=' + $try)
 }
+if (-not $launched) { Write-RestartLog ('launch gave up lastError=' + $lastError) }
 Write-RestartLog 'helper done'
 `;
 }
@@ -310,7 +332,11 @@ export function createRestartController({
       execArgv: runtime?.execArgv ?? process.execArgv,
       argv: runtime?.argv ?? process.argv,
     });
-    const workDir = runtime?.cwd ?? process.cwd();
+    // app 模式跟资源管理器双击一致：工作目录用 exe 所在目录；process 模式沿用当前 cwd。
+    const workDir =
+      rt.mode === 'app'
+        ? dirname(runtime?.execPath ?? process.execPath)
+        : runtime?.cwd ?? process.cwd();
     const expectedName = basename(target.exe).replace(/\.exe$/i, '');
     const platform = runtime?.platform ?? process.platform;
 
@@ -324,7 +350,12 @@ export function createRestartController({
         expectedName,
         mode: rt.mode,
       });
-      writeFileSync(p.scriptPs1, script, { encoding: 'utf8' });
+      // BOM on purpose: the helper runs under Windows PowerShell 5.1, which
+      // decodes a BOM-less .ps1 as ANSI. A UTF-8 path (or any non-ASCII text)
+      // without the BOM turns into mojibake and the script misparses - the
+      // launch loop then dies on a null hashtable. Keep the BOM even though
+      // the generated body itself is ASCII.
+      writeFileSync(p.scriptPs1, `\uFEFF${script}`, { encoding: 'utf8' });
       // 这里必须把参数一项项交给 cmd，不能自己拼成 `cmd /d /s /c "start "" /b ..."`
       // 一整串：Node 会再套一层引号，/s 剥完第一层后 start 收到的参数已经被拆坏，
       // 结果是助手脚本一次都没执行、PC 端毫无反应（2026-11-14 实测）。

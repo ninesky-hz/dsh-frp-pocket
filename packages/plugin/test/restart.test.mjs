@@ -1,7 +1,7 @@
 // 重启能力判定 + 助手脚本生成 + 限速状态机（不真重启任何东西）
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 import { makeHome } from './helpers.mjs';
 import {
@@ -105,11 +105,14 @@ test('Windows 助手：杀对 pid、等旧实例退出、带重试拉起', () =>
   assert.match(script, /\$target = 4321/);
   assert.ok(script.includes("$expected = 'DeepSeek Harness'"));
   assert.match(script, /for \(\$try = 1; \$try -le 20; \$try\+\+\)/);
-  assert.match(script, /Start-Process -FilePath \$exe/);
+  assert.match(script, /Start-Process @start/, '用 splat 只给必要参数，空的 ArgumentList 会被拒');
   assert.ok(script.includes("'--flag', 'a b'"), '参数要原样传给 Start-Process');
   assert.match(script, /Add-Content -LiteralPath \$log/);
   // 名字对不上就不杀：防止 pid 被回收时误杀别的程序
   assert.match(script, /skip kill: unexpected process name/);
+  // 助手脚本保持纯 ASCII：PowerShell 5.1 按 ANSI 读无 BOM 的 .ps1，
+  // 中文注释会被解成乱码、还可能把下一行吃掉（$start 变 null，重拉永远失败）。
+  assert.doesNotMatch(script, /[^\x00-\x7f]/, '生成的 ps1 不能带非 ASCII 字符');
 });
 
 test('Windows 助手：路径里的单引号要转义成双写', () => {
@@ -268,4 +271,16 @@ test('助手起不来：不自退，主机不至于连网关都没了', async ()
   assert.equal(out.ok, true, '202 语义不变：请求已受理');
   await sleep(80);
   assert.deepEqual(exits, []);
+});
+
+test('落盘的 ps1 带 UTF-8 BOM：PowerShell 5.1 才不会按 ANSI 解坏', async () => {
+  const exits = [];
+  const { ctl } = launcherFor({ exit: (code) => exits.push(code) });
+  ctl.requestDsh({ by: 'x' });
+  await sleep(80);
+
+  const file = restartPaths().scriptPs1;
+  assert.ok(existsSync(file), '助手脚本要真的写出来');
+  const bytes = readFileSync(file);
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], 'ps1 必须以 BOM 开头');
 });

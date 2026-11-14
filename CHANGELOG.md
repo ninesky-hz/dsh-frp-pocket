@@ -44,6 +44,22 @@
   - 顺手收掉两个小毛病：拖拽/惯性滚动期间不再往底边贴；用户往上翻了 0.5px 之后，流式新增内容不会再把视口拽回底部。
 - 测试：新增 `session_chat_prefetch_test.dart`（进会话即预取、`beforeSeq` 接续正确、页数有上限）与 `chat_long_text_test.dart`（长文只留预览、展开看全文、短文不变）；翻页语义的老用例显式 `prefetchHistory: false`，免得后台预取干扰计数。`flutter analyze` 干净，`flutter test` **356 通过**。
 
+## 2026-11-14（重启 DSH 真的把 PC 端拉起来）
+
+### plugin 0.3.3
+
+- **上一版只是「把助手脚本叫起来了」，这一次它真的能把 DSH 拉回来**。用户实测：APP 点「重启 DSH」，PC 端窗口关掉后就不动了。`restart.log` 记录得很清楚——`taskkill` 成功、旧进程 `gone=True`，然后 `launch failed try=1..20`，20 次重拉全失败。
+- 两处叠在一起的原因：
+  - **空的 `ArgumentList` 直接被参数校验拒掉**。app 模式没有额外参数，脚本里仍然传了 `-ArgumentList @()`，`Start-Process` 报「参数为 Null 或为空集合」，`$p` 恒为 `$null`，于是每一次都被记成 launch failed。
+  - **生成的 `.ps1` 是 UTF-8 无 BOM，Windows PowerShell 5.1 按 ANSI/GBK 读**。脚本里的中文注释被解成乱码，其中某些字节恰好解出反引号，成了行继续符，把紧跟着的 `$start = @{…}` 整行吞进注释——`$start` 变成 `$null`，后面两行赋值直接抛 `NullArray`（`无法对 Null 数组建立索引`）。这个比第一个更隐蔽：脚本「能跑」，只是跑错。
+- 改法：
+  - 参数改成 splat，只放真正需要的键：`$start = @{ FilePath = $exe; PassThru = $true }`，`WorkingDirectory` 与 `ArgumentList` 都在条件成立时才加。变量名 `$args` → `$launchArgs`（`$args` 是 PowerShell 的自动变量）。
+  - 写 `restart.ps1` 时**加 UTF-8 BOM**（`\uFEFF`），并把生成的脚本正文约束成**纯 ASCII**，注释全部改英文——路径里带中文时也不至于再被解坏。
+  - app 模式的工作目录改成 exe 所在目录（等价于在资源管理器里双击），不再是插件进程的 cwd。
+  - 日志补 `launch error try=N: <Message>` 与 `launch gave up lastError=…`，下次再出问题一眼能看出是参数错还是进程自己退了。
+- 演练（走真实控制器、真实 spawn、真实 taskkill）：替身进程被杀 → `old process gone=True` → `launched pid=… try=1` → `helper done`，一次成功；脚本落盘头三字节 `ef bb bf`。
+- 测试新增 2 条：生成的 ps1 不得含非 ASCII 字符；落盘的 ps1 必须以 BOM 开头。`node --test` 96 通过。
+
 ## 2026-11-14（重启 DSH 真正落地）
 
 ### plugin 0.3.2
