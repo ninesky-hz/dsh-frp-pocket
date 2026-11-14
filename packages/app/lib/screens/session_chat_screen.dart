@@ -1409,50 +1409,39 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     await _setPermission(picked);
   }
 
-  /// 工具栏上的权限胶囊：会话没有权限投影时整块不出现。
-  Widget _buildPermissionChip() {
-    if (_permission == null) return const SizedBox.shrink();
-    final theme = Theme.of(context);
-    final value = _permission!;
+  /// 菜单里那一行权限入口：会话没有权限投影时整块不出现。
+  ///
+  /// 以前它是工具栏上的一枚胶囊，跟标题抢同一行的宽度——标题只能缩到
+  /// labelLarge 还随时被截断。权限不是每条消息都要动的东西，放进「更多」
+  /// 里更合适，标题也就有了整行可用。
+  Widget _buildPermissionEntry(ThemeData theme, BuildContext sheetContext) {
+    final value = _permission;
+    if (value == null) return const SizedBox.shrink();
     final danger = value == 'danger-full-access';
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: InkWell(
-        key: const ValueKey<String>('permission-chip'),
-        borderRadius: BorderRadius.circular(999),
-        onTap: _permissionBusy ? null : () => unawaited(_showPermissionSheet()),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHigh,
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              if (_permissionBusy)
-                SizedBox(
-                  width: AppIcons.inline,
-                  height: AppIcons.inline,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.6,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                )
-              else
-                Icon(
-                  danger ? AppIcons.shieldWarn : AppIcons.shield,
-                  size: AppIcons.inline,
-                  color: danger
-                      ? theme.colorScheme.error
-                      : theme.colorScheme.onSurfaceVariant,
-                ),
-              const SizedBox(width: 6),
-              Text(permissionLabel(value), style: theme.textTheme.labelSmall),
-            ],
-          ),
-        ),
+    return ListTile(
+      key: const ValueKey<String>('permission-entry'),
+      leading: Icon(
+        danger ? AppIcons.shieldWarn : AppIcons.shield,
+        color: danger
+            ? theme.colorScheme.error
+            : theme.colorScheme.onSurfaceVariant,
       ),
+      title: const Text('会话权限'),
+      subtitle: Text(
+        '${permissionLabel(value)} · ${permissionHint(value)}',
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: _permissionBusy
+          ? const SizedBox(
+              width: AppIcons.inline,
+              height: AppIcons.inline,
+              child: CircularProgressIndicator(strokeWidth: 1.6),
+            )
+          : const Icon(AppIcons.forward),
+      onTap: _permissionBusy
+          ? null
+          : () => Navigator.of(sheetContext).pop('permission'),
     );
   }
 
@@ -2052,6 +2041,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
                 ),
               ),
               const Divider(height: 1),
+              _buildPermissionEntry(theme, sheetContext),
               ListTile(
                 leading: const Icon(AppIcons.copy),
                 title: const Text('复制会话 ID'),
@@ -2071,6 +2061,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     switch (action) {
       case 'copy':
         await _copySessionId();
+      case 'permission':
+        await _showPermissionSheet();
       case 'cancel':
         await _cancelTurn();
     }
@@ -2524,7 +2516,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
                       _title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelLarge,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                   if (_running) ...<Widget>[
@@ -2542,7 +2536,6 @@ class _SessionChatScreenState extends State<SessionChatScreen>
           ),
         ),
         const SizedBox(width: 8),
-        _buildPermissionChip(),
         GlassIconButton(
           icon: AppIcons.more,
           tooltip: '更多',

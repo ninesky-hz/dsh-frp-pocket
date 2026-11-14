@@ -79,12 +79,11 @@ class _PermRemote extends DshRemote {
     required int throughSeq,
     int? beforeSeq,
     int maxMessages = 20,
-  }) async =>
-      const SessionHistory(
-        cursor: 1,
-        records: <SessionLogEvent>[],
-        hasMore: false,
-      );
+  }) async => const SessionHistory(
+    cursor: 1,
+    records: <SessionLogEvent>[],
+    hasMore: false,
+  );
 
   @override
   Future<String> prompt(
@@ -157,6 +156,18 @@ Future<_PermRemote> _pumpChat(
   return remote;
 }
 
+/// 权限入口现在在「更多」菜单里：先点开菜单，再点那一行。
+Future<void> _openMenu(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('更多'));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _openPermissionSheet(WidgetTester tester) async {
+  await _openMenu(tester);
+  await tester.tap(find.byKey(const ValueKey<String>('permission-entry')));
+  await tester.pumpAndSettle();
+}
+
 Future<void> _disposeChat(WidgetTester tester, _PermRemote remote) async {
   await tester.pumpWidget(const SizedBox());
   await tester.pump();
@@ -168,9 +179,14 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
-  testWidgets('会话没有权限投影：整个入口都不出现，也不发目录请求', (tester) async {
+  testWidgets('会话没有权限投影：菜单里整个入口都不出现，也不发目录请求', (tester) async {
     final remote = await _pumpChat(tester);
-    expect(find.byKey(const ValueKey<String>('permission-chip')), findsNothing);
+    await _openMenu(tester);
+    expect(
+      find.byKey(const ValueKey<String>('permission-entry')),
+      findsNothing,
+    );
+    expect(find.text('会话权限'), findsNothing);
     expect(remote.catalogCalls, 0);
     // 进页补一次、快照到齐再补一次（后者容忍进页那次链路还没通）；问不到就保持隐藏。
     expect(remote.permissionCalls, greaterThanOrEqualTo(1));
@@ -178,15 +194,16 @@ void main() {
   });
 
   testWidgets('新建会话手上那行没投影：进页后补拉一次，入口自己出现', (tester) async {
-    final remote = await _pumpChat(
-      tester,
-      listedPermission: 'workspace-write',
-    );
+    final remote = await _pumpChat(tester, listedPermission: 'workspace-write');
     await tester.pumpAndSettle();
 
     expect(remote.permissionCalls, 1);
-    expect(find.byKey(const ValueKey<String>('permission-chip')), findsOneWidget);
-    expect(find.text('工作区内修改'), findsOneWidget);
+    await _openMenu(tester);
+    expect(
+      find.byKey(const ValueKey<String>('permission-entry')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('工作区内修改'), findsOneWidget);
     // 只是点亮入口，不动宿主的权限：目录仍然等到用户点开才拉。
     expect(remote.catalogCalls, 0);
     expect(remote.switches, isEmpty);
@@ -204,15 +221,22 @@ void main() {
     await tester.pump();
 
     expect(remote.permissionCalls, greaterThan(attempts));
-    expect(find.byKey(const ValueKey<String>('permission-chip')), findsOneWidget);
-    expect(find.text('仅可查看'), findsOneWidget);
+    await _openMenu(tester);
+    expect(
+      find.byKey(const ValueKey<String>('permission-entry')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('仅可查看'), findsOneWidget);
     await _disposeChat(tester, remote);
   });
 
-  testWidgets('有投影时显示中文标签', (tester) async {
+  testWidgets('有投影时菜单里显示中文标签，工具栏不再占位', (tester) async {
     final remote = await _pumpChat(tester, permission: 'danger-full-access');
-    expect(find.byKey(const ValueKey<String>('permission-chip')), findsOneWidget);
-    expect(find.text('完全权限'), findsOneWidget);
+    // 标题那一行只剩返回 / 标题 / 更多，权限胶囊已经搬进菜单。
+    expect(find.byKey(const ValueKey<String>('permission-chip')), findsNothing);
+    await _openMenu(tester);
+    expect(find.text('会话权限'), findsOneWidget);
+    expect(find.textContaining('完全权限'), findsOneWidget);
     // 进入会话本身不该为权限多打一次 RPC。
     expect(remote.catalogCalls, 0);
     expect(remote.permissionCalls, 0);
@@ -222,8 +246,7 @@ void main() {
   testWidgets('点开弹窗选另一档：写回一次并把标签换掉', (tester) async {
     final remote = await _pumpChat(tester, permission: 'danger-full-access');
 
-    await tester.tap(find.byKey(const ValueKey<String>('permission-chip')));
-    await tester.pumpAndSettle();
+    await _openPermissionSheet(tester);
     expect(remote.catalogCalls, 1);
     // 三档都在，当前那档在列表里可见。
     expect(
@@ -237,27 +260,28 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(remote.switches, <String>['workspace-write']);
-    expect(find.text('工作区内修改'), findsOneWidget);
-    expect(find.text('完全权限'), findsNothing);
+    await _openMenu(tester);
+    expect(find.textContaining('工作区内修改'), findsOneWidget);
+    expect(find.textContaining('完全权限'), findsNothing);
     await _disposeChat(tester, remote);
   });
 
-  testWidgets('写回失败：胶囊退回原值并提示', (tester) async {
+  testWidgets('写回失败：菜单里的标签退回原值并提示', (tester) async {
     final remote = await _pumpChat(
       tester,
       permission: 'read-only',
       failSwitch: true,
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('permission-chip')));
-    await tester.pumpAndSettle();
+    await _openPermissionSheet(tester);
     await tester.tap(
       find.byKey(const ValueKey<String>('permission.danger-full-access')),
     );
     await tester.pumpAndSettle();
 
     expect(remote.switches, <String>['danger-full-access']);
-    expect(find.text('仅可查看'), findsOneWidget);
+    await _openMenu(tester);
+    expect(find.textContaining('仅可查看'), findsOneWidget);
     expect(find.textContaining('宿主拒绝了这次权限切换'), findsOneWidget);
     await _disposeChat(tester, remote);
   });
