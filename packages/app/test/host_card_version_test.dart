@@ -2,6 +2,7 @@ import 'package:dsh_frp_app/models/host.dart';
 import 'package:dsh_frp_app/services/probe.dart';
 import 'package:dsh_frp_app/widgets/host_card.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const Host _host = Host(
@@ -25,12 +26,16 @@ ProbeResult _probe({String? dshVersion}) {
   );
 }
 
-Future<void> _pump(WidgetTester tester, ProbeResult result) async {
+Future<void> _pump(
+  WidgetTester tester,
+  ProbeResult result, {
+  Host host = _host,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
         body: HostCard(
-          host: _host,
+          host: host,
           result: result,
           probing: false,
           onTap: () {},
@@ -62,8 +67,49 @@ void main() {
     );
   });
 
+  // 版本号是辅助信息：字号 10（比域名那行 bodySmall 还小一档），
+  // 而且不跟标题抢宽度——标题要能多显示几个字。
+  testWidgets('版本行字号小于标题，且不挤占标题宽度', (tester) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    const longName = '工作区测试多环境';
+    await _pump(
+      tester,
+      _probe(dshVersion: '0.2.2-rc.3'),
+      host: const Host(
+        id: 'h2',
+        name: longName,
+        url: 'https://qj5m3d.dsh.chenz.vip',
+        pin: 'abcd1234',
+      ),
+    );
+
+    final titleSize = tester
+        .renderObject<RenderParagraph>(find.text(longName))
+        .text
+        .style
+        ?.fontSize;
+    final versionSize = tester
+        .renderObject<RenderParagraph>(
+          find.byKey(const ValueKey<String>('host-dsh-version')),
+        )
+        .text
+        .style
+        ?.fontSize;
+
+    expect(titleSize, isNotNull);
+    expect(versionSize, 10);
+    expect(versionSize! < titleSize!, isTrue);
+
+    // 标题没被省略：长名字也整行显示得下
+    final title = tester.renderObject<RenderParagraph>(find.text(longName));
+    expect(title.didExceedMaxLines, isFalse);
+  });
+
   // 320dp 是 1.3.x 支持的最小宽度；状态行那句说明（"隧道重连中（拨 VPN / 换网后常见）"）
-  // 本身就长，版本跟着挤在那一行会直接溢出，所以版本放在标题行、并允许自己省略。
+  // 本身就长，版本跟着挤在那一行会直接溢出，所以版本放在域名行、允许自己省略。
   testWidgets('窄屏 + 长状态说明，版本不撑破卡片', (tester) async {
     tester.view.physicalSize = const Size(320, 640);
     tester.view.devicePixelRatio = 1.0;

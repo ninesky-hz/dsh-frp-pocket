@@ -30,7 +30,6 @@ class HostCard extends StatelessWidget {
     final theme = Theme.of(context);
     final status = result?.status;
     final dshVersion = result?.dshVersion;
-    final subtitleParts = <String>[host.displayHost];
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -83,33 +82,53 @@ class HostCard extends StatelessWidget {
                               color: theme.colorScheme.tertiary,
                             ),
                           ),
-                        // DSH 版本：线上排查第一眼要看的东西（插件和宿主版本对不上、
-                        // 重启后到底起来的是哪一版），所以常驻在标题行，不藏进菜单。
-                        // 位置选标题行而不是状态行：状态行那条说明可能很长，版本跟着挤
-                        // 在那里会在窄屏溢出（320dp 下实测溢出 123px）；标题行放 tag
-                        // 只占固定宽度，名称先省略。外面再包一层 Flexible，版本串本身
-                        // 长得离谱时由 Text 自己省略，而不是把整行撑破。
-                        if (dshVersion != null)
-                          Flexible(
-                            child: Padding(
-                              padding: const EdgeInsets.only(left: 8),
-                              child: _Tag(
-                                key: const ValueKey<String>('host-dsh-version'),
-                                text: 'DSH $dshVersion',
-                                color: theme.colorScheme.secondary,
-                              ),
-                            ),
-                          ),
                       ],
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      subtitleParts.join(' · '),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    // 域名 + DSH 版本同一行：版本是辅助信息，字号比域名还小一档、
+                    // 不铺底色，避免在标题行抢走主机名的宽度（标题要能多显示几个字）。
+                    // 域名用 Flexible 先省略，版本按自然宽度贴右，窄屏也不会撑破。
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            host.displayHost,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (dshVersion != null) ...[
+                          Text(
+                            '  ·  ',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.outline,
+                            ),
+                          ),
+                          ConstrainedBox(
+                            // 正常版本号（0.2.2-rc.3）约 80px；给到 120 就够，
+                            // 真遇到带日期的 dev 串也只在这一小块里省略。
+                            constraints: const BoxConstraints(maxWidth: 120),
+                            child: Text(
+                              'DSH $dshVersion',
+                              key: const ValueKey<String>('host-dsh-version'),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                fontSize: 10,
+                                height: 1.3,
+                                letterSpacing: 0.1,
+                                color: theme.colorScheme.outline,
+                                fontFeatures: const <FontFeature>[
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                     const SizedBox(height: 8),
                     Row(
@@ -163,7 +182,7 @@ class HostCard extends StatelessWidget {
 }
 
 class _Tag extends StatelessWidget {
-  const _Tag({super.key, required this.text, required this.color});
+  const _Tag({required this.text, required this.color});
 
   final String text;
   final Color color;

@@ -1,3 +1,16 @@
+## 2026-11-14（主机卡片的 DSH 版本缩小、让出宽度给标题）
+
+### app 1.3.14+29
+
+- **现场症状**：1.3.13 首版把 `DSH 0.2.2-rc.3` 做成标题行的灰底 tag，真机上一眼看过去它比主机名还抢眼，而且 tag 与名称各占一半宽度——「工作区测试多环境」被截成「工作区测试多…」，标题反而没地方放字。
+- **改法**：
+  - 版本从标题行移到域名行：`qj5m3d.dsh.chenz.vip  ·  DSH 0.2.2-rc.3`。
+  - 去掉灰底 tag，字号降到 **10**（比域名那行 `bodySmall` 还小一档）、颜色用 `colorScheme.outline`、数字走 `FontFeature.tabularFigures()`，读起来是脚注而不是徽章。
+  - 标题行只剩主机名（+ 示例 tag），名称独占整行，长名字不再被切。
+  - 版本串包在 `ConstrainedBox(maxWidth: 120)` + `ellipsis` 里，域名用 `Flexible` 先省略：窄屏或插件报长串时都只是自己缩，不撑破卡片。
+- 顺手删掉 `_Tag` 的 `key` 形参（版本不再走 tag，参数已无人传）。
+- 测试：`host_card_version_test.dart` 从四条扩到五条，新增「版本行字号小于标题且不挤占标题宽度」（360dp、长名字 `工作区测试多环境`，断言 `versionSize == 10 && versionSize < titleSize`，且标题 `RenderParagraph.didExceedMaxLines == false`）。全量 361 通过，`flutter analyze` 无问题。
+
 ## 2026-11-14（设置页填一半的内容不再被轮询清掉）
 
 ### plugin 0.3.4
