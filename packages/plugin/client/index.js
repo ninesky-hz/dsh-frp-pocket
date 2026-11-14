@@ -202,6 +202,14 @@ window.__ModuleLoader__.load({
       const [logs, setLogs] = useState([]);
       const [test, setTest] = useState(null);
       const mounted = useRef(true);
+      // 编辑快照：formRef 跟着手走，pristineRef 是「上次从服务端采纳的原样」。
+      // 两者不等 = 手上有未保存改动；这时后台轮询不许拿服务端配置把输入框顶回去。
+      // 曾经这里每 5s 无条件 adopt()：DNS 服务器填一半、鼠标点一下别处，内容自己就没了
+      // （因为下一跳 status 回来把 form 整块按服务端值重建了）。
+      const formRef = useRef(null);
+      const pristineRef = useRef('');
+      const pinRef = useRef('');
+      const pinPristineRef = useRef('');
 
       const call = async (endpoint, payload) => {
         const res = await rpcCall(endpoint, payload);
@@ -209,26 +217,56 @@ window.__ModuleLoader__.load({
         return res.value;
       };
 
-      const adopt = (value) => {
+      const formFromStatus = (value) => ({
+        displayName: value.displayName ?? '',
+        gatewayPort: String(value.gateway?.port ?? 3081),
+        serverAddr: value.config?.frp?.serverAddr ?? '',
+        serverPort: String(value.config?.frp?.serverPort ?? 7000),
+        authToken: '',
+        transport: value.config?.frp?.transport ?? 'tcp',
+        mode: value.config?.frp?.mode ?? 'subdomain',
+        subdomain: value.config?.frp?.subdomain ?? '',
+        customDomains: (value.config?.frp?.customDomains ?? []).join(', '),
+        domainSuffix: value.config?.frp?.domainSuffix ?? '',
+        autoDomain: value.config?.frp?.autoDomain === true,
+        remotePort: String(value.config?.frp?.remotePort ?? 0),
+        publicUrl: value.config?.frp?.publicUrl ?? '',
+        dnsServer: value.config?.frp?.dnsServer ?? '',
+        enabled: value.config?.frp?.enabled !== false,
+      });
+
+      /** 只改一个字段：读 formRef（活的）而不是渲染闭包里的 form，连打两个字也不丢前一个。 */
+      const patchForm = (patch) => {
+        const next = { ...formRef.current, ...patch };
+        formRef.current = next;
+        setForm(next);
+      };
+
+      const formDirty = () =>
+        formRef.current !== null && JSON.stringify(formRef.current) !== pristineRef.current;
+      const pinDirty = () => pinRef.current !== pinPristineRef.current;
+
+      /**
+       * 用服务端快照刷新界面。
+       * 只有 forceForm / forcePin 才允许覆盖用户正在输入的内容（首次落数据、保存后采纳）；
+       * 后台 5s 轮询只刷新只读状态（隧道状态、二维码、日志），绝不碰未保存的输入。
+       */
+      const applyStatus = (value, opts = {}) => {
+        const { forceForm = false, forcePin = false } = opts;
         setStatus(value);
-        setPin(value.auth?.pin ?? '');
-        setForm({
-          displayName: value.displayName ?? '',
-          gatewayPort: String(value.gateway?.port ?? 3081),
-          serverAddr: value.config?.frp?.serverAddr ?? '',
-          serverPort: String(value.config?.frp?.serverPort ?? 7000),
-          authToken: '',
-          transport: value.config?.frp?.transport ?? 'tcp',
-          mode: value.config?.frp?.mode ?? 'subdomain',
-          subdomain: value.config?.frp?.subdomain ?? '',
-          customDomains: (value.config?.frp?.customDomains ?? []).join(', '),
-          domainSuffix: value.config?.frp?.domainSuffix ?? '',
-          autoDomain: value.config?.frp?.autoDomain === true,
-          remotePort: String(value.config?.frp?.remotePort ?? 0),
-          publicUrl: value.config?.frp?.publicUrl ?? '',
-          dnsServer: value.config?.frp?.dnsServer ?? '',
-          enabled: value.config?.frp?.enabled !== false,
-        });
+        setLogs(value?.frpc?.logs ?? []);
+        if (forceForm || !formDirty()) {
+          const next = formFromStatus(value);
+          formRef.current = next;
+          pristineRef.current = JSON.stringify(next);
+          setForm(next);
+        }
+        if (forcePin || !pinDirty()) {
+          const nextPin = value?.auth?.pin ?? '';
+          pinRef.current = nextPin;
+          pinPristineRef.current = nextPin;
+          setPin(nextPin);
+        }
       };
 
       const load = async (silent = false) => {
@@ -236,8 +274,8 @@ window.__ModuleLoader__.load({
         try {
           const value = await call('status', {});
           if (!mounted.current) return;
-          adopt(value);
-          setLogs(value.frpc?.logs ?? []);
+          // 不传 forceForm：轮询回来时用户手上有字，就原地不动
+          applyStatus(value);
           setError(null);
         } catch (err) {
           if (!mounted.current) return;
@@ -291,8 +329,7 @@ window.__ModuleLoader__.load({
               },
             },
           });
-          adopt(value);
-          setLogs(value.frpc?.logs ?? []);
+          applyStatus(value, { forceForm: true });
           flash('已保存 | saved');
         } catch (err) {
           setError(err?.message ?? String(err));
@@ -309,7 +346,7 @@ window.__ModuleLoader__.load({
         setBusy('pin');
         try {
           const next = await call('pin.set', { pin: value });
-          adopt(next);
+          applyStatus(next, { forcePin: true });
           flash('PIN 已更新 | PIN updated');
         } catch (err) {
           setError(err?.message ?? String(err));
@@ -322,7 +359,7 @@ window.__ModuleLoader__.load({
         setBusy('pin');
         try {
           const next = await call('pin.regenerate', {});
-          adopt(next);
+          applyStatus(next, { forcePin: true });
           flash('已生成新 PIN | PIN regenerated');
         } catch (err) {
           setError(err?.message ?? String(err));
@@ -383,7 +420,8 @@ window.__ModuleLoader__.load({
       const lanList = (status?.lanAddresses ?? []).map((x) => `${x.address} (${x.name})`).join('\n');
       // 注意：这里不能写 hook（useMemo/useState…）。上面有早退 return，
       // 在它之后调用 hook 会让两次渲染的 hook 数量不一致，React 直接抛错 → 设置页整块白屏。
-      const dirty = Boolean(form);
+      // 脏 = 和「上次从服务端采纳的原样」不一致；后台轮询据此判断能不能覆盖输入。
+      const dirty = Boolean(form) && JSON.stringify(form) !== pristineRef.current;
 
       return h(
         'div',
@@ -407,7 +445,7 @@ window.__ModuleLoader__.load({
             h('input', {
               style: styles.input,
               value: form.displayName,
-              onChange: (e) => setForm({ ...form, displayName: e.target.value }),
+              onChange: (e) => patchForm({ displayName: e.target.value }),
             }),
           ),
           h(
@@ -433,7 +471,7 @@ window.__ModuleLoader__.load({
             h('input', {
               style: { ...styles.input, maxWidth: 120 },
               value: form.gatewayPort,
-              onChange: (e) => setForm({ ...form, gatewayPort: e.target.value }),
+              onChange: (e) => patchForm({ gatewayPort: e.target.value }),
             }),
             h('span', { style: styles.sub }, '改动后需重启 DSH 生效'),
           ),
@@ -503,7 +541,7 @@ window.__ModuleLoader__.load({
               style: styles.input,
               placeholder: 'dsh.example.com',
               value: form.serverAddr,
-              onChange: (e) => setForm({ ...form, serverAddr: e.target.value }),
+              onChange: (e) => patchForm({ serverAddr: e.target.value }),
             }),
           ),
           h(
@@ -512,7 +550,7 @@ window.__ModuleLoader__.load({
             h('input', {
               style: { ...styles.input, maxWidth: 120 },
               value: form.serverPort,
-              onChange: (e) => setForm({ ...form, serverPort: e.target.value }),
+              onChange: (e) => patchForm({ serverPort: e.target.value }),
             }),
           ),
           h(
@@ -522,7 +560,7 @@ window.__ModuleLoader__.load({
               style: styles.input,
               placeholder: '留空=跟随系统；建议 223.5.5.5 或 119.29.29.29',
               value: form.dnsServer,
-              onChange: (e) => setForm({ ...form, dnsServer: e.target.value }),
+              onChange: (e) => patchForm({ dnsServer: e.target.value }),
             }),
           ),
           h(
@@ -538,7 +576,7 @@ window.__ModuleLoader__.load({
               type: 'password',
               placeholder: status?.config?.frp?.authTokenSet ? '已设置，留空保持不变' : '未设置',
               value: form.authToken,
-              onChange: (e) => setForm({ ...form, authToken: e.target.value }),
+              onChange: (e) => patchForm({ authToken: e.target.value }),
             }),
           ),
           h(
@@ -549,7 +587,7 @@ window.__ModuleLoader__.load({
               {
                 style: { ...styles.input, maxWidth: 160 },
                 value: form.transport,
-                onChange: (e) => setForm({ ...form, transport: e.target.value }),
+                onChange: (e) => patchForm({ transport: e.target.value }),
               },
               h('option', { value: 'tcp' }, 'tcp'),
               h('option', { value: 'tls' }, 'tls'),
@@ -563,7 +601,7 @@ window.__ModuleLoader__.load({
               {
                 style: { ...styles.input, maxWidth: 200 },
                 value: form.mode,
-                onChange: (e) => setForm({ ...form, mode: e.target.value }),
+                onChange: (e) => patchForm({ mode: e.target.value }),
               },
               h('option', { value: 'subdomain' }, 'subdomain（泛解析）'),
               h('option', { value: 'customDomains' }, 'customDomains（自有域名）'),
@@ -577,7 +615,7 @@ window.__ModuleLoader__.load({
                 h('input', {
                   style: styles.input,
                   value: form.subdomain,
-                  onChange: (e) => setForm({ ...form, subdomain: e.target.value }),
+                  onChange: (e) => patchForm({ subdomain: e.target.value }),
                 }),
               )
             : form.mode === 'customDomains'
@@ -591,7 +629,7 @@ window.__ModuleLoader__.load({
                       style: styles.input,
                       placeholder: 'home.dsh.example.com',
                       value: form.customDomains,
-                      onChange: (e) => setForm({ ...form, customDomains: e.target.value }),
+                      onChange: (e) => patchForm({ customDomains: e.target.value }),
                     }),
                     h(
                       'div',
@@ -606,7 +644,7 @@ window.__ModuleLoader__.load({
                       style: styles.input,
                       placeholder: 'dsh.example.com',
                       value: form.domainSuffix,
-                      onChange: (e) => setForm({ ...form, domainSuffix: e.target.value }),
+                      onChange: (e) => patchForm({ domainSuffix: e.target.value }),
                     }),
                     h(
                       'div',
@@ -623,7 +661,7 @@ window.__ModuleLoader__.load({
                       h('input', {
                         type: 'checkbox',
                         checked: form.autoDomain,
-                        onChange: (e) => setForm({ ...form, autoDomain: e.target.checked }),
+                        onChange: (e) => patchForm({ autoDomain: e.target.checked }),
                       }),
                       '自动生成 6 位随机域名',
                     ),
@@ -640,7 +678,7 @@ window.__ModuleLoader__.load({
                             .replace(/^\*\./, '')
                             .split('/')[0];
                           const host = `${randomSubdomain()}.${suffix}`;
-                          setForm({ ...form, customDomains: host, publicUrl: `https://${host}`, autoDomain: true });
+                          patchForm({ customDomains: host, publicUrl: `https://${host}`, autoDomain: true });
                         },
                       },
                       '换一个随机域名',
@@ -653,7 +691,7 @@ window.__ModuleLoader__.load({
                   h('input', {
                     style: { ...styles.input, maxWidth: 120 },
                     value: form.remotePort,
-                    onChange: (e) => setForm({ ...form, remotePort: e.target.value }),
+                    onChange: (e) => patchForm({ remotePort: e.target.value }),
                   }),
                 ),
           h(
@@ -663,7 +701,7 @@ window.__ModuleLoader__.load({
               style: styles.input,
               placeholder: 'https://home.dsh.example.com',
               value: form.publicUrl,
-              onChange: (e) => setForm({ ...form, publicUrl: e.target.value }),
+              onChange: (e) => patchForm({ publicUrl: e.target.value }),
             }),
           ),
           h(
@@ -675,7 +713,7 @@ window.__ModuleLoader__.load({
               h('input', {
                 type: 'checkbox',
                 checked: form.enabled,
-                onChange: (e) => setForm({ ...form, enabled: e.target.checked }),
+                onChange: (e) => patchForm({ enabled: e.target.checked }),
               }),
               '启用 frpc 隧道',
             ),
@@ -683,6 +721,13 @@ window.__ModuleLoader__.load({
             h('button', { style: styles.btn, disabled: busy === 'test', onClick: runTest }, busy === 'test' ? '测试中…' : '测试连通性'),
             h('button', { style: { ...styles.btn, ...styles.primary }, disabled: busy === 'save' || !dirty, onClick: save }, '保存配置'),
           ),
+          dirty
+            ? h(
+                'div',
+                { style: styles.hint },
+                '有未保存改动：后台每 5 秒只刷新隧道状态，不会覆盖这里正在填的内容；填完记得点「保存配置」。',
+              )
+            : null,
           test
             ? h(
                 'div',

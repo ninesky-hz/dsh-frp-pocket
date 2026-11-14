@@ -26,6 +26,7 @@ class ProbeResult {
     this.healthStatus,
     this.serverName,
     this.serverVersion,
+    this.dshVersion,
     this.pluginName,
     this.serverHostId,
     this.frpState,
@@ -51,7 +52,13 @@ class ProbeResult {
   final int? healthStatus;
 
   final String? serverName;
+
+  /// 插件版本（`/api/info` 的 `version`）。
   final String? serverVersion;
+
+  /// 宿主 DSH 的版本（`/api/info` 的 `dsh`），老插件可能没有。
+  final String? dshVersion;
+
   final String? pluginName;
 
   /// 服务端 `hostId`（`<slug>-<8hex>`）。
@@ -180,6 +187,10 @@ class ProbeService {
     final serverHostId = _asText(infoJson['hostId']);
     final serverName = _asText(infoJson['name']);
     final serverVersion = _asText(infoJson['version']);
+    // 老插件的 dsh 是个对象（reachable/port），只有字符串才是版本号：
+    // _asText 会把 Map 也 stringify，直接用它会把 "{reachable: true}" 当版本显示。
+    final dshRaw = infoJson['dsh'];
+    final dshVersion = dshRaw is String && dshRaw.isNotEmpty ? dshRaw : null;
     final pluginName = _asText(infoJson['plugin']);
     final restartJson = infoJson['restart'];
     // 老插件没有 restart 字段：两个菜单项都该灰着，点了只会 404
@@ -244,6 +255,7 @@ class ProbeService {
       healthStatus: healthResponse?.statusCode,
       serverName: serverName,
       serverVersion: serverVersion,
+      dshVersion: dshVersion,
       pluginName: pluginName,
       serverHostId: serverHostId,
       frpState: frpState,

@@ -1,3 +1,36 @@
+## 2026-11-14（设置页填一半的内容不再被轮询清掉）
+
+### plugin 0.3.4
+
+- **现场症状**：「FRP 远程」里填 DNS 服务器（或任何一栏），鼠标点一下别处／过几秒，框里的字自己没了。
+  落盘也验证过——`config.json` 里 `dnsServer` 一直是空串，说明那次输入从没到服务端。
+- **根因**：设置页的 5 秒后台轮询每跳都无条件 `adopt(status)`，把 `form` 整块按服务端值重建。
+  服务端那份还是空，于是下一跳回来（≤5s）就把正在敲的字顶回空串；
+  `save()` / `setPinNow()` / `regenPin()` 同样调 `adopt`，所以点 PIN 相关按钮也会连带抹掉配置输入。
+- **改法**：
+  - 把 `adopt` 拆成「读服务端快照」与「落到界面」两步：`formFromStatus()` 只做映射，
+    `applyStatus(status, { forceForm, forcePin })` 才决定要不要覆盖输入。
+  - 加两份快照：`formRef`（手上的值，实时）与 `pristineRef`（上次从服务端采纳的原样）。
+    两者不等 = 有未保存改动；这时轮询只刷新只读状态（隧道状态、二维码、日志），不碰输入框。
+    保存成功后才 `forceForm` 采纳服务端值、清掉脏标记。
+  - 输入改成 `patchForm({ 字段 })`：读 `formRef.current` 而不是渲染闭包里的 `form`，
+    连打两个字不会丢前一个（同名字段 16 处）。
+  - 有未保存改动时，保存按钮下面出现一行提示「后台只刷新隧道状态，不会覆盖正在填的内容」。
+- **测试**：新增 `packages/plugin/test/client-form-edit.test.mjs` 四条（把 `setInterval` 回调抓在手里手动触发轮询）：
+  未保存的输入活过一轮轮询、轮询仍刷新只读日志、保存真的随 `config.save` 发出并清脏标记、
+  手上没改动时轮询照常同步服务端值。对改动前的 `client/index.js` 跑，前三条失败；改动后 4/4 通过，全量 100 通过。
+
+
+
+### app 1.3.13+28
+
+- 主机列表的标题行常驻 `DSH 0.2.2-rc.1` 小标签：排查「插件和宿主版本对不上」「重启后到底起来的是哪一版」时不用再进设置页翻。
+- 位置一开始放在状态行末尾（`在线 · 隧道运行中 · DSH x.y.z`），320dp 窄屏实测**溢出 123px**：状态说明（「隧道重连中（拨 VPN / 换网后常见）」）本身就长，版本再挤进来整行撑破。改到标题行做 tag，名称先省略，标签宽度固定；外面再包 `Flexible` + `Text.ellipsis`，万一插件报了长串也只是自己省略。
+- 版本来自 `/frp-pocket/api/info` 的 `dsh` 字段（`ProbeResult.dshVersion`）。老插件的 `dsh` 是个对象（`reachable`/`port`），只有字符串才当版本号——`_asText` 会把 Map 也 stringify，直接用会把 `{reachable: true}` 印在卡片上。
+- 拿不到版本时不占位（老插件、未探测、离线），标题行只显示主机名。
+- 顺手修：`constants.dart` 的 `kAppVersion`/`kBuildNumber` 一直停在 `1.3.4` / `19`（设置页底部「App 1.3.4 (19)」与实际包对不上），同步到 `1.3.13` / `28`，并加 `version_constants_test.dart` 读 `pubspec.yaml` 把两处钉死，以后改漏一条测试就红。
+- 测试：`probe_test.dart` 增一条（字符串读成版本、对象读成 null）；`host_card_version_test.dart` 四条（有版本时渲染 `DSH 0.2.2-rc.1`、没有时不出现、320dp 长说明不溢出、超长版本串自己省略）。全量 356 通过，`flutter analyze` 无问题。
+
 ## 2026-11-14（会话行去掉多余的「打开会话」气泡按钮）
 
 ### app 1.3.12+27

@@ -141,6 +141,33 @@ void main() {
     probe.dispose();
   });
 
+  test('info 的 dsh 字段解析成宿主版本；老插件的对象形态读成 null', () async {
+    var body =
+        '{"schema":1,"ok":true,"hostId":"home-1a2b3c4d","name":"家里",'
+        '"plugin":"frp-pocket","version":"0.3.3","dsh":"0.2.2-rc.1",'
+        '"requiresPin":true,"time":"2026-01-01T00:00:00Z"}';
+    final client = MockClient((request) async {
+      if (request.url.path == _infoPath) return _json(body);
+      if (request.url.path == _healthPath) return _json(_healthBody, 401);
+      return http.Response('', 401);
+    });
+    final probe = ProbeService(client: client);
+
+    final result = await probe.probe(_host);
+    expect(result.dshVersion, '0.2.2-rc.1');
+    expect(result.serverVersion, '0.3.3');
+
+    // 老插件的 dsh 是个对象（reachable/port），不是版本字符串：不能硬转。
+    body =
+        '{"schema":1,"ok":true,"hostId":"home-1a2b3c4d","name":"家里",'
+        '"plugin":"frp-pocket","version":"0.1.0",'
+        '"dsh":{"reachable":true,"port":3080},"requiresPin":true,'
+        '"time":"2026-01-01T00:00:00Z"}';
+    final older = await probe.probe(_host);
+    expect(older.dshVersion, isNull);
+    probe.dispose();
+  });
+
   test('health 401 视为「隧道通、未登录」仍算 online', () async {
     final client = MockClient((request) async {
       if (request.url.path == _infoPath) return _json(_infoBody);

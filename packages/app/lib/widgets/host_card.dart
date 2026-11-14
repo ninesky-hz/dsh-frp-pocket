@@ -29,9 +29,8 @@ class HostCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final status = result?.status;
-    final subtitleParts = <String>[
-      host.displayHost,
-    ];
+    final dshVersion = result?.dshVersion;
+    final subtitleParts = <String>[host.displayHost];
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -82,6 +81,23 @@ class HostCard extends StatelessWidget {
                             child: _Tag(
                               text: '示例',
                               color: theme.colorScheme.tertiary,
+                            ),
+                          ),
+                        // DSH 版本：线上排查第一眼要看的东西（插件和宿主版本对不上、
+                        // 重启后到底起来的是哪一版），所以常驻在标题行，不藏进菜单。
+                        // 位置选标题行而不是状态行：状态行那条说明可能很长，版本跟着挤
+                        // 在那里会在窄屏溢出（320dp 下实测溢出 123px）；标题行放 tag
+                        // 只占固定宽度，名称先省略。外面再包一层 Flexible，版本串本身
+                        // 长得离谱时由 Text 自己省略，而不是把整行撑破。
+                        if (dshVersion != null)
+                          Flexible(
+                            child: Padding(
+                              padding: const EdgeInsets.only(left: 8),
+                              child: _Tag(
+                                key: const ValueKey<String>('host-dsh-version'),
+                                text: 'DSH $dshVersion',
+                                color: theme.colorScheme.secondary,
+                              ),
                             ),
                           ),
                       ],
@@ -147,7 +163,7 @@ class HostCard extends StatelessWidget {
 }
 
 class _Tag extends StatelessWidget {
-  const _Tag({required this.text, required this.color});
+  const _Tag({super.key, required this.text, required this.color});
 
   final String text;
   final Color color;
@@ -162,6 +178,8 @@ class _Tag extends StatelessWidget {
       ),
       child: Text(
         text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: Theme.of(
           context,
         ).textTheme.labelSmall?.copyWith(color: color, height: 1.4),

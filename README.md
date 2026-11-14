@@ -42,6 +42,19 @@ dsh plugin --profile desktop add -w D:/Ai-Project/dsh-frp-pocket/packages/plugin
 # 3) 手机：装 APK → 扫码或手填 https://home.dsh.example.com → 输 PIN
 ```
 
+> **从 Git 装（别的 PC 不想 clone 源码时）**
+>
+> ```bash
+> dsh plugin --profile desktop add \
+>   'git+https://github.com/ninesky-hz/dsh-frp-pocket#path:packages/plugin'
+> ```
+>
+> - `#path:packages/plugin` 不能省：仓库根目录没有 `package.json`，不指子目录解析不到包；
+> - GitHub 网页地址 `…/tree/main/packages/plugin` **不是 git remote**，照抄进去会得到
+>   `fatal: repository '…/tree/main/packages/plugin/' not found`；
+> - git 装的是**已推送的提交**（目前 `0c813b8`，插件 0.3.3）；本机未提交的改动只有
+>   `-w <本地路径>` 这种 link 安装才带得上。
+
 细节与实测记录：[docs/VPS-TLS.md](docs/VPS-TLS.md)。
 
 **B. 专用 VPS，从零部署（80/443 归本项目独占）**

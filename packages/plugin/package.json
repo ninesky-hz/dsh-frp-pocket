@@ -1,6 +1,6 @@
 {
   "name": "dsh-frp-pocket",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "private": true,
   "description": "DSH 手机远控宿主插件：PIN 网关 + 自建 frp 隧道 + 设置页",
   "type": "module",
