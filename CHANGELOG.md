@@ -1,3 +1,15 @@
+## 2026-11-15（设置页「关于」能点开开源仓库，署名作者）
+
+### app 1.3.22+37
+
+- **用户要的**（m01647）：设置里的「关于」加上仓库链接 `https://github.com/ninesky-hz/dsh-frp-pocket` 与作者「九天」。
+- **改法**：
+  - `packages/app/lib/constants.dart` 新增 `kRepoUrl` 与 `kAppAuthor`（两个页面级展示都用同一份常量，改一处即可）。
+  - `packages/app/lib/screens/settings_screen.dart`：「关于」段加两条 ListTile——「开源仓库」（副标题就是链接，点一下给系统浏览器打开）与「作者」（九天）；`_showAbout` 弹窗里同步写上「作者：九天」与可点的仓库地址。
+  - `packages/app/lib/services/platform_bridge.dart` + `MainActivity.kt` 新增 `openUrl`（`Intent.ACTION_VIEW`）：没有 `url_launcher` 依赖，走已有的原生桥。**桥在 2 秒内没回应就当没打开**（`Future.timeout`），叫不起浏览器就复制链接并提示「打不开浏览器，仓库地址已复制」，不会让点击无声无息。
+  - `packages/app/lib/theme/app_icons.dart` 加 `AppIcons.person`。
+- 测试：`test/settings_about_test.dart` 新增 3 条（列表里有仓库与作者；点仓库走复制降级并提示；「版本与契约」弹窗里同样有作者与仓库地址）。全量 394 通过，`flutter analyze` 干净。
+
 ## 2026-11-15（会话页能一路翻到自己发的第一条）
 
 ### app 1.3.21+36

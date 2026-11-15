@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../app_scope.dart';
 import '../constants.dart';
 import '../models/app_settings.dart';
+import '../services/platform_bridge.dart';
 import '../theme/app_icons.dart';
+
 /// 设置页（CONTRACT §7.2.4）。
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -14,15 +17,30 @@ class SettingsScreen extends StatelessWidget {
       applicationName: 'DSH 口袋隧道',
       applicationVersion: '$kAppVersion ($kBuildNumber)',
       applicationIcon: const Icon(AppIcons.hub, size: 40),
-      children: const <Widget>[
-        SizedBox(height: 12),
-        Text('通过自建 frp 隧道，在手机上远程使用家里的 DeepSeek Harness。'),
-        SizedBox(height: 12),
-        Text('契约版本：$kContractVersion'),
-        Text('网关接口：$kApiPrefix'),
-        SizedBox(height: 8),
-        Text('本 App 不保存任何服务器口令，只在本机保存主机地址与 PIN。'),
+      children: <Widget>[
+        const SizedBox(height: 12),
+        const Text('通过自建 frp 隧道，在手机上远程使用家里的 DeepSeek Harness。'),
+        const SizedBox(height: 12),
+        const Text('作者：$kAppAuthor'),
+        const SizedBox(height: 4),
+        _RepoLink(onTap: () => _openRepo(context)),
+        const SizedBox(height: 12),
+        const Text('契约版本：$kContractVersion'),
+        const Text('网关接口：$kApiPrefix'),
+        const SizedBox(height: 8),
+        const Text('本 App 不保存任何服务器口令，只在本机保存主机地址与 PIN。'),
       ],
+    );
+  }
+
+  /// 打开开源仓库：能叫起系统浏览器就叫，叫不起来就退化成复制链接。
+  Future<void> _openRepo(BuildContext context) async {
+    const bridge = PlatformBridge();
+    if (await bridge.openUrl(kRepoUrl)) return;
+    await Clipboard.setData(const ClipboardData(text: kRepoUrl));
+    if (!context.mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(content: Text('打不开浏览器，仓库地址已复制')),
     );
   }
 
@@ -118,6 +136,20 @@ class SettingsScreen extends StatelessWidget {
                 onTap: () => _showAbout(context),
               ),
               ListTile(
+                key: const ValueKey<String>('about-repo'),
+                leading: const Icon(AppIcons.link),
+                title: const Text('开源仓库'),
+                subtitle: const Text(kRepoUrl),
+                trailing: const Icon(AppIcons.forward, size: AppIcons.inline),
+                onTap: () => _openRepo(context),
+              ),
+              ListTile(
+                key: const ValueKey<String>('about-author'),
+                leading: const Icon(AppIcons.person),
+                title: const Text('作者'),
+                subtitle: const Text(kAppAuthor),
+              ),
+              ListTile(
                 leading: const Icon(AppIcons.link),
                 title: const Text('接口前缀'),
                 subtitle: const Text('$kApiPrefix（info / login / health）'),
@@ -145,6 +177,32 @@ class _SectionHeader extends StatelessWidget {
         style: theme.textTheme.labelLarge?.copyWith(
           color: theme.colorScheme.primary,
           fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+/// 「关于」弹窗里的仓库地址：一行带下划线的可点文字。
+class _RepoLink extends StatelessWidget {
+  const _RepoLink({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Text(
+          kRepoUrl,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.primary,
+            decoration: TextDecoration.underline,
+          ),
         ),
       ),
     );

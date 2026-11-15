@@ -82,6 +82,7 @@ abstract final class AppIcons {
   // ---------------------------------------------------------------- 状态/提示
   static const IconData info = CupertinoIcons.info_circle;
   static const IconData help = CupertinoIcons.question_circle;
+  static const IconData person = CupertinoIcons.person;
   static const IconData error = CupertinoIcons.exclamationmark_triangle;
   static const IconData shield = CupertinoIcons.shield;
   static const IconData shieldWarn = CupertinoIcons.exclamationmark_shield;
