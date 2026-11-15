@@ -226,8 +226,9 @@ class MessageBubble extends StatelessWidget {
                 child: NotesLine(
                   notes: message.notes,
                   // 已定稿的一轮：过程折成一行摘要，点开才逐项（对齐网页端
-                  // 「回答结束后收起工作步骤」）；还在流式的那一轮保持展开。
-                  foldWhenDone: !message.streaming,
+                  // 「回答结束后收起工作步骤」）；还在流式的那一轮、以及整轮
+                  // 还没跑完的那一轮保持展开。
+                  foldWhenDone: message.foldNotes && !message.streaming,
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: foreground.withValues(alpha: 0.7),
                   ),

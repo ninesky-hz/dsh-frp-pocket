@@ -29,35 +29,67 @@ Map<String, Object?> _assistant(
   'event': <String, Object?>{
     'type': 'assistant/message',
     'seq': step,
-    'data': <String, Object?>{'turn': turn, 'step': step, 'message': <String, Object?>{'content': parts}},
+    'data': <String, Object?>{
+      'turn': turn,
+      'step': step,
+      'message': <String, Object?>{'content': parts},
+    },
   },
 };
+
+Map<String, Object?> _user(int seq, String text) => <String, Object?>{
+  'type': 'event',
+  'event': <String, Object?>{
+    'type': 'user/message',
+    'seq': seq,
+    'data': <String, Object?>{
+      'message': <String, Object?>{
+        'source': <String, Object?>{'kind': 'user'},
+        'content': <Object?>[
+          <String, Object?>{'type': 'text', 'text': text},
+        ],
+      },
+    },
+  },
+};
+
+Map<String, Object?> _tool(String name) =>
+    <String, Object?>{'type': 'tool-call', 'name': name, 'arguments': '{}'};
+
+SessionHistory _history(List<Object?> records, {int cursor = 9}) =>
+    SessionHistory.fromJson(<String, Object?>{
+      'cursor': cursor,
+      'hasMore': false,
+      'records': records,
+    });
 
 /// 一个 turn 被宿主拆成四条：两次工具调用、一次思考（正文都是空的），最后才是正文。
 ///
 /// 这正是手机端「一排灰块、每块一句『思考 · 1 次工具调用』」的来源。
-SessionHistory _historyForOneTurn() => SessionHistory.fromJson(<String, Object?>{
-  'cursor': 5,
-  'hasMore': false,
-  'records': <Object?>[
-    _assistant(1, <Object?>[
-      <String, Object?>{'type': 'tool-call', 'name': 'read', 'arguments': '{}'},
-    ]),
-    _assistant(2, <Object?>[
-      <String, Object?>{'type': 'tool-call', 'name': 'ops_bash', 'arguments': '{}'},
-    ]),
-    _assistant(3, <Object?>[
-      <String, Object?>{'type': 'reasoning', 'text': '改完了，收尾'},
-    ]),
-    _assistant(4, <Object?>[
-      <String, Object?>{'type': 'text', 'text': '搞定，已经推上去了。'},
-    ]),
-  ],
-});
+SessionHistory _oneTurn() => _history(<Object?>[
+  _assistant(1, <Object?>[_tool('read')]),
+  _assistant(2, <Object?>[_tool('ops_bash')]),
+  _assistant(3, <Object?>[
+    <String, Object?>{'type': 'reasoning', 'text': '改完了，收尾'},
+  ]),
+  _assistant(4, <Object?>[
+    <String, Object?>{'type': 'text', 'text': '搞定，已经推上去了。'},
+  ]),
+]);
+
+/// 两轮：第一轮已经答完，第二轮是「正在进行」的那一轮。
+SessionHistory _twoTurns() => _history(<Object?>[
+  _assistant(1, <Object?>[_tool('read')], turn: 1),
+  _assistant(2, <Object?>[_tool('read')], turn: 1),
+  _user(3, '继续'),
+  _assistant(4, <Object?>[_tool('grep')], turn: 2),
+  _assistant(5, <Object?>[_tool('grep')], turn: 2),
+]);
 
 class _FakeRemote extends DshRemote {
-  _FakeRemote() : super(host: _host);
+  _FakeRemote(this.history) : super(host: _host);
 
+  final SessionHistory history;
   final StreamController<DshStreamFrame> frames =
       StreamController<DshStreamFrame>.broadcast();
 
@@ -74,21 +106,26 @@ class _FakeRemote extends DshRemote {
     required int throughSeq,
     int? beforeSeq,
     int maxMessages = 20,
-  }) async => _historyForOneTurn();
+  }) async => history;
 
   Future<void> close() => frames.close();
 }
 
-SessionSummary _session() => SessionSummary(
+SessionSummary _session({bool running = false}) => SessionSummary(
   sessionId: 'session-1',
   title: '会话',
   cwd: r'D:\Ai-Project\demo',
   updatedAt: DateTime.now(),
+  running: running,
 );
 
-Future<_FakeRemote> _pumpChat(WidgetTester tester, SettingsStore settings) async {
+Future<_FakeRemote> _pumpChat(
+  WidgetTester tester,
+  SettingsStore settings, {
+  required SessionHistory history,
+}) async {
   final hosts = HostStore();
-  final remote = _FakeRemote();
+  final remote = _FakeRemote(history);
   await tester.pumpWidget(
     AppScope(
       hosts: hosts,
@@ -104,10 +141,33 @@ Future<_FakeRemote> _pumpChat(WidgetTester tester, SettingsStore settings) async
     ),
   );
   remote.frames.add(
-    const DshStreamFrame(kind: DshFrameKind.snapshot, asOfSeq: 5),
+    const DshStreamFrame(kind: DshFrameKind.snapshot, asOfSeq: 9),
   );
   await tester.pumpAndSettle();
   return remote;
+}
+
+/// 推一条 `turn/start`：会话进入「正在跑」的状态（真实链路上就是这一帧）。
+///
+/// 别指望 `SessionSummary.running`：测试里没有网关，链路一断页面就把 running 清掉了。
+Future<void> _startTurn(
+  WidgetTester tester,
+  _FakeRemote remote, {
+  int turn = 2,
+}) async {
+  remote.frames.add(
+    DshStreamFrame(
+      kind: DshFrameKind.event,
+      event: SessionLogEvent(
+        type: 'turn/start',
+        seq: 10,
+        data: <String, Object?>{'turn': turn},
+      ),
+    ),
+  );
+  for (var i = 0; i < 4; i += 1) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
 }
 
 void main() {
@@ -115,7 +175,7 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final settings = SettingsStore();
     await settings.load();
-    final remote = await _pumpChat(tester, settings);
+    final remote = await _pumpChat(tester, settings, history: _oneTurn());
 
     // 整轮收成一条：3 项过程（2 次工具调用 + 1 次思考），不是每步各一条。
     expect(find.byKey(const ValueKey<String>('notes-fold')), findsOneWidget);
@@ -127,12 +187,44 @@ void main() {
     await remote.close();
   });
 
+  testWidgets('整轮结束后才收：不在跑的时候两轮都折', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final settings = SettingsStore();
+    await settings.load();
+    final remote = await _pumpChat(tester, settings, history: _twoTurns());
+
+    expect(find.byKey(const ValueKey<String>('notes-fold')), findsNWidgets(2));
+    expect(find.text('2 次工具调用'), findsNWidgets(2));
+
+    await tester.pumpWidget(const SizedBox());
+    await remote.close();
+  });
+
+  testWidgets('会话进行中：正在跑的那一轮不折，前面答完的照收', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final settings = SettingsStore();
+    await settings.load();
+    final remote = await _pumpChat(tester, settings, history: _twoTurns());
+    // 先把两轮都收起来（停在会话页、没人说话的时候本来就是这样）。
+    expect(find.byKey(const ValueKey<String>('notes-fold')), findsNWidgets(2));
+
+    // 宿主推 turn/start：第二轮开始跑，这一轮的过程要逐条露出来。
+    await _startTurn(tester, remote, turn: 2);
+
+    expect(find.byKey(const ValueKey<String>('notes-fold')), findsOneWidget);
+    expect(find.text('2 次工具调用'), findsOneWidget);
+    expect(find.text('工具调用 · grep'), findsNWidgets(2));
+
+    await tester.pumpWidget(const SizedBox());
+    await remote.close();
+  });
+
   testWidgets('关掉「完成后收起过程」，过程又逐条铺开', (tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final settings = SettingsStore();
     await settings.load();
     await settings.setFoldNotesWhenDone(false);
-    final remote = await _pumpChat(tester, settings);
+    final remote = await _pumpChat(tester, settings, history: _oneTurn());
 
     expect(find.byKey(const ValueKey<String>('notes-fold')), findsNothing);
     expect(find.text('工具调用 · read'), findsOneWidget);

@@ -127,4 +127,42 @@ void main() {
     expect(folded.map((row) => row.key), <String>['row:a', 'seq:9', 'row:c']);
     expect(folded.first.notes, hasLength(2));
   });
+
+  test('会话还在跑：最后那一段过程不折，前面的照收', () {
+    final rows = <ChatMessage>[
+      _step('row:m1.1', notes: <ChatNote>[_tool('read')]),
+      _step('row:m1.2', notes: <ChatNote>[_tool('read')]),
+      _user('seq:9'),
+      _step('row:m2.1', notes: <ChatNote>[_tool('read')]),
+      _step('row:m2.2', notes: <ChatNote>[_tool('read')]),
+    ];
+
+    final folded = foldTurnNotes(rows, keepLastOpen: true);
+
+    // 正在跑的那一轮（没有 turn 字段也认得出）保持逐条，整轮结束才收。
+    expect(folded.map((row) => row.key), <String>[
+      'row:m1.1',
+      'seq:9',
+      'row:m2.1',
+      'row:m2.2',
+    ]);
+    expect(folded[2].notes, hasLength(1));
+    expect(folded[3].notes, hasLength(1));
+    // 行内也不能再自己折：不然每行还是各显示一条「思考 · 1 次工具调用」。
+    expect(folded[2].foldNotes, isFalse);
+    expect(folded[3].foldNotes, isFalse);
+    // 已经答完的第一轮照收。
+    expect(folded[0].foldNotes, isTrue);
+  });
+
+  test('lastAssistantTurn 认的是最后一条助手消息的轮次', () {
+    final rows = <ChatMessage>[
+      _step('row:m1.1', turn: 1, notes: <ChatNote>[_tool('read')]),
+      _user('seq:9'),
+      _step('row:m2.1', turn: 2, notes: <ChatNote>[_tool('read')]),
+    ];
+
+    expect(lastAssistantTurn(rows), 2);
+    expect(lastAssistantTurn(<ChatMessage>[_user('seq:1')]), isNull);
+  });
 }

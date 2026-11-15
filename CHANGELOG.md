@@ -1,3 +1,25 @@
+## 2026-11-15（会话进行中不折，整轮结束才收）
+
+### app 1.3.19+34
+
+- **需求**：折叠的时机应该是「一轮结束之后」，会话还在跑的时候过程要逐条露着——
+  正在跑的那一轮更要看得见它在干什么。
+- **改法**：
+  - `foldTurnNotes` 增加两个开关：`keepOpen`（按 `turn` 认进行中的那一轮）与
+    `keepLastOpen`（老数据没有 `turn` 时按位置押最后一组）。
+  - 被判定为「进行中」的那一组，不光不聚合成一条，行内的过程也用新增的
+    `ChatMessage.foldNotes = false` 保持展开——否则每行又会各自折成
+    「思考 · 1 次工具调用」，等于没开。
+  - 新增 `lastAssistantTurn(rows)`：最后一条助手消息属于第几轮，就是进行中的那一轮。
+  - `SessionChatScreen._displayItems` 用会话状态（`_running || _streaming || 有草稿`）
+    决定要不要 `keepOpen`；`turn/end` 之后自动回到「整轮收起来」。
+- 测试：`turn_fold_test.dart` 增加 2 条（`keepLastOpen` 保留最后一段、
+  `lastAssistantTurn` 取轮次）；`session_chat_turn_fold_test.dart` 改为推一条
+  `turn/start` 事件，断言进行中的那一轮仍然逐条（`工具调用 · grep` ×2）、
+  前面答完的那一轮已收成一条。把 `chat_bubbles.dart` 的
+  `foldNotes && !streaming` 回退后该用例必红（3 个 `notes-fold`），确认钉住了。
+  全量 387 通过，`flutter analyze` No issues。
+
 ## 2026-11-15（一整轮只留一条过程摘要）
 
 ### app 1.3.18+33

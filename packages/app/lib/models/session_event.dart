@@ -186,6 +186,7 @@ class ChatMessage {
     this.requestId,
     this.streaming = false,
     this.turn,
+    this.foldNotes = true,
   });
 
   /// 列表 key：durable 消息用 `seq:<n>`，本地待发消息用 `local:<n>`。
@@ -225,6 +226,12 @@ class ChatMessage {
   /// 用户消息与老数据没有这个字段。
   final int? turn;
 
+  /// 这一条的过程小字要不要在答完后折起来。
+  ///
+  /// 会话还在跑的那一轮传 false：整轮没结束，过程要逐条露着，用户才看得见它在
+  /// 干什么；等 `turn/end` 之后重新按轮折。
+  final bool foldNotes;
+
   /// 发送失败且还在列表里时，界面要给出可点重试的入口。
   bool get retryable => delivery == ChatDelivery.failed;
 
@@ -236,6 +243,7 @@ class ChatMessage {
     List<ChatImageRef>? images,
     String? requestId,
     bool? streaming,
+    bool? foldNotes,
   }) {
     return ChatMessage(
       key: key ?? this.key,
@@ -249,6 +257,8 @@ class ChatMessage {
       images: images ?? this.images,
       requestId: requestId ?? this.requestId,
       streaming: streaming ?? this.streaming,
+      turn: turn,
+      foldNotes: foldNotes ?? this.foldNotes,
     );
   }
 

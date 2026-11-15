@@ -2605,16 +2605,21 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   /// 上屏的行 = 定稿历史 + 本地待发 + 离线队列 + 流式草稿。
   ///
   /// 定稿的那部分先按轮折一遍：一个 turn 常被宿主拆成七八条只有过程的助手消息，
-  /// 挨条折会排出一串「思考 · 1 次工具调用」，按轮折才收成头上一行。正在跑的那一轮
-  /// 不折（过程要实时看得见）。
+  /// 挨条折会排出一串「思考 · 1 次工具调用」，按轮折才收成头上一行。
+  ///
+  /// 正在跑的那一轮不折——过程要实时看得见，等整轮结束再收。会话在跑的时候
+  /// 最后一条助手消息所属的 turn 就是进行中的那一轮；老数据没有 turn 字段时
+  /// 退回「按位置押最后一组」（`keepLastOpen`）。
   List<ChatMessage> get _displayItems {
     final drafts = _drafts.visibleDrafts;
     final folded = AppScope.maybeOf(context)?.settings.foldNotesWhenDone ?? false;
+    final busy = _running || _streaming || drafts.isNotEmpty;
     return <ChatMessage>[
       ...(folded
           ? foldTurnNotes(
               _messages,
-              keepOpen: drafts.isEmpty ? null : drafts.last.turn,
+              keepOpen: busy ? lastAssistantTurn(_messages) : null,
+              keepLastOpen: busy,
             )
           : _messages),
       ..._pending,
