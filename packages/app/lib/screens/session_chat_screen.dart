@@ -267,8 +267,14 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   /// 为了把首屏填满，额外补拉了几页（上限 [_maxFillPages]）。
   int _fillPages = 0;
 
-  /// 补拉上限：再短的会话也不该在进页面时打出十几页请求。
-  static const int _maxFillPages = 6;
+  /// 补拉上限：再短的会话也不该在进页面时打出几十页请求。
+  ///
+  /// 页数不是好尺子——折叠之后一页 30 条事件可能一行都不涨（整页都是同一轮里的
+  /// 步骤）。踩过的坑：上限 6 页时，一个「一轮几十次工具调用」的老会话补完 6 页
+  /// 只多出零行，内容依旧不满屏、又滚不动，用户往回拉永远停在第一屏，看不到
+  /// 自己发的第一条。所以上限放宽到 24 页（≈720 条事件，够跨过整整一轮），
+  /// 同时顶部常驻一条可点的「更早的消息」，兜住更长的会话。
+  static const int _maxFillPages = 24;
 
   /// 有没有还没刷到界面上的流式变更。
   bool _flushPending = false;
@@ -2386,11 +2392,13 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   ///
   /// 宁可早发：一页要过隧道、还要解码，等真的贴到顶再发，手指就停住了。
   /// 800 像素差不多是两屏，够把来回的路上时间藏进去。
+  ///
+  /// 内容还没满一屏时 `min == max`、根本没有滚动量：以前这里直接 return，
+  /// 结果「滚不动」和「不加载」互为因果，会话页就卡在第一屏。现在照发请求。
   void _maybeLoadOlder() {
     if (!_scroll.hasClients) return;
     final position = _scroll.position;
     if (!position.hasContentDimensions) return;
-    if (position.maxScrollExtent - position.minScrollExtent <= 0) return;
     if (position.pixels > position.minScrollExtent + 800) return;
     unawaited(_loadOlder());
   }
@@ -2839,8 +2847,10 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     final items = _displayItems;
     if (items.isEmpty) return const ChatEmptyView();
 
-    // 顶部那一条：加载中 / 失败重试。hasMore == false 之后一个都不显示。
-    final showOlderSlot = _loadingOlder || _olderError != null;
+    // 顶部那一条：加载中 / 失败重试 / 「更早的消息还在上面」。
+    // hasMore == false 之后一个都不显示。
+    final showOlderSlot =
+        _loadingOlder || _olderError != null || _hasMoreHistory;
     // 按 key 判定「这一条是流式草稿」，而不是靠 `draft:` 前缀：草稿和定稿
     // 共用 `row:m<turn>.<step>` 行身份后，前缀已经区分不出来了。
     final draftKeys = <String>{
@@ -2999,6 +3009,11 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   }
 
   /// 列表顶部（视觉上最上方）那一条：正在翻更早的历史，或者翻失败了。
+  /// 列表顶部（视觉上最上方）那一条：正在翻更早的历史，翻失败了，或者上面
+  /// 还有但没在翻。
+  ///
+  /// 第三种以前没有：内容不满一屏时滚不动，滚动回调不触发，用户没有任何办法
+  /// 再要一页——所以这里常驻一条可点的入口，兜住补屏上限之后的超长会话。
   Widget _buildOlderSlot() {
     final theme = Theme.of(context);
     final error = _olderError;
@@ -3019,16 +3034,33 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         ),
       );
     }
+    if (_loadingOlder) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Center(
+          child: SizedBox(
+            key: const Key('chat-older-loading'),
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.6,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      );
+    }
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Center(
-        child: SizedBox(
-          key: const Key('chat-older-loading'),
-          width: 16,
-          height: 16,
-          child: CircularProgressIndicator(
-            strokeWidth: 1.6,
-            color: theme.colorScheme.onSurfaceVariant,
+        child: TextButton(
+          key: const Key('chat-older-more'),
+          onPressed: () => unawaited(_loadOlder()),
+          child: Text(
+            '更早的消息还在上面',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
         ),
       ),

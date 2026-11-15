@@ -100,6 +100,24 @@ SessionHistory _page(List<int> seqs, {bool hasMore = true}) {
   );
 }
 
+/// 一条事件也不画成行的页（`turn/start` 这种）。
+///
+/// 折叠上线后这是常态：一整轮几十步只留一行摘要，一页 30 条事件可能一条行都
+/// 不涨。用它模拟「补了一页，画面一点没长」。
+SessionHistory _emptyRowPage(int seq, {bool hasMore = true}) {
+  return SessionHistory(
+    cursor: seq,
+    records: <SessionLogEvent>[
+      SessionLogEvent(
+        type: 'turn/start',
+        seq: seq,
+        data: <String, Object?>{'turn': 1},
+      ),
+    ],
+    hasMore: hasMore,
+  );
+}
+
 Future<void> _pumpChat(
   WidgetTester tester,
   _PagingRemote remote, {
@@ -446,9 +464,63 @@ void main() {
     expect(remote.pageCalls, greaterThan(1));
     expect(
       remote.pageCalls,
-      lessThanOrEqualTo(9),
-      reason: '首屏 1 页 + 预取 2 页 + 补屏 6 页封顶',
+      lessThanOrEqualTo(27),
+      reason: '首屏 1 页 + 预取 2 页 + 补屏 24 页封顶',
     );
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('补来的页一条行都不涨时，照样继续补到有内容可滚', (tester) async {
+    // 截图里的那种老会话：首屏只有自己发的第一条，往上一页页全是同一轮的步骤，
+    // 折叠之后一行都不多。页数上限若不放宽，画面就一直是一个气泡顶着一片空白。
+    final remote = _PagingRemote(
+      pages: <SessionHistory>[
+        _page(<int>[500], hasMore: true),
+        for (var i = 1; i <= 24; i += 1) _emptyRowPage(800 - i, hasMore: true),
+        _page(<int>[100], hasMore: false),
+      ],
+    );
+    await _pumpChat(tester, remote, prefetchHistory: true);
+    for (var i = 0; i < 20; i += 1) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    expect(
+      remote.pageCalls,
+      greaterThan(9),
+      reason: '一页不涨行也要接着补，不能停在 6 页就收手',
+    );
+    expect(find.text(_textOf(500)), findsOneWidget, reason: '第一条自己发的得在屏上');
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('上面还有更早的消息时，顶部常驻一条可点的入口', (tester) async {
+    // 补屏把 24 页额度用完了（每页都不涨行），画面依旧不满一屏、滚不动：
+    // 这时候用户唯一能走的路就是点顶部那一条。
+    final remote = _PagingRemote(
+      pages: <SessionHistory>[
+        _page(<int>[500], hasMore: true),
+        for (var i = 1; i <= 30; i += 1) _emptyRowPage(800 - i, hasMore: true),
+      ],
+    );
+    await _pumpChat(tester, remote, prefetchHistory: true);
+    for (var i = 0; i < 80; i += 1) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    final more = find.byKey(const Key('chat-older-more'));
+    expect(more, findsOneWidget, reason: '还有更早的消息就得给个能点的入口');
+    expect(find.byKey(const Key('chat-older-loading')), findsNothing);
+
+    final beforeCalls = remote.pageCalls;
+    await tester.tap(more);
+    await tester.pump();
+    for (var i = 0; i < 4; i += 1) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(remote.pageCalls, beforeCalls + 1, reason: '点一下就得再要一页');
 
     await _disposeChat(tester, remote);
   });
