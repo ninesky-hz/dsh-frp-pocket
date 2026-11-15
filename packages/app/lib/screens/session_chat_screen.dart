@@ -7,6 +7,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../app_scope.dart';
 import '../models/agent_preset_option.dart';
 import '../models/assistant_draft.dart';
 import '../models/dsh_queue.dart';
@@ -18,6 +19,7 @@ import '../models/permission_option.dart';
 import '../models/prompt_image.dart';
 import '../models/session_event.dart';
 import '../models/session_summary.dart';
+import '../models/turn_fold.dart';
 import '../services/dsh_api.dart';
 import '../services/dsh_remote.dart';
 import '../services/draft_store.dart';
@@ -2540,6 +2542,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         text: draft.text,
         notes: draft.notes,
         streaming: true,
+        turn: draft.turn,
       ),
   ];
 
@@ -2599,12 +2602,26 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     return thumbs;
   }
 
-  List<ChatMessage> get _displayItems => <ChatMessage>[
-    ..._messages,
-    ..._pending,
-    ..._outboxMessages,
-    ..._draftMessages,
-  ];
+  /// 上屏的行 = 定稿历史 + 本地待发 + 离线队列 + 流式草稿。
+  ///
+  /// 定稿的那部分先按轮折一遍：一个 turn 常被宿主拆成七八条只有过程的助手消息，
+  /// 挨条折会排出一串「思考 · 1 次工具调用」，按轮折才收成头上一行。正在跑的那一轮
+  /// 不折（过程要实时看得见）。
+  List<ChatMessage> get _displayItems {
+    final drafts = _drafts.visibleDrafts;
+    final folded = AppScope.maybeOf(context)?.settings.foldNotesWhenDone ?? false;
+    return <ChatMessage>[
+      ...(folded
+          ? foldTurnNotes(
+              _messages,
+              keepOpen: drafts.isEmpty ? null : drafts.last.turn,
+            )
+          : _messages),
+      ..._pending,
+      ..._outboxMessages,
+      ..._draftMessages,
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {

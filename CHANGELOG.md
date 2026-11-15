@@ -1,3 +1,28 @@
+## 2026-11-15（一整轮只留一条过程摘要）
+
+### app 1.3.18+33
+
+- **症状**：升级到 1.3.17 后过程并没有「收起来」，而是变成一竖排灰块，每块一句
+  「思考 · 1 次工具调用」——看着像切到了简洁模式，越收越多。
+- **根因**：折叠做在**消息条**上（`NotesLine` 按 `ChatMessage` 折），而宿主的
+  一个 turn 常被拆成七八条 `assistant/message`（每条只有一次思考或一次工具调用，
+  正文是空的）。按条折的结果就是每块各留一行摘要，屏幕上反而更乱。网页端
+  `foldCompletedTurns` + `stepGrouping: 'history'` 折的是**轮**，整轮只在头上一行。
+- **改法**：
+  - 新增 `lib/models/turn_fold.dart`：`foldTurnNotes(rows, {keepOpen})` 把连续的
+    助手消息按 `turn` 分组，把整组的过程按顺序搬到组里第一条，其余条清空；
+    掏空后（没正文、没图、没过程）的条直接丢掉，不留空气泡；
+    `keepOpen` 指正在跑的那一轮——过程要实时看得见，不折。
+  - `ChatMessage` 增加 `turn`（来自宿主事件的 `data.turn`），草稿也带上 `turn`。
+  - `SessionChatScreen._displayItems` 先 `foldTurnNotes(_messages)` 再拼草稿与队列；
+    开关「完成后收起过程」关掉时整段不折，回到逐条铺开。
+  - 过程只搬运、不再跨步合并：跨步合并会把「8 次工具调用」显示成「1 次」。
+- 测试：新增 `turn_fold_test.dart`（6 条：八步并成一条、正文留原位、跨轮/跨用户
+  消息分组、`keepOpen` 不折、草稿不参与、无 turn 的老数据同样合并）与
+  `session_chat_turn_fold_test.dart`（2 条：一轮三条过程只留一条摘要；
+  关掉开关后逐条铺开）。把修复 stash 掉后第一条必红（找到 3 个 `notes-fold`
+  而不是 1 个），确认钉的就是这个 bug。全量 383 通过，`flutter analyze` No issues。
+
 ## 2026-11-15（答完之后把工作步骤收起来）
 
 ### app 1.3.17+32

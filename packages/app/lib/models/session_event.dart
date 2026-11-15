@@ -185,6 +185,7 @@ class ChatMessage {
     this.images = const <ChatImageRef>[],
     this.requestId,
     this.streaming = false,
+    this.turn,
   });
 
   /// 列表 key：durable 消息用 `seq:<n>`，本地待发消息用 `local:<n>`。
@@ -216,6 +217,13 @@ class ChatMessage {
   /// 决定气泡下面那行过程小字是实时展开还是折成摘要：进行中要看得见
   /// 「现在在干什么」，定稿之后再折。
   final bool streaming;
+
+  /// 属于第几轮（宿主事件里的 `turn`）。
+  ///
+  /// 一个 turn 常被拆成好几条 `assistant/message`（每条一次思考或一次工具调用），
+  /// 折叠要按轮做才收得干净，按条做只会排出一串「思考 · 1 次工具调用」。
+  /// 用户消息与老数据没有这个字段。
+  final int? turn;
 
   /// 发送失败且还在列表里时，界面要给出可点重试的入口。
   bool get retryable => delivery == ChatDelivery.failed;
@@ -316,6 +324,7 @@ ChatMessage? chatMessageOf(SessionLogEvent event) {
         time: event.time,
         notes: List<ChatNote>.unmodifiable(notes),
         images: images,
+        turn: asInt(event.data['turn']),
       );
   }
   return null;
