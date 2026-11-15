@@ -1,3 +1,25 @@
+## 2026-11-15（进会话先补满一屏，不用手动滑）
+
+### app 1.3.20+35
+
+- **症状**（用户 m01341 + 截图 m01342）：点进会话，上半屏一片空白，只有最底下两三条；
+  手指往上滑一下，前面的聊天才「嗖」地出现。
+- **根因**：一页历史固定 30 条事件，原来只拉一页（外加一次预取）。折叠上线之后，
+  一轮几十步只画一行摘要——30 条事件可能就是同一轮里的步骤，画出来只有两三行，
+  根本占不满屏。空白不是没加载，是「加载了但不够铺满」。
+  另外预取自身有个顺序 bug：`_prefetchOlder()` 在 `_loadingOlder` 还没复位的
+  `try` 里调用，撞上「正在加载」的闸，永远只预取一页、不接力。
+- **改法**（`packages/app/lib/screens/session_chat_screen.dart:1`）：
+  - 新增 `_fillViewportIfShort()`：首屏/翻页之后在下一帧量 `maxScrollExtent -
+    minScrollExtent`，撑不满 1.2 屏就再要一页，最多补 `_maxFillPages = 6` 页；
+    `hasMore == false` 时一页都不再发。
+  - 把 `_prefetchOlder()` 挪到 `_loadingOlder` 复位之后调用，预取能正常接力
+    （仍受 `prefetchPages = 2` 封顶）。
+- 测试：`session_chat_history_test.dart` 加两条——「一页填不满屏时后台继续往上补」
+  （4 页各一条，断言 `pageCalls >= 3` 且更早那条已上屏）与「补屏有上限」
+  （20 页可拉，断言 `pageCalls <= 9`）。把 `session_chat_screen.dart` 回退后第一条必红
+  （`pageCalls == 2`），确认钉住真问题。全量 389 通过，`flutter analyze` No issues。
+
 ## 2026-11-15（会话进行中不折，整轮结束才收）
 
 ### app 1.3.19+34

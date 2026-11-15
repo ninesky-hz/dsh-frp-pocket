@@ -100,7 +100,11 @@ SessionHistory _page(List<int> seqs, {bool hasMore = true}) {
   );
 }
 
-Future<void> _pumpChat(WidgetTester tester, _PagingRemote remote) async {
+Future<void> _pumpChat(
+  WidgetTester tester,
+  _PagingRemote remote, {
+  bool prefetchHistory = false,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
       home: SessionChatScreen(
@@ -108,8 +112,9 @@ Future<void> _pumpChat(WidgetTester tester, _PagingRemote remote) async {
         session: _session,
         remote: remote,
         snapshotTimeout: Duration.zero,
-        // 这些用例数的是「翻到顶要了几页」，后台预取会多打一次，先关掉。
-        prefetchHistory: false,
+        // 这些用例数的是「翻到顶要了几页」，后台预取会多打几次，默认关掉；
+        // 补屏用例要的就是后台补拉，单独打开。
+        prefetchHistory: prefetchHistory,
       ),
     ),
   );
@@ -395,6 +400,54 @@ void main() {
       tester.getRect(find.text(_textOf(110))).bottom,
       closeTo(viewport.bottom, 40),
       reason: '最新一条贴着视口底边',
+    );
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('一页填不满屏时后台继续往上补，不用用户先滑一下', (tester) async {
+    // 折叠之后一整轮只剩一行摘要：一页照样只有一两条，画出来是半屏空白。
+    final remote = _PagingRemote(
+      pages: <SessionHistory>[
+        _page(<int>[100], hasMore: true),
+        _page(<int>[90], hasMore: true),
+        _page(<int>[80], hasMore: true),
+        _page(<int>[70], hasMore: false),
+      ],
+    );
+    await _pumpChat(tester, remote, prefetchHistory: true);
+    // 补拉是「下一帧再看占了多少」，多给几帧让链条跑完。
+    for (var i = 0; i < 6; i += 1) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    expect(
+      remote.pageCalls,
+      greaterThanOrEqualTo(3),
+      reason: '一页只画一条时必须接着补，而不是留给用户滑',
+    );
+    expect(find.text(_textOf(70)), findsOneWidget, reason: '更早的那条应该已经在屏上');
+    expect(remote.beforeSeqs.first, isNull, reason: '首屏不带 beforeSeq');
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('补屏有上限：一直填不满也不会无限打请求', (tester) async {
+    final remote = _PagingRemote(
+      pages: <SessionHistory>[
+        for (var i = 0; i < 20; i += 1) _page(<int>[500 - i], hasMore: true),
+      ],
+    );
+    await _pumpChat(tester, remote, prefetchHistory: true);
+    for (var i = 0; i < 10; i += 1) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    expect(remote.pageCalls, greaterThan(1));
+    expect(
+      remote.pageCalls,
+      lessThanOrEqualTo(9),
+      reason: '首屏 1 页 + 预取 2 页 + 补屏 6 页封顶',
     );
 
     await _disposeChat(tester, remote);

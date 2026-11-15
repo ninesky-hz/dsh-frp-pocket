@@ -256,9 +256,19 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   ///
   /// 每页都是一次隧道往返 + 一次 JSON 解码，条目越多单页越重；30 条是
   /// 「一屏半」的量，配合预取刚好，再大就变成一次卡更久。
+  ///
+  /// 但「一屏半」的前提是每条都占一行。折叠上线之后一轮几十步只留一行摘要，
+  /// 一页历史可能连半屏都填不满——所以光靠页大小不够，还得看内容占了多少，
+  /// 见 [_fillViewportIfShort]。
   static const int _historyPageSize = 30;
 
   int _prefetchedPages = 0;
+
+  /// 为了把首屏填满，额外补拉了几页（上限 [_maxFillPages]）。
+  int _fillPages = 0;
+
+  /// 补拉上限：再短的会话也不该在进页面时打出十几页请求。
+  static const int _maxFillPages = 6;
 
   /// 有没有还没刷到界面上的流式变更。
   bool _flushPending = false;
@@ -847,7 +857,6 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       setState(() {
         _hasMoreHistory = history.hasMore;
       });
-      _prefetchOlder();
     } on DshApiException catch (error) {
       if (!mounted) return;
       debugPrint('SessionChat: 加载更早的消息失败 ${error.code}');
@@ -860,6 +869,10 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       _loadingOlder = false;
       if (mounted) setState(() {});
     }
+    // 注意这两句必须在「_loadingOlder 复位之后」：以前放在 try 里，预取
+    // 自己撞上「正在加载」的闸，等于每次都只预取一页，永远不往下接力。
+    _prefetchOlder();
+    _fillViewportIfShort();
   }
 
   /// 主动预取：不等用户翻到顶，先在后台把更早的一页取回来。
@@ -876,6 +889,30 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     if ((_oldestSeq ?? 0) <= 0) return;
     _prefetchedPages += 1;
     unawaited(_loadOlder(quiet: true));
+  }
+
+  /// 内容撑不满一屏就接着往上要。
+  ///
+  /// 折叠之后一整轮只剩一行摘要，一页 30 条事件可能只画出两三行——进会话看到
+  /// 的就是一大片空白，得手动往上滑才把历史「滑」出来。所以判据不能是「拉了
+  /// 几页」，而是「画出来的东西够不够一屏」。
+  ///
+  /// 有上限（[_maxFillPages]）也有兜底：`hasMore == false` 时一页都不再发。
+  void _fillViewportIfShort() {
+    if (!widget.prefetchHistory) return;
+    if (!_hasMoreHistory || _loadingOlder) return;
+    if (_fillPages >= _maxFillPages) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      if (!_hasMoreHistory || _loadingOlder) return;
+      final position = _scroll.position;
+      if (!position.hasContentDimensions) return;
+      final extent = position.maxScrollExtent - position.minScrollExtent;
+      // 留一点余量：刚好一屏也算「不满」，不然差几个像素才滚得动。
+      if (extent > position.viewportDimension * 1.2) return;
+      _fillPages += 1;
+      unawaited(_loadOlder(quiet: true));
+    });
   }
 
   Future<void> _loadHistory({
@@ -905,6 +942,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       // 首屏站稳之后就把上一页悄悄取回来：用户第一次往上翻时，
       // 等的是「已经在路上的那一页」，而不是「现在才发出去的请求」。
       _prefetchOlder();
+      // 一页装不满屏（折叠之后很常见）就继续往上补，别让用户看着一片空白。
+      _fillViewportIfShort();
       // 历史到了再对一次账：回填的气泡如果已经变成历史，就地收掉。
       if (_restoredLocalIds.isNotEmpty) unawaited(_reconcilePending());
     } on DshApiException catch (error) {
