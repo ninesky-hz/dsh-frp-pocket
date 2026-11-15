@@ -52,7 +52,7 @@ dsh plugin --profile desktop add -w D:/Ai-Project/dsh-frp-pocket/packages/plugin
 > - `#path:packages/plugin` 不能省：仓库根目录没有 `package.json`，不指子目录解析不到包；
 > - GitHub 网页地址 `…/tree/main/packages/plugin` **不是 git remote**，照抄进去会得到
 >   `fatal: repository '…/tree/main/packages/plugin/' not found`；
-> - git 装的是**已推送的提交**（目前 `0c813b8`，插件 0.3.3）；本机未提交的改动只有
+> - git 装的是**已推送的提交**（当前 `main` 上的插件已是 0.3.5）；本机未提交的改动只有
 >   `-w <本地路径>` 这种 link 安装才带得上。
 
 细节与实测记录：[docs/VPS-TLS.md](docs/VPS-TLS.md)。

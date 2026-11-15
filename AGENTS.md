@@ -96,12 +96,33 @@ Set-Location "D:\Ai-Project\dsh-frp-pocket"
 
 ### 5.2 取 token
 
+两种来源，按顺序挑第一个能用的：
+
+**A. 操作者在对话里直接给的 PAT**（fine-grained，`github_pat_…` 开头）。用 `write` 工具把它
+落到 `.tmp-tok.txt`（已被 `.gitignore` 的 `.tmp-*` 挡住），发版结束立刻删除。
+**永远不要把 token 写进任何仓库内文件、提交或 release 正文**——本文件只写流程，不写值。
+
+**B. Windows 凭据管理器里的老 PAT**：
+
 ```powershell
 $cred  = ("protocol=https`nhost=github.com`n`n" | git credential fill)
 $token = (($cred | Where-Object { $_ -like 'password=*' }) -replace '^password=','').Trim()
 ```
 
-Windows 凭据管理器里的 PAT，40 字符。用完删掉临时文件。
+B 取到的是经典 PAT（40 字符）。验证手上这个 token 能不能干活（只读，不产生副作用）：
+
+```powershell
+Invoke-RestMethod -Uri 'https://api.github.com/repos/ninesky-hz/dsh-frp-pocket' `
+  -Headers @{ Authorization="token $token"; 'User-Agent'='dsh-frp-pocket-release' } |
+  Select-Object -ExpandProperty permissions
+# 需要 push/admin=true；fine-grained PAT 没有 X-OAuth-Scopes 响应头，别拿它判断权限
+```
+
+写权限想确认时，建一个 `draft=$true` 的探针 release 再删掉（draft 不会建 tag，也不会上首页）：
+
+```powershell
+# POST /releases  draft=true  tag_name='v0.0.0-token-probe'  → DELETE /releases/<id>
+```
 
 ### 5.3 建 release
 
