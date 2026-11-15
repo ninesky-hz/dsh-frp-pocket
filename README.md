@@ -2,7 +2,7 @@
 
 自用的 **DSH 远程控制**方案：手机 App 经自建 **frp** 隧道，远程操作「家里」和「工作室」两台电脑上的 DeepSeek Harness。
 
-**手机安装包**：[Releases · v0.1.0](https://github.com/ninesky-hz/dsh-frp-pocket/releases/tag/v0.1.0)（arm64-v8a / armeabi-v7a / x86_64）
+**手机安装包**：[Releases · 最新版](https://github.com/ninesky-hz/dsh-frp-pocket/releases/latest)（单包内含 arm64-v8a / armeabi-v7a / x86_64）
 
 ```
 手机 App ──HTTPS──▶ VPS(Caddy → frps) ──frp──▶ 家里 PC / 工作室 PC
@@ -68,16 +68,15 @@ sudo bash deploy/install-vps.sh --domain dsh.example.com --token 'FRP_TOKEN'
 > 插件的「暴露方式」有三种：`customDomains`（frps 不用配域名，**共用 frps 用这个**）、
 > `subdomain`（frps 要配 `subDomainHost`）、`remotePort`（仅排障）。见 [docs/PC-SETUP.md](docs/PC-SETUP.md) §3。
 
-手机端安装包直接下（**[Releases · v0.1.0](https://github.com/ninesky-hz/dsh-frp-pocket/releases/tag/v0.1.0)**，按 ABI 拆分）：
+手机端安装包直接下：**[Releases · 最新版](https://github.com/ninesky-hz/dsh-frp-pocket/releases/latest)** ——始终指向当前最新版本，不用记版本号。
 
 | 文件 | 体积 | 适用 |
 | --- | --- | --- |
-| [`dsh-frp-pocket-v0.1.0-arm64-v8a.apk`](https://github.com/ninesky-hz/dsh-frp-pocket/releases/download/v0.1.0/dsh-frp-pocket-v0.1.0-arm64-v8a.apk) | 25.4 MB | 绝大多数手机（推荐） |
-| [`dsh-frp-pocket-v0.1.0-armeabi-v7a.apk`](https://github.com/ninesky-hz/dsh-frp-pocket/releases/download/v0.1.0/dsh-frp-pocket-v0.1.0-armeabi-v7a.apk) | 21.4 MB | 老 32 位机型 |
-| [`dsh-frp-pocket-v0.1.0-x86_64.apk`](https://github.com/ninesky-hz/dsh-frp-pocket/releases/download/v0.1.0/dsh-frp-pocket-v0.1.0-x86_64.apk) | 27.7 MB | 模拟器 / x86 平板 |
+| `dsh-pocket-<版本>-<构建号>.apk`（例：`dsh-pocket-1.3.22-37.apk`） | ≈ 70 MB | 所有机型：一个包里同时含 arm64-v8a / armeabi-v7a / x86_64 |
 
+每个 release 只挂一个包，文件名里的版本号与构建号就是 `packages/app/pubspec.yaml` 的 `version: X.Y.Z+N`。
 源码里也能自己出包：`bash scripts/build-apk.sh --release`，产物自动归档到 `dist/dsh-pocket-<versionName>-<versionCode>.apk`。
-安装：手机点开下载好的 APK（需允许「安装未知来源应用」），或 `adb install -r dsh-frp-pocket-v0.1.0-arm64-v8a.apk`。
+安装：手机点开下载好的 APK（需允许「安装未知来源应用」），或 `adb install -r dsh-pocket-<版本>-<构建号>.apk`。
 当前 release 包用 debug 签名，自用足够；要长期升级请按 `docs/APP.md` 生成自己的 keystore。
 
 > 所有示例中的 `VPS_IP`、`dsh.example.com`、`FRP_TOKEN`、PIN 均为占位符，请替换为你自己的值；凭据只存本机。
