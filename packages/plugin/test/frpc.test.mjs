@@ -166,15 +166,24 @@ test('findLastTunnelEvent：取最后一条事件，不是「曾经成功过」'
   }
 });
 
-test('resolveFrpc：优先 config.frpcPath，不存在则回退 PATH', () => {
+test('resolveFrpc：frpcPath > 随包 frpc-<platform>-<arch>[.exe] > PATH', () => {
   const cfg = baseCfg();
-  const viaPath = resolveFrpc(cfg);
-  // 测试机 PATH 里有 frpc 0.71.1；即使没有也应返回 null 而不是抛异常
-  assert.ok(viaPath === null || typeof viaPath === 'object' || typeof viaPath === 'string');
-  if (viaPath && typeof viaPath === 'object') assert.ok(viaPath.path);
+  const exe = process.platform === 'win32' ? '.exe' : '';
+  const shipped = join(PKG_ROOT, 'bin', `frpc-${process.platform}-${process.arch}${exe}`);
+
+  // 1) 配置路径存在 → 直接用它，压过随包二进制
   const viaCfg = resolveFrpc({ ...cfg, frpcPath: process.execPath });
-  assert.ok(viaCfg);
-  assert.equal(typeof (viaCfg.path ?? viaCfg), 'string');
+  assert.equal(viaCfg.source, 'config');
+  assert.equal(viaCfg.path, process.execPath);
+
+  // 2) 配置路径不存在 → 落到随包二进制；该平台没内置就继续回退（PATH 或 null），不能抛
+  const viaPlugin = resolveFrpc({ ...cfg, frpcPath: join(PKG_ROOT, 'test', 'no-such-frpc.exe') });
+  if (existsSync(shipped)) {
+    assert.equal(viaPlugin.source, 'plugin');
+    assert.equal(viaPlugin.path, shipped);
+  } else {
+    assert.ok(viaPlugin === null || ['plugin', 'path'].includes(viaPlugin.source));
+  }
 });
 
 test('updateConfig 保存 frpcPath 后 loadConfig 仍能读回', () => {

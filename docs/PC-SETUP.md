@@ -50,6 +50,24 @@ dsh plugin --profile desktop list
 
 装完重启 DSH（或按提示 reload），设置页左侧应出现「远程访问 / dsh-frp-pocket」。
 
+### 2.1 `frpc` 从哪来（Windows 不用管）
+
+插件解析顺序是 **`config.frpcPath` → 插件自带的 `bin/frpc-<平台>-<架构>[.exe]` → `PATH` 里的 `frpc`**。
+
+- **Windows x64：装完就有。** 仓库里直接带了 `packages/plugin/bin/frpc-win32-x64.exe`（frp 0.72.0，Apache-2.0，来源与校验和见同目录 `frpc-manifest.json`），安装插件即完成，不需要额外下载。
+- **macOS / Linux / Windows arm64：补一份对应平台的。** 在仓库根跑：
+
+  ```bash
+  node scripts/fetch-frpc.mjs                     # 取当前机器这一份
+  node scripts/fetch-frpc.mjs --platform linux-x64 --platform darwin-arm64
+  node scripts/fetch-frpc.mjs --all               # 六个主流平台
+  ```
+
+  脚本会用官方 `frp_sha256_checksums.txt` 校验下载包，失败就中止；产物落到 `packages/plugin/bin/frpc-<平台>-<架构>`，重启 DSH 生效。
+- 也可以完全绕开插件自带的：把 `frpc` 放进 `PATH`，或者 `dsh-frp-pocket config set frpcPath /绝对路径/frpc`。
+
+> 面板显示「异常」且 `frpc 日志` 里是 `frpc_not_found`，就是这三处都没命中——`frpc.log` 里会打出实际找过的路径。
+
 ## 3. 在设置页填 frps 参数
 
 | 字段 | 填什么 | 说明 |
@@ -176,8 +194,12 @@ Get-NetAdapter | ForEach-Object {
 ## 8. Linux PC（差异）
 
 ```bash
-# 装 frpc（如果不用插件自带的）
-sudo install -m 0755 frpc /usr/local/bin/frpc
+# 插件自带的是 Windows 版；Linux 上先补一份同平台的（0.72.0，官方校验）
+node scripts/fetch-frpc.mjs --platform linux-x64     # arm64 换成 linux-arm64
+# 产物：packages/plugin/bin/frpc-linux-x64，插件下次启动直接用它，不用进 PATH
+
+# 想脱离插件手工跑，再装到 PATH 里（可选）
+sudo install -m 0755 packages/plugin/bin/frpc-linux-x64 /usr/local/bin/frpc
 
 # 手工验证（用仓库模板改占位符）
 cp deploy/frpc/frpc-home.toml ~/.config/frpc.toml

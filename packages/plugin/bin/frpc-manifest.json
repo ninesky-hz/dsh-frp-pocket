@@ -1,0 +1,16 @@
+{
+  "frpVersion": "0.72.0",
+  "license": "Apache-2.0",
+  "source": "https://github.com/fatedier/frp",
+  "files": {
+    "frpc-win32-x64.exe": {
+      "platform": "win32",
+      "arch": "x64",
+      "version": "0.72.0",
+      "asset": "frp_0.72.0_windows_amd64.zip",
+      "url": "https://github.com/fatedier/frp/releases/download/v0.72.0/frp_0.72.0_windows_amd64.zip",
+      "sha256": "b8580b916ecb2e27ecc348bc67bc8b93b0e65266f85fd5d703e2f2f69862b089",
+      "size": 17431040
+    }
+  }
+}

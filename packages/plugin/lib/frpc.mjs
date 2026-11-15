@@ -126,9 +126,16 @@ export function buildFrpcToml(cfg) {
   return `${lines.join('\n')}\n`;
 }
 
+/**
+ * 随包二进制候选，按优先级：
+ *   1. `bin/frpc-<platform>-<arch>[.exe]` —— 仓库内置（win32-x64）或
+ *      `node scripts/fetch-frpc.mjs` 按平台取件，一个仓库可放多平台互不覆盖；
+ *   2. `bin/frpc[.exe]` —— 老式单平台打包，或用户手工丢进来的文件。
+ */
 function candidateBinaries() {
-  const names = process.platform === 'win32' ? ['frpc.exe', 'frpc'] : ['frpc'];
-  return names.map((n) => join(PLUGIN_ROOT, 'bin', n));
+  const exe = process.platform === 'win32' ? '.exe' : '';
+  const names = [`frpc-${process.platform}-${process.arch}${exe}`, `frpc${exe}`];
+  return [...new Set(names)].map((n) => join(PLUGIN_ROOT, 'bin', n));
 }
 
 /** 在 PATH 里找 frpc（不执行，只查存在性；Windows 认 .exe）。 */
@@ -769,7 +776,12 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
       : resolveFrpc(cfg);
     if (!bin) {
       setState('error', 'frpc_not_found');
-      log.error?.('frpc: 未找到 frpc 可执行文件 | frpc_not_found');
+      // 面板只显示 lastError，细节留给日志：告诉人「去哪拿文件、放哪」
+      log.error?.(
+        `frpc: 未找到 frpc 可执行文件 | frpc_not_found | 先找 ${candidateBinaries().join(
+          ' / ',
+        )}，再找 PATH 里的 frpc；取件 node scripts/fetch-frpc.mjs --platform ${process.platform}-${process.arch}`,
+      );
       return { ok: false, error: 'frpc_not_found' };
     }
 

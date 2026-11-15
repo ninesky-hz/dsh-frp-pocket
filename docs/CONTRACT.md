@@ -195,7 +195,7 @@ subdomain = "home"
 - `mode=customDomains` 但域名列表为空时按 `frp_not_configured` 处理（frpc 会因空数组直接失败，先拦下来），不 spawn。
 
 - 生命周期：`start()` 幂等；崩溃 3 秒退避重启（上限 5 次/分钟）；`stop()` 杀进程树；状态写 `state.json` 并暴露在 `/health`。
-- 二进制解析顺序：`config.frpcPath` → 插件 `bin/frpc[.exe]` → `PATH` 的 `frpc`；都没有则 `frp.state="error"`，`lastError="frpc_not_found"`，**不阻塞网关**。
+- 二进制解析顺序：`config.frpcPath` → 插件 `bin/frpc-<platform>-<arch>[.exe]`（仓库内置 win32-x64，其他平台用 `scripts/fetch-frpc.mjs` 补）→ 插件 `bin/frpc[.exe]`（老式单平台包/手工落盘）→ `PATH` 的 `frpc`；都没有则 `frp.state="error"`，`lastError="frpc_not_found"`，**不阻塞网关**（`frpc.log` 里会打出找过的路径与取件命令）。
 - 启动日志保留最后 100 行在内存，供设置页诊断。
 
 ## 7. App（Flutter Android）

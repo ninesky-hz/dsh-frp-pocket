@@ -1,6 +1,6 @@
 {
   "name": "dsh-frp-pocket",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "private": true,
   "description": "DSH 手机远控宿主插件：PIN 网关 + 自建 frp 隧道 + 设置页",
   "type": "module",
@@ -20,7 +20,8 @@
     "bin",
     "cordis.patch.yml",
     "LICENSE",
-    "vendor/dsh-pocket/LICENSE"
+    "vendor/dsh-pocket/LICENSE",
+    "vendor/frp/LICENSE"
   ],
   "dsh": {
     "bundle": {

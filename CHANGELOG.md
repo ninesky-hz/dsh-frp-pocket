@@ -1,3 +1,18 @@
+## 2026-11-15（插件自带 frpc，Windows 装完即用）
+
+### app 1.3.24+39（宿主插件 0.3.7）
+
+App 代码没动，只跟版本号；这一版的实际内容是宿主插件 `dsh-frp-pocket` 0.3.7 自带 frpc。
+
+- **症状**（用户 m00085 截图）：家用 PC 装完插件，面板「异常」、`frpc 日志` 里 `lastError: frpc_not_found`，隧道起不来。
+- **根因**：仓库只带 CLI（`packages/plugin/bin/dsh-frp-pocket.mjs`），**没有一个平台带 frpc**。工作室那台能跑是因为 `PATH` 里恰好有 `C:\Users\Chen\opt\impacket\tools\frpc.exe`，家里那台没有。`deploy/frpc/install-pc.ps1` 头部还写着「插件设置页会自己下载/管理 frpc」，与代码不符（全仓库无任何下载逻辑），`docs/PC-SETUP.md` 也从没说过 frpc.exe 该放哪。
+- **改法**：
+  - `packages/plugin/bin/frpc-win32-x64.exe`：内置 frp **0.72.0** windows_amd64 frpc（17,431,040 B，sha256 `b8580b91…62b089`），来源 URL、校验和、版本写进 `bin/frpc-manifest.json`；许可证 `vendor/frp/LICENSE`（Apache-2.0）随包，`package.json` 的 `files` 已含它。
+  - `packages/plugin/lib/frpc.mjs`：`candidateBinaries()` 改为**平台专属名优先**——`bin/frpc-<platform>-<arch>[.exe]` → `bin/frpc[.exe]` → `PATH`，一个仓库能并存多平台互不覆盖；`frpc_not_found` 的日志改为打出实际找过的路径 + 取件命令（面板 `lastError` 契约不变）。
+  - `scripts/fetch-frpc.mjs`：零依赖取件脚本（global fetch + 自带 zip/tar.gz 解压），下载包对照 frp 官方 `frp_sha256_checksums.txt` 校验，输出 `bin/frpc-<平台>-<架构>` 并更新 manifest。支持 `--platform`（可重复/逗号分隔）、`--all`、`--version`、`--force`、`--out`。
+  - 文档纠偏：`docs/PC-SETUP.md` 新增 §2.1「frpc 从哪来」（Windows 不用管 / 其他平台一条命令 / 也可走 `frpcPath` 或 PATH）、§8 Linux 段落改为用取件脚本；`docs/CONTRACT.md` 的解析顺序、`README.md` 的能力清单、`deploy/frpc/install-pc.ps1` 头部注释同步。
+- 测试：`packages/plugin/test/frpc.test.mjs` 的 resolveFrpc 用例从「断言宽松」改为钉死语义（`frpcPath` → `source=config`；配置路径不存在时落到 `bin/frpc-<平台>-<架构>` → `source=plugin`）。`node --test test/*.test.mjs` 全量 **106 通过**；`scripts/fetch-frpc.mjs` 实测取 win32-x64（与内置文件 sha256 一致）、linux-x64（ELF 头 `7f 45 4c 46`）、darwin-arm64（Mach-O `cf fa ed fe`）三类归档解压均正确。
+
 ## 2026-11-15（设置页「关于」能点开开源仓库，署名作者）
 
 ### app 1.3.22+37

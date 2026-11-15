@@ -1,10 +1,12 @@
 # =============================================================================
 # install-pc.ps1 — Windows PC 侧安装 frpc（配合 dsh-frp-pocket 插件使用）
 #
-# 正常情况下你**不需要**这个脚本：插件设置页会自己下载/管理 frpc 并生成配置。
+# 正常情况下你**不需要**这个脚本：
+#   - Windows x64 装完插件就有 frpc —— 仓库自带 packages/plugin/bin/frpc-win32-x64.exe；
+#   - 其他平台跑 `node scripts/fetch-frpc.mjs` 补一份同平台的 bin/frpc-<平台>-<架构>。
 # 它的用途：
 #   1) 不装插件时手工验证隧道（排查到底是 frp 的问题还是插件的问题）
-#   2) 插件报 frpc_not_found 时，先把 frpc.exe 落到固定位置
+#   2) 插件报 frpc_not_found、又不想往仓库里塞二进制时，把 frpc.exe 落到固定位置
 #   3) 需要 frpc 开机自启、而插件没跑的时候
 #
 # 用法（普通 PowerShell 即可，注册计划任务建议用管理员）：
