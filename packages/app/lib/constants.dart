@@ -4,10 +4,10 @@
 library;
 
 /// App 版本（与 pubspec version 的版本段一致）。
-const String kAppVersion = '1.3.24';
+const String kAppVersion = '1.3.25';
 
 /// App 构建号（与 pubspec version 的 `+N` 一致）。
-const String kBuildNumber = '39';
+const String kBuildNumber = '40';
 
 /// 作者署名（设置页「关于」展示）。
 const String kAppAuthor = '九天';

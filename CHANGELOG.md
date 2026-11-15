@@ -1,3 +1,29 @@
+## 2026-11-15（随机域名不再撞车：8 位 + 冲突自愈）
+
+### app 1.3.25+40（宿主插件 0.3.8）
+
+App 代码没动，只跟版本号；这一版的实际内容是宿主插件 `dsh-frp-pocket` 0.3.8。
+
+- **症状**：泛域名模式下掷出来的子域和其他机器撞了。frps 只让后到的那台报
+  `start error: router config conflict`，被拒的代理不进 dashboard，所以面板从 frps 侧
+  完全看不见；用户看到的是「隧道进程活着、域名就是打不开」，重启多少次都一样。
+- **根因**：`generateSubdomain(6)` 只有 31^6 ≈ 8.9 亿种；按生日悖论 4200 台机器就有
+  约 1% 概率撞上。而且冲突**不会让 frpc 退出**，现有退避重启（3s→60s 封顶）永远
+  不会触发 —— 重启一百次还是同一个域名再撞一次。
+- **改法**：
+  - `packages/plugin/lib/config.mjs`：`generateSubdomain(len = 8)`，31^8 ≈ 8530 亿，
+    同样 4200 台的概率降到约 0.001%。旧配置里已成形的 6 位域名不动（落盘后固定）。
+  - `packages/plugin/client/index.js`：`randomSubdomain(len = 8)` 同步（UI「生成」按钮）。
+  - `packages/plugin/lib/frpc.mjs`：新增 `CONFLICT_PATTERN` 与 `MAX_DOMAIN_HEALS = 3`，
+    tail 日志时命中 `router config conflict` 就重掷一个域名 → `updateConfig` 写回
+    `customDomains` 与 `publicUrl` → 500ms 后 `restart()`。只对 `autoDomain` 生效：
+    用户手填的域名不替人改，只记 `domain_conflict`。连撞三次停手（说明不是运气问题）。
+- 测试：`test/config.test.mjs` 断言 8 位且显式位数仍可用；`test/frpc.test.mjs` 新增
+  三条（`CONFLICT_PATTERN` 认与不认、自动重掷写回配置 + 日志给出新域名、手填域名不动）。
+  插件全量 109 条通过。
+- 配合：管理面板 frp-console 0.9.4 起提供 `GET /api/domains/check?domain=x`
+  （见 frp-console 仓库 README「域名占用查询」）。
+
 ## 2026-11-15（插件自带 frpc，Windows 装完即用）
 
 ### app 1.3.24+39（宿主插件 0.3.7）

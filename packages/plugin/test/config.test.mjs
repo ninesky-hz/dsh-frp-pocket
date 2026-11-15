@@ -169,17 +169,18 @@ test('normalizeDomains：字符串/数组都能收，非法项被丢掉', () => 
   assert.equal(normalizeDomains(['a1.b', 'a2.b', 'a3.b', 'a4.b', 'a5.b', 'a6.b']).length, 5);
 });
 
-test('generateSubdomain：6 位、字符集无易混字符、不重复', () => {
+test('generateSubdomain：8 位、字符集无易混字符、不重复', () => {
   const seen = new Set();
   for (let i = 0; i < 200; i += 1) {
     const sub = generateSubdomain();
-    assert.equal(sub.length, 6);
+    assert.equal(sub.length, 8);
     assert.match(sub, /^[a-z2-9]+$/);
     assert.ok(!/[01ilo]/.test(sub), `易混字符不该出现: ${sub}`);
     seen.add(sub);
   }
   assert.ok(seen.size > 190, `随机性太差，200 次只出 ${seen.size} 个不同值`);
   assert.equal(generateSubdomain(10).length, 10);
+  assert.equal(generateSubdomain(6).length, 6, '显式位数仍然可用');
 });
 
 test('normalizeDomainSuffix：去协议/通配符/路径，非法返回空', () => {
@@ -191,14 +192,14 @@ test('normalizeDomainSuffix：去协议/通配符/路径，非法返回空', () 
   assert.equal(normalizeDomainSuffix(undefined), '');
 });
 
-test('autoDomain：后缀 + 开关自动生成 6 位随机域名，落盘后不再变（幂等）', () => {
+test('autoDomain：后缀 + 开关自动生成 8 位随机域名，落盘后不再变（幂等）', () => {
   const cfg = normalizeConfig({
     displayName: '测试机',
     frp: { serverAddr: 'dsh.example.com', domainSuffix: 'dsh.example.com', autoDomain: true, mode: 'customDomains' },
   });
   assert.equal(cfg.frp.customDomains.length, 1);
   const host = cfg.frp.customDomains[0];
-  assert.match(host, /^[a-z2-9]{6}\.dsh\.example\.com$/);
+  assert.match(host, /^[a-z2-9]{8}\.dsh\.example\.com$/);
   assert.equal(cfg.frp.publicUrl, `https://${host}`);
 
   // 再归一化一次（等价于 reload）：域名与 publicUrl 都保持不变

@@ -19,6 +19,7 @@ import {
   restartDelayMs,
   rotateLogFile,
   tunnelEventOf,
+  CONFLICT_PATTERN,
   LOG_KEEP_BYTES,
   LOG_MAX_BYTES,
   RESTART_BASE_MS,
@@ -614,3 +615,117 @@ test(
     }
   },
 );
+
+// ---------- 域名冲突自愈（frps 说 router config conflict 时重掷域名） ----------
+
+// 注意：不能在这里写 "\n" 转义 —— 它会被外层写成真换行，塞进 node -e 的脚本里就断句了。
+const NL = String.fromCharCode(10);
+const FAKE_FRPC_CONFLICT = [
+  "process.stdout.write('[W] [client/control.go:172] [c1] [p1] start error: router config conflict' + String.fromCharCode(10));",
+  'setInterval(() => {}, 1000);',
+].join(String.fromCharCode(10));
+
+test('CONFLICT_PATTERN：认 frps 的 router config conflict，不误伤正常行', () => {
+  const hit = [
+    '[W] [client/control.go:172] [c1] [p1] start error: router config conflict',
+    '[W] [client/control.go:172] [c1] [p1] start proxy error: router config conflict',
+    'custom domain panel.chenz.vip already registered',
+  ];
+  for (const line of hit) assert.ok(CONFLICT_PATTERN.test(line), `该认出来: ${line}`);
+
+  const miss = [
+    '[I] [client/control.go:172] [c1] [p1] start proxy success',
+    '[I] [client/service.go:196] try to connect to server...',
+    '[I] [client/control.go:172] [c1] [p1] start error: port already used',
+    '[W] connection to server closed',
+  ];
+  for (const line of miss) assert.ok(!CONFLICT_PATTERN.test(line), `不该认出来: ${line}`);
+});
+
+test('域名冲突：自动重掷一个新域名并写回配置', async () => {
+  const before = updateConfig({
+    frp: {
+      enabled: true,
+      serverAddr: 'home.dsh.example.com',
+      serverPort: 7000,
+      authToken: 'tok',
+      transport: 'tls',
+      mode: 'customDomains',
+      domainSuffix: 'dsh.example.com',
+      autoDomain: true,
+      customDomains: ['abcdefgh.dsh.example.com'],
+      publicUrl: 'https://abcdefgh.dsh.example.com',
+    },
+  });
+  assert.equal(before.frp.customDomains[0], 'abcdefgh.dsh.example.com');
+
+  const manager = createFrpcManager({
+    getConfig: () => loadConfig(),
+    log: { info() {}, warn() {}, error() {} },
+    spawnOverride: { command: process.execPath, args: ['-e', FAKE_FRPC_CONFLICT] },
+  });
+
+  try {
+    const started = manager.start();
+    assert.equal(started.ok, true);
+
+    // 250ms 一次 tail + 500ms 才重启，给足 3 秒
+    const deadline = Date.now() + 3000;
+    let host = '';
+    while (Date.now() < deadline) {
+      host = loadConfig().frp.customDomains[0] ?? '';
+      if (host && host !== 'abcdefgh.dsh.example.com') break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    assert.notEqual(host, 'abcdefgh.dsh.example.com', '旧域名应该被换掉');
+    assert.match(host, /^[a-z2-9]{8}\.dsh\.example\.com$/, `新域名格式不对: ${host}`);
+    assert.equal(loadConfig().frp.publicUrl, `https://${host}`, 'publicUrl 要跟着换');
+    assert.equal(loadConfig().frp.autoDomain, true, 'autoDomain 保持不变');
+
+    const logText = manager.logTail(50).join('\n');
+    assert.match(logText, /域名冲突/, '日志要说清楚发生了什么');
+    assert.match(logText, /重掷为/, '日志要给出新域名');
+    assert.match(logText, /第 1\/3 次/, '日志要带上重掷次数');
+  } finally {
+    manager.stop();
+  }
+});
+
+test('域名冲突：手填域名不自动换，只报 domain_conflict', async () => {
+  updateConfig({
+    frp: {
+      enabled: true,
+      serverAddr: 'home.dsh.example.com',
+      serverPort: 7000,
+      authToken: 'tok',
+      transport: 'tls',
+      mode: 'customDomains',
+      domainSuffix: 'dsh.example.com',
+      autoDomain: false,
+      customDomains: ['mine.dsh.example.com'],
+      publicUrl: 'https://mine.dsh.example.com',
+    },
+  });
+
+  const manager = createFrpcManager({
+    getConfig: () => loadConfig(),
+    log: { info() {}, warn() {}, error() {} },
+    spawnOverride: { command: process.execPath, args: ['-e', FAKE_FRPC_CONFLICT] },
+  });
+
+  try {
+    manager.start();
+    const deadline = Date.now() + 3000;
+    let logText = '';
+    while (Date.now() < deadline) {
+      logText = manager.logTail(50).join('\n');
+      if (/不自动更换/.test(logText)) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.match(logText, /不自动更换/);
+    assert.equal(loadConfig().frp.customDomains[0], 'mine.dsh.example.com', '手填域名不能被改');
+  } finally {
+    manager.stop();
+  }
+});

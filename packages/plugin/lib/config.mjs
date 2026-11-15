@@ -89,10 +89,15 @@ export function normalizeDomainSuffix(value) {
 }
 
 /**
- * 6 位随机子域（泛域名场景）：去掉易混字符 0/o/1/l/i，只留 a-z + 2-9，
+ * 8 位随机子域（泛域名场景）：去掉易混字符 0/o/1/l/i，只留 a-z + 2-9，
  * 用来拼 `<随机>.dsh.example.com`，用户不用手工起名。
+ *
+ * 为什么是 8 位：字符集 31 个，6 位只有 31^6 ≈ 8.9 亿种，按生日悖论 4200 台机器
+ * 就有约 1% 概率撞上同一个域名；frps 对同名代理只会让后到的 `router config conflict`，
+ * 而被拒的代理不进 dashboard，面板从 frps 侧看不见。8 位是 31^8 ≈ 8530 亿，
+ * 同样 4200 台的概率降到约 0.001%。旧配置里已经是 6 位的域名不动（落盘后固定）。
  */
-export function generateSubdomain(len = 6) {
+export function generateSubdomain(len = 8) {
   const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
   const limit = 256 - (256 % alphabet.length); // 拒绝采样，避免取模偏置
   let out = '';

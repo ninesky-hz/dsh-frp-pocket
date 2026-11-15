@@ -167,10 +167,13 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 6 位随机子域，字符集与 lib/config.mjs 的 generateSubdomain 一致
+     * 8 位随机子域，字符集与 lib/config.mjs 的 generateSubdomain 一致
      * （去掉易混的 0/o/1/l/i）。浏览器端自己掷，不跨包 import。
+     *
+     * 位数的理由见 lib/config.mjs：6 位只有 8.9 亿种，撞了 frps 只会让后到的
+     * `router config conflict` 且不进 dashboard，面板看不见。
      */
-    function randomSubdomain(len = 6) {
+    function randomSubdomain(len = 8) {
       const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
       const limit = 256 - (256 % alphabet.length);
       let out = '';

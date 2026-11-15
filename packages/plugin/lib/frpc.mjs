@@ -35,7 +35,14 @@ import {
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { paths, readState, writeState } from './config.mjs';
+import {
+  generateSubdomain,
+  normalizeDomainSuffix,
+  paths,
+  readState,
+  updateConfig,
+  writeState,
+} from './config.mjs';
 
 export const LOG_LIMIT = 100;
 /** 重启退避：3s 起步翻倍，60s 封顶，永不因「次数」放弃（F5）。 */
@@ -55,6 +62,18 @@ export const READY_PATTERN = /(start proxy success|login to server success)/;
 /** 隧道断了/正在重试的信号行（v0.71 实测输出）。 */
 export const DISCONNECT_PATTERN =
   /(connection to server closed|login to the server failed|connect to server error|try to reconnect to server)/;
+/**
+ * 域名已被别的机器占用时 frps 的回话（v0.72.0 实测）：
+ *   [W] [client/control.go:172] [xxx] [dup-panel-test] start error: router config conflict
+ *
+ * 这**不是**致命错误：frpc 进程还活着，只是那个 proxy 起不来，日志里没有 exit，
+ * 所以退避重启（scheduleRestart）永远不会触发，重启多少次也是同一个域名再撞一次。
+ * 唯一出路是换域名后重启 —— 见 healDomainConflict()。
+ */
+export const CONFLICT_PATTERN =
+  /(router config conflict|proxy name .* already (?:exists|registered)|custom domain .* already (?:used|registered))/i;
+/** 自动重掷上限：连撞三次说明不是运气问题（多半是后缀写错或域名被长期占着），别再扰服务器。 */
+export const MAX_DOMAIN_HEALS = 3;
 /** 网络层的默认值（秒）：拨 VPN / 换网卡后要尽快发现半死连接，frpc 默认 10/30/90 太钝。 */
 export const DEFAULT_DIAL_TIMEOUT_S = 5;
 export const DEFAULT_HEARTBEAT_INTERVAL_S = 10;
@@ -506,6 +525,9 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
   let ready = false;
   let reconciling = false;
   let discoverCache = { at: 0, pids: null };
+  // 域名冲突自愈：会话内累计重掷次数（不跨重启重置 —— 连撞三次就是真有问题）
+  let domainHeals = 0;
+  let healTimer = null;
 
   function pushLog(chunk) {
     const text = stripAnsi(chunk);
@@ -715,6 +737,63 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
   }
 
   /** 跟随 frpc.log 增量：既进内存环形缓冲，也做就绪判定（F2/F3）。 */
+  /**
+   * 域名冲突自愈：frps 说这个名字被别人占了，就重掷一个、写回配置、重启 frpc。
+   *
+   * 为什么必须在这里做而不是靠退避重启：冲突不会让 frpc 退出，进程照旧活着重连，
+   * 而 proxy 一直起不来 —— 重启一万次还是同一个域名再撞一次。面板也看不见
+   * （被拒的代理不进 dashboard），只能靠这条日志。
+   *
+   * 只对 autoDomain（泛域名自动命名）生效：用户手填的域名不能替他改。
+   * @returns {boolean} 是否已接管这一行（接管后不再做 ready/down 判定）
+   */
+  function healDomainConflict(line) {
+    if (!CONFLICT_PATTERN.test(stripAnsi(line))) return false;
+
+    const cfg = getConfig();
+    const frp = cfg?.frp ?? {};
+    const suffix = normalizeDomainSuffix(frp.domainSuffix);
+    const current = (frp.customDomains ?? [])[0] ?? '';
+
+    if (!frp.autoDomain || !suffix) {
+      pushLog(
+        `域名冲突：${current || '当前域名'} 已被别的机器占用；因为是手填域名，不自动更换（换 frp.customDomains 或找管理员）`,
+      );
+      setState('error', 'domain_conflict');
+      return true;
+    }
+    if (domainHeals >= MAX_DOMAIN_HEALS) {
+      pushLog(
+        `域名冲突：已自动重掷 ${MAX_DOMAIN_HEALS} 次仍失败，停手（多半是后缀写错，或域名被长期占着）`,
+      );
+      setState('error', 'domain_conflict');
+      return true;
+    }
+
+    domainHeals += 1;
+    const fresh = `${generateSubdomain()}.${suffix}`;
+    pushLog(
+      `域名冲突：${current || '(空)'} 已被占用 → 重掷为 ${fresh}（第 ${domainHeals}/${MAX_DOMAIN_HEALS} 次）`,
+    );
+    try {
+      updateConfig({
+        frp: { customDomains: [fresh], publicUrl: `https://${fresh}`, autoDomain: true },
+      });
+    } catch (err) {
+      pushLog(`域名冲突：写回新域名失败：${err?.message ?? err}`);
+      setState('error', 'domain_conflict');
+      return true;
+    }
+    // 不在 tick 里同步重入 stop()/start()：等这一轮日志处理完再动手
+    if (healTimer) clearTimeout(healTimer);
+    healTimer = setTimeout(() => {
+      healTimer = null;
+      restart();
+    }, 500);
+    healTimer.unref?.();
+    return true;
+  }
+
   function startTail(pid) {
     stopTail();
     tailCarry = '';
@@ -729,6 +808,9 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
         for (const line of parts) {
           if (!line.trim()) continue;
           pushLog(line);
+          // 冲突行先判：它既不是 ready 也不是 down，而且必须立刻换域名，
+          // 否则 proxy 会一直起不来，进程却活得好好的（退避重启根本不会触发）
+          if (healDomainConflict(line)) continue;
           const ev = tunnelEventOf(line);
           if (ev === 'ready') markRunning('日志信号');
           else if (ev === 'down') markReconnecting(line.trim());
@@ -925,6 +1007,10 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
     if (restartTimer) {
       clearTimeout(restartTimer);
       restartTimer = null;
+    }
+    if (healTimer) {
+      clearTimeout(healTimer);
+      healTimer = null;
     }
     clearFallback();
     stopTail();
