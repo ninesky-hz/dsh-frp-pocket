@@ -8,6 +8,7 @@ import { createGateway } from './gateway.mjs';
 import { createFrpcManager } from './frpc.mjs';
 import { installRpc } from './rpc.mjs';
 import { createRestartController, readRestartMarker } from './restart.mjs';
+import { checkDomain, findFreeDomain } from './check.mjs';
 
 import { readFileSync, statSync } from 'node:fs';
 import { detectDshVersion } from './dsh-version.mjs';
@@ -67,6 +68,54 @@ function readLaunchToken(ctx) {
   } catch {
     return '';
   }
+}
+
+/**
+ * 启动隧道前的域名预检：问面板「这个名字被别人占了吗」。
+ *
+ * 面板配了（frp.checkUrl）且是自动命名（autoDomain）时才动，被占就先换一个再启动 ——
+ * 这样用户连 frps 那句 `router config conflict` 都看不到。
+ * 面板没配 / 连不上 / 超时 / 数据不对：一律当「查不到」，照常启动，绝不阻塞。
+ *
+ * @returns {Promise<{changed:boolean, from?:string, to?:string, error?:string} | null>}
+ */
+async function preflightDomain(getConfig, log) {
+  const cfg = getConfig();
+  const frp = cfg?.frp ?? {};
+  const base = frp.checkUrl;
+  const current = (frp.customDomains ?? [])[0] ?? '';
+  if (!base || !current) return null;
+
+  const probe = await checkDomain(base, current);
+  if (!probe.ok) {
+    log.info(`frp-pocket: 域名占用查询跳过（${probe.error}）| domain check skipped`);
+    return null;
+  }
+  if (!probe.taken) {
+    log.info(`frp-pocket: 域名 ${current} 空闲 | domain free`);
+    return null;
+  }
+  if (!frp.autoDomain || !frp.domainSuffix) {
+    log.warn(
+      `frp-pocket: 域名 ${current} 已被别的机器占用；因为是手填域名，不自动更换 | domain taken, not auto-renaming`,
+    );
+    return { changed: false, from: current, error: 'domain_taken' };
+  }
+
+  const picked = await findFreeDomain(base, frp.domainSuffix);
+  if (picked.error && !picked.domain) {
+    log.warn(`frp-pocket: 找不到可用域名（${picked.error}），沿用 ${current} | no free domain`);
+    return { changed: false, from: current, error: picked.error };
+  }
+  const next = updateConfig({
+    frp: { customDomains: [picked.domain], publicUrl: `https://${picked.domain}`, autoDomain: true },
+  });
+  log.info(
+    `frp-pocket: 域名 ${current} 已被占用 → 启动前换成 ${picked.domain}${
+      picked.error ? `（${picked.error}）` : ''
+    } | domain rotated before start`,
+  );
+  return { changed: true, from: current, to: picked.domain, config: next };
 }
 
 export async function apply(ctx, config = {}) {
@@ -153,6 +202,16 @@ export async function apply(ctx, config = {}) {
   });
 
   if (current.frp.enabled && current.frp.serverAddr) {
+    // 先问面板这句「域名被占了吗」：查不到就照常启动，别让查询本身变成故障点
+    try {
+      const pre = await preflightDomain(liveConfig, log);
+      if (pre?.changed) {
+        current = pre.config;
+        currentStamp = configStamp();
+      }
+    } catch (err) {
+      log.warn(`frp-pocket: 域名预检异常，按原样启动 | ${err?.message ?? err}`);
+    }
     const result = frpc.start();
     if (result && result.ok === false) log.warn(`frp-pocket: frpc 启动失败 | ${result.error}`);
   }

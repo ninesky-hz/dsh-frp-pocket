@@ -10,6 +10,7 @@ import { networkInterfaces } from 'node:os';
 import net from 'node:net';
 
 import { redactConfig } from './config.mjs';
+import { checkDomain } from './check.mjs';
 import { qrPayload } from './qr.mjs';
 
 export const RPC_CHANNEL = '/dsh-frp-pocket';
@@ -24,6 +25,7 @@ export const RPC_ENDPOINTS = {
   frpcRestart: 'frpc.restart',
   frpcLogs: 'frpc.logs',
   tunnelTest: 'tunnel.test',
+  domainCheck: 'domain.check',
 };
 
 const RPC_BODY_MAX = 1024 * 1024;
@@ -337,6 +339,15 @@ export function createRpcHandler({ getConfig, saveConfig, frpc, gateway, version
       }
       if (endpoint === RPC_ENDPOINTS.frpcLogs) {
         return ok({ lines: frpc?.logTail?.(payload?.lines ?? 50) ?? [] });
+      }
+
+      if (endpoint === RPC_ENDPOINTS.domainCheck) {
+        const cfg = getConfig();
+        const wanted = String(payload?.domain ?? '').trim();
+        // 不传就查当前在用的那个域名 —— 设置页「检查」按钮的默认行为
+        const domain = wanted || (cfg.frp.customDomains ?? [])[0] || '';
+        const result = await checkDomain(cfg.frp.checkUrl, domain);
+        return ok({ ...result, checkUrl: cfg.frp.checkUrl, configured: Boolean(cfg.frp.checkUrl) });
       }
 
       if (endpoint === RPC_ENDPOINTS.tunnelTest) {

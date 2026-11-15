@@ -1,3 +1,29 @@
+## 2026-11-16（启动前先问一句：这个域名被占了吗）
+
+### 宿主插件 0.3.9（App 未改动，不需要重新装包）
+
+App 代码没动，这一版只改宿主插件 `dsh-frp-pocket`：撞车从「撞了再补救」变成
+「启动前先问管理面板」。
+
+- **背景**：0.3.8 已经能靠 frpc 日志自愈（看到 `router config conflict` 就换域名重启），
+  但用户仍要先看到几秒的失败、日志里多一条报错。面板侧 0.9.4 起有了
+  `GET /api/domains/check?domain=x`，可以在启动前问一句。
+- **改法**：
+  - 新模块 `packages/plugin/lib/check.mjs`：`checkDomain(baseUrl, domain)` 查占用、
+    `findFreeDomain(baseUrl, suffix)` 连着重掷到没被占为止（上限 5 次）。
+  - 新配置项 `frp.checkUrl`（面板地址，**留空 = 完全不检查**）。填了之后
+    `lib/index.js` 在 `frpc.start()` 之前先查一次：被占且是自动命名就换域名再启动；
+    手填域名只告警不代改；**查不到/超时/面板没配一律照常启动**，查询本身不能变成故障点。
+  - 设置页（`client/index.js`）新增「面板地址（可选）」输入框与「检查域名占用」按钮
+    （RPC `domain.check`），结果卡片直接说明空闲/被占/通配符覆盖/查询失败原因。
+- **一个真实性能坑**：这条查询最初用全局 `fetch`，Windows 上 `getaddrinfo` 的
+  `family=0` 会同时查 A 与 AAAA，IPv6 那侧实测卡满 **7.5 秒** → 1.5 秒超时必然命中，
+  功能等于没生效。改成 `node:http/https` 原生请求 + 强制 IPv4 的 `lookup` + keep-alive
+  之后：首次 87ms、后续 12ms。
+- 测试：新增 `test/check.test.mjs` 14 条（含 3 条起真 HTTP 服务、走**真实传输层**，
+  锁住「不许退回 fetch」这个决定）。插件全量 120 条通过。
+- 生效方式：本机安装是软链指向仓库，**重启 DSH 即生效**（不需要重装 APK）。
+
 ## 2026-11-15（随机域名不再撞车：8 位 + 冲突自愈）
 
 ### app 1.3.25+40（宿主插件 0.3.8）

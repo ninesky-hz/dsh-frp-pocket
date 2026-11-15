@@ -204,6 +204,7 @@ window.__ModuleLoader__.load({
       const [showPin, setShowPin] = useState(false);
       const [logs, setLogs] = useState([]);
       const [test, setTest] = useState(null);
+      const [domainCheck, setDomainCheck] = useState(null);
       const mounted = useRef(true);
       // 编辑快照：formRef 跟着手走，pristineRef 是「上次从服务端采纳的原样」。
       // 两者不等 = 手上有未保存改动；这时后台轮询不许拿服务端配置把输入框顶回去。
@@ -231,6 +232,7 @@ window.__ModuleLoader__.load({
         subdomain: value.config?.frp?.subdomain ?? '',
         customDomains: (value.config?.frp?.customDomains ?? []).join(', '),
         domainSuffix: value.config?.frp?.domainSuffix ?? '',
+        checkUrl: value.config?.frp?.checkUrl ?? '',
         autoDomain: value.config?.frp?.autoDomain === true,
         remotePort: String(value.config?.frp?.remotePort ?? 0),
         publicUrl: value.config?.frp?.publicUrl ?? '',
@@ -325,6 +327,7 @@ window.__ModuleLoader__.load({
                   .map((d) => d.trim())
                   .filter(Boolean),
                 domainSuffix: form.domainSuffix.trim(),
+                checkUrl: form.checkUrl.trim(),
                 autoDomain: form.autoDomain === true,
                 remotePort: Number(form.remotePort) || 0,
                 publicUrl: form.publicUrl.trim(),
@@ -397,6 +400,40 @@ window.__ModuleLoader__.load({
         } finally {
           setBusy('');
         }
+      };
+
+      /**
+       * 手动查一次域名占用（RPC domain.check）。
+       * 面板地址没填就只提示一句 —— 不把「没配面板」当成错误弹红。
+       */
+      const runDomainCheck = async () => {
+        setBusy('check');
+        setDomainCheck(null);
+        try {
+          const target =
+            form.customDomains
+              .split(/[,\s]+/)
+              .map((d) => d.trim())
+              .filter(Boolean)[0] ?? '';
+          setDomainCheck(await call('domain.check', { domain: target }));
+        } catch (err) {
+          setDomainCheck({ ok: false, error: err?.message ?? String(err) });
+        } finally {
+          setBusy('');
+        }
+      };
+
+      const domainCheckText = (r) => {
+        if (!r) return '';
+        if (!r.configured) return '没填面板地址：填上面那一栏才能查域名占用（留空 = 不检查，直接启动）。';
+        if (!r.ok) {
+          const why = r.error === 'check_url_not_configured' ? '没填面板地址' : r.error ?? 'unknown';
+          return `查询失败：${why}${r.detail ? `（${r.detail}）` : ''}。启动隧道不受影响。`;
+        }
+        const name = r.domain || '(空)';
+        if (!r.taken) return `✓ ${name} 空闲${r.ms ? `（${r.ms}ms）` : ''}。`;
+        const wild = r.coveredBy?.length ? `；它落在通配符 ${r.coveredBy.join('、')} 覆盖范围内，但精确同名不冲突` : '';
+        return `✗ ${name} 已被别的代理占用${wild}。自动命名模式下启动时面板会帮你换一个。`;
       };
 
       if (!status && !form) {
@@ -708,6 +745,21 @@ window.__ModuleLoader__.load({
             }),
           ),
           h(
+            Field,
+            { label: '面板地址（可选，用于查域名占用）' },
+            h('input', {
+              style: styles.input,
+              placeholder: 'https://panel.example.com（留空 = 启动前不检查）',
+              value: form.checkUrl,
+              onChange: (e) => patchForm({ checkUrl: e.target.value }),
+            }),
+            h(
+              'div',
+              { style: styles.hint },
+              '填 frp-console 面板地址后，启动隧道前会先问一句「这个域名被占了吗」：被占且是自动命名就换一个再起；查不到就照常启动，不会卡住。',
+            ),
+          ),
+          h(
             'div',
             { style: styles.row },
             h(
@@ -722,6 +774,11 @@ window.__ModuleLoader__.load({
             ),
             h('div', { style: { flex: 1 } }),
             h('button', { style: styles.btn, disabled: busy === 'test', onClick: runTest }, busy === 'test' ? '测试中…' : '测试连通性'),
+            h(
+              'button',
+              { style: styles.btn, disabled: busy === 'check', onClick: runDomainCheck },
+              busy === 'check' ? '查询中…' : '检查域名占用',
+            ),
             h('button', { style: { ...styles.btn, ...styles.primary }, disabled: busy === 'save' || !dirty, onClick: save }, '保存配置'),
           ),
           dirty
@@ -740,6 +797,15 @@ window.__ModuleLoader__.load({
               )
             : null,
         ),
+
+        domainCheck
+          ? h(
+              'div',
+              { style: { ...styles.card, borderColor: domainCheck.ok && domainCheck.taken === false ? '#2f6f4f' : undefined } },
+              h('div', { style: styles.head }, h('h3', { style: styles.title }, '域名占用')),
+              h('div', { style: styles.sub }, domainCheckText(domainCheck)),
+            )
+          : null,
 
         // 隧道状态
         h(

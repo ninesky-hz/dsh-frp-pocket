@@ -207,6 +207,27 @@ export function normalizeDnsServer(value) {
   return s;
 }
 
+/**
+ * 面板地址（frp-console），用于「域名占用查询」。留空 = 不启用查询。
+ *
+ * 只保留 origin + 路径前缀：查询串/锚点在这里没有意义，末尾斜杠统一去掉，
+ * 免得拼出来变成 `//api/domains/check`。非法值一律降级成空串（= 关闭功能），
+ * 不抛错 —— 一个填错的面板地址不该让整个插件启动失败。
+ */
+export function normalizeCheckUrl(value) {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return '';
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return '';
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';
+  const path = url.pathname.replace(/\/+$/, '');
+  return `${url.origin}${path}`;
+}
+
 /** 合并默认值 + 逐字段校验；hostId / PIN 缺失或非法则重新生成。 */
 export function normalizeConfig(raw) {
   const base = defaultConfig(raw?.displayName);
@@ -254,6 +275,7 @@ export function normalizeConfig(raw) {
       customDomains,
       domainSuffix,
       autoDomain,
+      checkUrl: normalizeCheckUrl(frp.checkUrl),
       remotePort: intIn(frp.remotePort, 0, 65535, 0),
       publicUrl,
       dnsServer: normalizeDnsServer(frp.dnsServer),
