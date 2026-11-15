@@ -592,6 +592,7 @@ export function createGateway({
           uptime: Date.now() - startedAt,
           wsClients,
           restart: restart?.status?.() ?? null,
+          restartLog: restart?.lastResult?.() ?? null,
           frp: {
             state: state.state,
             since: state.since,

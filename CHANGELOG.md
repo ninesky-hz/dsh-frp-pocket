@@ -1,3 +1,40 @@
+## 2026-11-15（重启 DSH 真的能把 PC 端重新拉起来）
+
+### plugin 0.3.5
+
+- **症状**（用户 m00001）：手机上点「重启 DSH」，PC 端 DSH 关得掉，但关掉之后再也
+  起不来——面板停在那儿，PC 上没有任何窗口。
+- **根因**：桌面 Host 是壳（Electron 主进程）的子进程，壳用
+  `ELECTRON_RUN_AS_NODE=1` 把它当 Node 跑。重启助手（`cmd /c start powershell -File
+  restart.ps1`）从 Host 里派生，**继承了这个变量**；助手里的 `Start-Process` 再拉起
+  `DeepSeek Harness.exe` 时，新进程就变成「纯 Node 模式」的 Electron：启动、
+  几十毫秒后 `exit 0`、不出窗口、不打印任何东西。于是助手 20 次重试每次都看到
+  `early exit code=0`，最后 `launch gave up`——用户看到的就是「关掉了，起不来」。
+  本机实测：带该变量 `Start-Process` 的目标 900ms 内 `HasExited=True / ExitCode=0`；
+  去掉后进程正常进 Chromium 初始化。
+- **改法**（`packages/plugin/lib/restart.mjs`）：
+  - 新增 `stripNodeModeEnv(env)`：摘掉 `ELECTRON_RUN_AS_NODE`、
+    `ELECTRON_NO_ATTACH_CONSOLE`、`ELECTRON_ENABLE_LOGGING`、`NODE_OPTIONS`，
+    派生助手时显式传入这份环境（`spawn(..., { env })`）。
+  - 生成的 Windows 助手脚本自己也再清一遍（`Remove-Item Env:`，双保险），并把
+    清掉了哪些变量写进 `restart.log`（`env stripped: ...`）。
+  - `Start-Process` 20 次仍秒退时，回落到 **explorer 双击等价**（`explorer.exe <exe>`）：
+    shell 负责启动 → 干净环境 + 正常窗口站；再用 `Get-Process -Name` 比对 pid 确认
+    「真的有一个新实例活着」，而不是只看调用返回。
+  - 结局写成机器可读的一行 `result launched=1 pid=<pid>` / `result launched=0
+    lastError=<err>`；插件侧新增 `readLastHelperResult()`，`/api/status` 多返回一个
+    `restartLog` 字段，下次失败手机上就能看到原因。
+  - POSIX 助手同样 `unset` 这几个变量。
+- 测试：`packages/plugin/test/restart.test.mjs` 新增 6 条——环境裁剪（只删这四个、
+  不改调用方对象）、ps1 必须含清理且清理在拉起之前、explorer 兜底与进程表确认、
+  交给 cmd 的环境不含 node 模式开关、`readLastHelperResult` 解析/空文件。
+  把 `restart.mjs` 回退到 0.3.4 后，前三条必红。全量 106 通过。
+- 验证：用真实生成器产出的 ps1 在 detached 的 powershell 里跑了一遍（靶子换成一个
+  sleep 进程 + notepad）：`env stripped: ELECTRON_RUN_AS_NODE` → `old process gone=True`
+  → `launched pid=7692 try=1` → `result launched=1`，全程父进程已退出。
+- 生效方式：插件代码在 Host 进程里，需**手动重启一次 DSH**（关掉再打开）后，
+  App 上的「重启 DSH」才走新逻辑。
+
 ## 2026-11-15（进会话先补满一屏，不用手动滑）
 
 ### app 1.3.20+35

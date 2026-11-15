@@ -22,8 +22,7 @@ import { basename, dirname, join } from 'node:path';
 
 import { paths } from './config.mjs';
 
-/** 30 秒内只接受一次重启请求（重复请求回 409）。 */
-export const RESTART_LOCK_MS = 30_000;
+/** 30 秒内只接受一次重启请求（重复请求回 409）。 */export const RESTART_LOCK_MS = 30_000;
 /** 状态文件的可见窗口：超过就不在 /health 里报了。 */
 export const RESTART_MARKER_TTL_MS = 10 * 60_000;
 /** 终端部署要显式打开才允许重启进程树。 */
@@ -41,6 +40,33 @@ export function restartPaths() {
 }
 
 // ---------------------------------------------------------------- 状态文件
+
+/**
+ * 最近一次助手脚本的结局：restart.log 里最后一条 `result launched=` 行。
+ * 重启失败时，手机端 /api/status 就能看到「这次到底起没起来」，
+ * 不用回 PC 上翻日志。
+ */
+export function readLastHelperResult() {
+  let text = '';
+  try {
+    text = readFileSync(restartPaths().log, 'utf8');
+  } catch {
+    return null;
+  }
+  const lines = text.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i].replace(/^\uFEFF/, '').trim();
+    const m = /^(\S+)\s+result launched=([01])(?:\s+pid=(\d+))?(?:\s+lastError=(.*))?$/.exec(line);
+    if (!m) continue;
+    return {
+      at: m[1],
+      launched: m[2] === '1',
+      pid: m[3] ? Number(m[3]) : null,
+      lastError: m[4] ? m[4].trim() : null,
+    };
+  }
+  return null;
+}
 
 function normalizeMarker(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -125,6 +151,25 @@ export function buildRelaunchTarget({
 
 // ---------------------------------------------------------------- 脚本生成
 
+/** 会让 Electron 以纯 Node 模式起的继承变量（桌面 Host 本身就是这么被拉起的）。 */
+const NODE_MODE_ENV_NAMES = [
+  'ELECTRON_RUN_AS_NODE',
+  'ELECTRON_NO_ATTACH_CONSOLE',
+  'ELECTRON_ENABLE_LOGGING',
+  'NODE_OPTIONS',
+];
+
+/**
+ * 助手脚本以及它拉起的桌面应用都不能继承这些变量：带着 ELECTRON_RUN_AS_NODE=1
+ * 启动 `DeepSeek Harness.exe`，进程会以 Node 模式运行、几百毫秒内 exit 0、不出窗口，
+ * 也就是「DSH 关掉之后再也起不来」。
+ */
+export function stripNodeModeEnv(env = process.env) {
+  const out = { ...env };
+  for (const name of NODE_MODE_ENV_NAMES) delete out[name];
+  return out;
+}
+
 function psQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
@@ -152,6 +197,22 @@ function Write-RestartLog([string]$m) {
 }
 
 Write-RestartLog 'helper start mode=${mode} target=${targetPid} exe=${exePath}'
+
+# The desktop Host is an Electron child launched with ELECTRON_RUN_AS_NODE=1, and
+# this helper inherits that environment. Relaunching the app from here without
+# cleaning it starts the shell in plain Node mode: the process comes up, exits
+# with code 0 within milliseconds, shows no window and logs nothing - exactly the
+# "DSH closes but never comes back" symptom. Strip the node-mode switches first
+# so the new process is equivalent to the user double-clicking the shortcut.
+$stripped = @()
+foreach ($name in @('ELECTRON_RUN_AS_NODE', 'ELECTRON_NO_ATTACH_CONSOLE', 'ELECTRON_ENABLE_LOGGING', 'NODE_OPTIONS')) {
+  if (Test-Path -LiteralPath ('Env:' + $name)) {
+    Remove-Item -LiteralPath ('Env:' + $name) -Force
+    $stripped += $name
+  }
+}
+Write-RestartLog ('env stripped: ' + ($stripped -join ','))
+
 Start-Sleep -Milliseconds 800
 
 $exe = ${psQuote(exePath)}
@@ -159,6 +220,7 @@ $wd = ${psQuote(workDir ?? '')}
 $launchArgs = ${argList}
 $target = ${Number(targetPid)}
 $expected = ${psQuote(expectedName ?? '')}
+$exeName = [System.IO.Path]::GetFileNameWithoutExtension($exe)
 
 $proc = Get-Process -Id $target
 if ($proc) {
@@ -180,6 +242,7 @@ for ($i = 0; $i -lt 120; $i++) {
 Write-RestartLog ('old process gone=' + $gone)
 
 $launched = $false
+$launchedPid = 0
 $lastError = ''
 for ($try = 1; $try -le 20; $try++) {
   Start-Sleep -Milliseconds 250
@@ -207,13 +270,48 @@ for ($try = 1; $try -le 20; $try++) {
   Start-Sleep -Milliseconds 900
   $p.Refresh()
   if (-not $p.HasExited) {
+    $launchedPid = $p.Id
     Write-RestartLog ('launched pid=' + $p.Id + ' try=' + $try)
     $launched = $true
     break
   }
   Write-RestartLog ('early exit pid=' + $p.Id + ' code=' + $p.ExitCode + ' try=' + $try)
 }
-if (-not $launched) { Write-RestartLog ('launch gave up lastError=' + $lastError) }
+# Last resort: Start-Process can still lose the window on some machines (the
+# process starts but no frame appears). Handing the path to explorer.exe is the
+# double-click path: the shell owns the launch, so it gets a clean environment
+# and a normal window station. It returns no pid, so confirm through the process
+# table that a *new* instance is alive rather than trusting the call.
+if (-not $launched) {
+  Write-RestartLog 'start-process gave up, fallback: explorer shell launch'
+  $known = @()
+  foreach ($q in (Get-Process -Name $exeName)) { $known += $q.Id }
+  & explorer.exe $exe | Out-Null
+  for ($i = 0; $i -lt 60; $i++) {
+    Start-Sleep -Milliseconds 250
+    $fresh = @()
+    foreach ($q in (Get-Process -Name $exeName)) {
+      if ($known -notcontains $q.Id) { $fresh += $q }
+    }
+    if ($fresh.Count -gt 0) {
+      $candidate = $fresh[0]
+      Start-Sleep -Milliseconds 1500
+      if (Get-Process -Id $candidate.Id) {
+        $launchedPid = $candidate.Id
+        Write-RestartLog ('explorer launched pid=' + $candidate.Id)
+        $launched = $true
+        break
+      }
+      Write-RestartLog ('explorer instance exited early pid=' + $candidate.Id)
+    }
+  }
+}
+
+if ($launched) {
+  Write-RestartLog ('result launched=1 pid=' + $launchedPid)
+} else {
+  Write-RestartLog ('result launched=0 lastError=' + $lastError)
+}
 Write-RestartLog 'helper done'
 `;
 }
@@ -232,6 +330,10 @@ export function buildPosixScript({
 LOG=${shQuote(logPath)}
 log() { printf '%s %s\\n' "$(date -Is)" "$*" >> "$LOG"; }
 log 'helper start mode=${mode} target=${targetPid} exe=${exePath}'
+# Same trap as Windows: the Host runs with ELECTRON_RUN_AS_NODE=1, and a child
+# that keeps it relaunches the app as a plain Node process that exits at once.
+unset ELECTRON_RUN_AS_NODE ELECTRON_NO_ATTACH_CONSOLE ELECTRON_ENABLE_LOGGING NODE_OPTIONS
+log 'env stripped'
 sleep 1
 kill -TERM ${Number(targetPid)} 2>/dev/null
 for i in $(seq 1 120); do kill -0 ${Number(targetPid)} 2>/dev/null || break; sleep 0.1; done
@@ -376,6 +478,7 @@ export function createRestartController({
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
+        env: stripNodeModeEnv(process.env),
       });
       child.unref?.();
       if (!child.pid) throw new Error('helper_spawn_failed');
@@ -396,7 +499,12 @@ export function createRestartController({
       } catch {
         /* 忽略 */
       }
-      const child = spawn('bash', [p.scriptSh], { detached: true, stdio: 'ignore', cwd: workDir });
+      const child = spawn('bash', [p.scriptSh], {
+        detached: true,
+        stdio: 'ignore',
+        cwd: workDir,
+        env: stripNodeModeEnv(process.env),
+      });
       child.unref?.();
       if (!child.pid) throw new Error('helper_spawn_failed');
     }
@@ -419,5 +527,5 @@ export function createRestartController({
     return { ok: true, at: marker.at, mode: rt.mode };
   }
 
-  return { capability, status, requestDsh, resolveRuntime };
+  return { capability, status, requestDsh, resolveRuntime, lastResult: readLastHelperResult };
 }

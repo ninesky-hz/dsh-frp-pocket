@@ -1,7 +1,7 @@
 // 重启能力判定 + 助手脚本生成 + 限速状态机（不真重启任何东西）
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 import { makeHome } from './helpers.mjs';
 import {
@@ -13,7 +13,9 @@ import {
   createRestartController,
   describeRestartRuntime,
   readRestartMarker,
+  readLastHelperResult,
   restartPaths,
+  stripNodeModeEnv,
   writeRestartMarker,
 } from '../lib/restart.mjs';
 
@@ -273,6 +275,86 @@ test('助手起不来：不自退，主机不至于连网关都没了', async ()
   assert.deepEqual(exits, []);
 });
 
+// ------------------------------------------------------------ 环境裁剪（真因：Node 模式秒退）
+
+test('stripNodeModeEnv：只摘掉 Electron node 模式开关，其余原样保留', () => {
+  const env = {
+    Path: 'C:/Windows',
+    SystemRoot: 'C:/Windows',
+    ELECTRON_RUN_AS_NODE: '1',
+    ELECTRON_NO_ATTACH_CONSOLE: '1',
+    ELECTRON_ENABLE_LOGGING: '1',
+    NODE_OPTIONS: '--max-old-space-size=4096',
+    DSH_HOME: 'C:/Users/x/.dsh',
+  };
+  const out = stripNodeModeEnv(env);
+  assert.equal(out.ELECTRON_RUN_AS_NODE, undefined);
+  assert.equal(out.ELECTRON_NO_ATTACH_CONSOLE, undefined);
+  assert.equal(out.ELECTRON_ENABLE_LOGGING, undefined);
+  assert.equal(out.NODE_OPTIONS, undefined);
+  assert.equal(out.DSH_HOME, 'C:/Users/x/.dsh', '无关变量一个都不能丢');
+  assert.equal(out.Path, 'C:/Windows');
+  assert.equal(env.ELECTRON_RUN_AS_NODE, '1', '不能就地改调用方的 env');
+});
+
+test('Windows 助手：拉起前先清掉 ELECTRON_RUN_AS_NODE，否则新进程 Node 模式秒退', () => {
+  const script = buildWindowsScript({
+    logPath: 'C:/tmp/restart.log',
+    exePath: 'C:/Apps/DeepSeek Harness.exe',
+    workDir: 'C:/Apps',
+    targetPid: 4321,
+    expectedName: 'DeepSeek Harness',
+    mode: 'app',
+  });
+  // 桌面 Host 是带 ELECTRON_RUN_AS_NODE=1 起的 Electron 子进程，助手继承它。
+  // 不清就直接 Start-Process：进程起来后几十毫秒 exit 0、不出窗口 = 「关掉就起不来」。
+  assert.ok(script.includes("'ELECTRON_RUN_AS_NODE'"), '助手必须知道要清哪个变量');
+  assert.match(script, /Remove-Item -LiteralPath \('Env:' \+ \$name\) -Force/);
+  assert.match(script, /Write-RestartLog \('env stripped: '/);
+  // 清理必须在拉起之前
+  assert.ok(script.indexOf('env stripped') < script.indexOf('Start-Process @start'));
+});
+
+test('Windows 助手：Start-Process 全秒退后回落到 explorer 双击等价，并用进程表确认', () => {
+  const script = buildWindowsScript({
+    logPath: 'C:/tmp/restart.log',
+    exePath: 'C:/Apps/DeepSeek Harness.exe',
+    workDir: 'C:/Apps',
+    targetPid: 4321,
+    expectedName: 'DeepSeek Harness',
+    mode: 'app',
+  });
+  assert.match(script, /& explorer\.exe \$exe/, '兜底走 shell 双击等价，环境更干净');
+  assert.match(script, /Get-Process -Name \$exeName/, 'explorer 不给 pid，只能查进程表');
+  assert.match(script, /result launched=1 pid=/, '结果要写进日志，App 侧才查得到');
+  assert.match(script, /result launched=0 lastError=/);
+});
+
+test('win32 起助手：交给 cmd 的环境里不能带 node 模式开关', async () => {
+  const savedRunAsNode = process.env.ELECTRON_RUN_AS_NODE;
+  const savedNodeOptions = process.env.NODE_OPTIONS;
+  process.env.ELECTRON_RUN_AS_NODE = '1';
+  process.env.NODE_OPTIONS = '--no-warnings';
+  try {
+    const exits = [];
+    const { ctl, calls } = launcherFor({ exit: (code) => exits.push(code) });
+    ctl.requestDsh({ by: 'x' });
+    await sleep(80);
+
+    const env = calls[0].opts.env;
+    assert.ok(env, '环境要显式传给助手，不能靠默认继承');
+    assert.ok(!('ELECTRON_RUN_AS_NODE' in env), '带着它拉起桌面应用 = 进程 Node 模式秒退');
+    assert.ok(!('NODE_OPTIONS' in env));
+    assert.equal(env.DSH_HOME ?? process.env.DSH_HOME, process.env.DSH_HOME, '其余环境照旧');
+    assert.deepEqual(exits, [0]);
+  } finally {
+    if (savedRunAsNode === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+    else process.env.ELECTRON_RUN_AS_NODE = savedRunAsNode;
+    if (savedNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+    else process.env.NODE_OPTIONS = savedNodeOptions;
+  }
+});
+
 test('落盘的 ps1 带 UTF-8 BOM：PowerShell 5.1 才不会按 ANSI 解坏', async () => {
   const exits = [];
   const { ctl } = launcherFor({ exit: (code) => exits.push(code) });
@@ -283,4 +365,33 @@ test('落盘的 ps1 带 UTF-8 BOM：PowerShell 5.1 才不会按 ANSI 解坏', as
   assert.ok(existsSync(file), '助手脚本要真的写出来');
   const bytes = readFileSync(file);
   assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], 'ps1 必须以 BOM 开头');
+});
+
+test('readLastHelperResult：拿最后一条 result 行，手机端能看这次到底起没起来', () => {
+  const p = restartPaths();
+  mkdirSync(p.dir, { recursive: true });
+  writeFileSync(
+    p.log,
+    [
+      '2026-11-15T12:00:00.000Z helper start mode=app target=1 exe=x',
+      '2026-11-15T12:00:01.000Z early exit pid=100 code=0 try=1',
+      '2026-11-15T12:00:02.000Z result launched=0 lastError=boom',
+      '2026-11-15T12:00:03.000Z helper start mode=app target=2 exe=x',
+      '2026-11-15T12:00:04.000Z result launched=1 pid=7692',
+      '2026-11-15T12:00:05.000Z helper done',
+    ].join('\r\n'),
+    'utf8',
+  );
+  assert.deepEqual(readLastHelperResult(), {
+    at: '2026-11-15T12:00:04.000Z',
+    launched: true,
+    pid: 7692,
+    lastError: null,
+  });
+});
+
+test('readLastHelperResult：没有日志时返回 null，不抛', () => {
+  const p = restartPaths();
+  if (existsSync(p.log)) writeFileSync(p.log, '', 'utf8');
+  assert.equal(readLastHelperResult(), null);
 });
