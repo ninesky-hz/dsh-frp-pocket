@@ -232,6 +232,8 @@ if ($proc) {
   } else {
     Write-RestartLog ('skip kill: unexpected process name ' + $name)
   }
+} else {
+  Write-RestartLog ('target missing pid=' + $target)
 }
 
 $gone = $false
@@ -244,46 +246,62 @@ Write-RestartLog ('old process gone=' + $gone)
 $launched = $false
 $launchedPid = 0
 $lastError = ''
+
+# Ask the WMI service to create the app instead of calling Start-Process.
+# Start-Process forks from *this* helper, so the new process inherits the
+# helper's console and its startup info; on 2026-11-15 a Start-Process'd
+# notepad vanished within 2.5s and the relaunched shell showed no desktop
+# window while its CLI output went to the helper console - "restart works but
+# it starts something that is not the desktop app". Win32_Process.Create runs
+# from WmiPrvSE.exe: no inherited console, no inherited show-state, and it
+# returns the real ProcessId, so the same script's notepad came up with a
+# normal window.
+function Quote-Arg([string]$a) {
+  if ($a -eq '') { return '""' }
+  if ($a -notmatch '[\s"]') { return $a }
+  return '"' + ($a -replace '"', '\"') + '"'
+}
+$cmdLine = Quote-Arg $exe
+foreach ($a in $launchArgs) { $cmdLine = $cmdLine + ' ' + (Quote-Arg $a) }
+Write-RestartLog ('cmdline: ' + $cmdLine)
+
 for ($try = 1; $try -le 20; $try++) {
   Start-Sleep -Milliseconds 250
-  # Only put parameters we actually need into the splat: an empty ArgumentList
-  # is rejected by parameter validation ("cannot validate argument on parameter
-  # ArgumentList ... empty collection"), which leaves $p null and turns every
-  # attempt into "launch failed" - that is exactly what kept the PC closed on
-  # 2026-11-14. Also never name a variable $args: PowerShell owns that one.
-  #
-  # Keep this file ASCII-only: Windows PowerShell 5.1 reads a .ps1 without a
-  # BOM as ANSI. UTF-8 Chinese comments then decode into mojibake whose trail
-  # bytes can end a comment line with a backtick, swallowing the next line
-  # ($start = ...) and leaving $start null.
-  $start = @{ FilePath = $exe; PassThru = $true }
-  if ($wd -ne '' -and (Test-Path -LiteralPath $wd)) { $start['WorkingDirectory'] = $wd }
-  if ($launchArgs.Count -gt 0) { $start['ArgumentList'] = $launchArgs }
-  $p = $null
+  $cimArgs = @{ CommandLine = $cmdLine }
+  if ($wd -ne '' -and (Test-Path -LiteralPath $wd)) { $cimArgs['CurrentDirectory'] = $wd }
+  $res = $null
   try {
-    $p = Start-Process @start
+    $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments $cimArgs
   } catch {
     $lastError = $_.Exception.Message
-    Write-RestartLog ('launch error try=' + $try + ': ' + $lastError)
   }
-  if (-not $p) { Write-RestartLog ('launch failed try=' + $try); continue }
+  if (-not $res) {
+    Write-RestartLog ('cim error try=' + $try + ': ' + $lastError)
+    continue
+  }
+  if ($res.ReturnValue -ne 0) {
+    $lastError = 'cim return=' + $res.ReturnValue
+    Write-RestartLog ('cim failed try=' + $try + ': ' + $lastError)
+    continue
+  }
+  $newPid = [int]$res.ProcessId
   Start-Sleep -Milliseconds 900
-  $p.Refresh()
-  if (-not $p.HasExited) {
-    $launchedPid = $p.Id
-    Write-RestartLog ('launched pid=' + $p.Id + ' try=' + $try)
+  $alive = Get-Process -Id $newPid
+  if ($alive) {
+    $launchedPid = $newPid
+    Write-RestartLog ('launched pid=' + $newPid + ' name=' + $alive.ProcessName + ' try=' + $try)
     $launched = $true
     break
   }
-  Write-RestartLog ('early exit pid=' + $p.Id + ' code=' + $p.ExitCode + ' try=' + $try)
+  Write-RestartLog ('early exit pid=' + $newPid + ' try=' + $try)
 }
-# Last resort: Start-Process can still lose the window on some machines (the
-# process starts but no frame appears). Handing the path to explorer.exe is the
-# double-click path: the shell owns the launch, so it gets a clean environment
-# and a normal window station. It returns no pid, so confirm through the process
-# table that a *new* instance is alive rather than trusting the call.
+# Last resort: WMI can be unavailable (service stopped, policy-blocked). Handing
+# the path to explorer.exe is the double-click path: the shell owns the launch,
+# so it gets a clean environment, a normal window station and no console. It
+# returns no pid, so confirm through the process table that a *new* instance is
+# alive rather than trusting the call.
 if (-not $launched) {
-  Write-RestartLog 'start-process gave up, fallback: explorer shell launch'
+  Write-RestartLog 'cim gave up, fallback: explorer shell launch'
   $known = @()
   foreach ($q in (Get-Process -Name $exeName)) { $known += $q.Id }
   & explorer.exe $exe | Out-Null
@@ -461,7 +479,9 @@ export function createRestartController({
       // 这里必须把参数一项项交给 cmd，不能自己拼成 `cmd /d /s /c "start "" /b ..."`
       // 一整串：Node 会再套一层引号，/s 剥完第一层后 start 收到的参数已经被拆坏，
       // 结果是助手脚本一次都没执行、PC 端毫无反应（2026-11-14 实测）。
-      // 用数组形式、把 start 的标题位显式留空，cmd 才会按原样转发。
+      // 也不能去掉 cmd 直接 spawn powershell：detached + CREATE_NO_WINDOW 同时设置时
+      // 助手起不来（2026-11-15 实测日志一片空白、靶子进程没被杀），而 detached 是
+      // 助手活过 taskkill /F /T 的前提。
       const child = spawn('cmd.exe', [
         '/c',
         'start',
@@ -470,6 +490,8 @@ export function createRestartController({
         'powershell.exe',
         '-NoProfile',
         '-NonInteractive',
+        '-WindowStyle',
+        'Hidden',
         '-ExecutionPolicy',
         'Bypass',
         '-File',

@@ -107,8 +107,10 @@ test('Windows 助手：杀对 pid、等旧实例退出、带重试拉起', () =>
   assert.match(script, /\$target = 4321/);
   assert.ok(script.includes("$expected = 'DeepSeek Harness'"));
   assert.match(script, /for \(\$try = 1; \$try -le 20; \$try\+\+\)/);
-  assert.match(script, /Start-Process @start/, '用 splat 只给必要参数，空的 ArgumentList 会被拒');
-  assert.ok(script.includes("'--flag', 'a b'"), '参数要原样传给 Start-Process');
+  assert.match(script, /Invoke-CimMethod -ClassName Win32_Process -MethodName Create/, '用 WMI 创建进程：不继承助手控制台与隐藏显示状态');
+  assert.match(script, /\$cmdLine = Quote-Arg \$exe/);
+  assert.ok(script.includes("'--flag', 'a b'"), '参数要原样拼进命令行');
+  assert.doesNotMatch(script, /Start-Process @start/, 'Start-Process 派生自助手，会把控制台和 SW_HIDE 带下去（2026-11-15 实测窗口不出）');
   assert.match(script, /Add-Content -LiteralPath \$log/);
   // 名字对不上就不杀：防止 pid 被回收时误杀别的程序
   assert.match(script, /skip kill: unexpected process name/);
@@ -249,7 +251,7 @@ function launcherFor({ spawnImpl, exit }) {
   return { ctl, calls };
 }
 
-test('win32 起助手：cmd 的参数必须逐项传，不能拼 /s 整串（拼了助手根本不执行）', async () => {
+test('win32 起助手：cmd 的参数逐项传，助手窗口按隐藏方式起', async () => {
   const exits = [];
   const { ctl, calls } = launcherFor({ exit: (code) => exits.push(code) });
   ctl.requestDsh({ by: 'x' });
@@ -261,6 +263,9 @@ test('win32 起助手：cmd 的参数必须逐项传，不能拼 /s 整串（拼
   assert.deepEqual(args.slice(0, 5), ['/c', 'start', '', '/b', 'powershell.exe']);
   assert.ok(args.includes('-File'), '要把脚本路径交给 powershell');
   assert.ok(!args.includes('/s'), '带 /s 会把引号剥坏，助手静默不跑');
+  // 助手自己不能留窗口：-WindowStyle Hidden 配合 start /b，避免重启后桌面上多一个黑窗口
+  const hiddenAt = args.indexOf('-WindowStyle');
+  assert.ok(hiddenAt > 0 && args[hiddenAt + 1] === 'Hidden', '助手要用 Hidden 窗口样式');
   assert.equal(opts.detached, true);
   assert.equal(opts.stdio, 'ignore');
   assert.deepEqual(exits, [0], '助手起来了才允许自退');
@@ -307,15 +312,15 @@ test('Windows 助手：拉起前先清掉 ELECTRON_RUN_AS_NODE，否则新进程
     mode: 'app',
   });
   // 桌面 Host 是带 ELECTRON_RUN_AS_NODE=1 起的 Electron 子进程，助手继承它。
-  // 不清就直接 Start-Process：进程起来后几十毫秒 exit 0、不出窗口 = 「关掉就起不来」。
+  // 不清就直接拉起：进程起来后几十毫秒 exit 0、不出窗口 = 「关掉就起不来」。
   assert.ok(script.includes("'ELECTRON_RUN_AS_NODE'"), '助手必须知道要清哪个变量');
   assert.match(script, /Remove-Item -LiteralPath \('Env:' \+ \$name\) -Force/);
   assert.match(script, /Write-RestartLog \('env stripped: '/);
   // 清理必须在拉起之前
-  assert.ok(script.indexOf('env stripped') < script.indexOf('Start-Process @start'));
+  assert.ok(script.indexOf('env stripped') < script.indexOf('Invoke-CimMethod'));
 });
 
-test('Windows 助手：Start-Process 全秒退后回落到 explorer 双击等价，并用进程表确认', () => {
+test('Windows 助手：WMI 创建失败后回落到 explorer 双击等价，并用进程表确认', () => {
   const script = buildWindowsScript({
     logPath: 'C:/tmp/restart.log',
     exePath: 'C:/Apps/DeepSeek Harness.exe',
@@ -324,13 +329,14 @@ test('Windows 助手：Start-Process 全秒退后回落到 explorer 双击等价
     expectedName: 'DeepSeek Harness',
     mode: 'app',
   });
+  assert.match(script, /cim gave up, fallback: explorer shell launch/);
   assert.match(script, /& explorer\.exe \$exe/, '兜底走 shell 双击等价，环境更干净');
   assert.match(script, /Get-Process -Name \$exeName/, 'explorer 不给 pid，只能查进程表');
   assert.match(script, /result launched=1 pid=/, '结果要写进日志，App 侧才查得到');
   assert.match(script, /result launched=0 lastError=/);
 });
 
-test('win32 起助手：交给 cmd 的环境里不能带 node 模式开关', async () => {
+test('win32 起助手：交给助手的环境里不能带 node 模式开关', async () => {
   const savedRunAsNode = process.env.ELECTRON_RUN_AS_NODE;
   const savedNodeOptions = process.env.NODE_OPTIONS;
   process.env.ELECTRON_RUN_AS_NODE = '1';

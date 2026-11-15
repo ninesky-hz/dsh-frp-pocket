@@ -32,6 +32,44 @@
   补；还有更早的消息时顶部有可点入口），并把补屏上限断言 9 → 27。把
   `_maxFillPages` 改回 6 时新用例必红（`Expected: > 9`）。全量 391 通过。
 
+## 2026-11-15（重启后拉起来的是桌面端，不再多一个黑窗口）
+
+### plugin 0.3.6
+
+- **症状**（用户 m00304 / m00329）：0.3.5 之后重启能力通了，但重启完桌面上**多出一个
+  `powershell.exe` 黑窗口**，DSH 的启动输出（`dsh web: http://127.0.0.1:...`）打在里面；
+  用户的原话是「拉起的好像不是桌面端」——桌面窗口没出现，只有一个控制台在跑。
+- **根因**（两条，同一次实测里看清）：
+  - 助手是用 `cmd /c start /b powershell -File restart.ps1` 起的，`start /b` 只对 cmd
+    抑制窗口，powershell 作为控制台程序仍拿到一个可见控制台。
+  - 更关键的是助手里的 `Start-Process`：它**派生自助手**，于是新进程继承助手的控制台
+    与启动信息（隐藏的显示状态）。2026-11-15 对照实验（同一个脚本、四个变体、靶子
+    notepad）：`Start-Process`（带不带 `-WindowStyle Normal` 都一样）起来的记事本
+    **2.5 秒后就消失了**；`explorer.exe notepad` 与 `Win32_Process.Create` 起来的
+    记事本 `hwnd != 0`、窗口正常。这就是「进程起了、桌面端没出现、只剩黑窗口」。
+- **改法**（`packages/plugin/lib/restart.mjs`）：
+  - 助手里的拉起方式从 `Start-Process` 换成 **WMI**：
+    `Invoke-CimMethod -ClassName Win32_Process -MethodName Create`。它由 WmiPrvSE.exe
+    创建进程，**不继承**助手的控制台、不继承隐藏的显示状态，并且直接返回 `ProcessId`，
+    存活判定仍然照旧（900ms 后 `Get-Process -Id`）。
+  - 命令行在 ps1 里用 `Quote-Arg` 自己拼（空格/引号才加引号），并写一行
+    `cmdline: ...` 进 `restart.log`，下次出问题一眼能看出实际拉的是什么。
+  - `launched` 行补上进程名：`launched pid=<pid> name=<name> try=<n>`，用来确认拉起来的
+    确实是 `DeepSeek Harness`，而不是别的同名进程。
+  - WMI 不可用（服务停、策略挡）时仍旧回落 `explorer.exe <exe>` 双击等价 + 进程表确认。
+  - 助手自身加 `-WindowStyle Hidden`（配合 `start /b`），尽量连一闪的控制台也不给。
+  - `Get-Process -Id $target` 为空时补一行 `target missing pid=<pid>`，不再静默。
+- 测试：`packages/plugin/test/restart.test.mjs` 相应更新——ps1 必须含
+  `Invoke-CimMethod ... Win32_Process ... Create` 且**不再出现** `Start-Process @start`、
+  参数要拼进 `cmdline`、`env stripped` 必须在 WMI 拉起之前、explorer 兜底与
+  `result launched=` 仍在、助手启动参数含 `-WindowStyle Hidden`。全量 106 通过。
+- 验证（真实生成器产出的 ps1，走插件同一条 `cmd /c start /b` 链）：靶子 notepad 被杀
+  （`target name=Notepad` → `taskkill /F /T` → `old process gone=True`）→
+  `cmdline: "C:\Windows\System32\charmap.exe"` → `launched pid=29168 name=charmap try=1`
+  → charmap 窗口 `hwnd=3015844`（真的出来了）。
+- 生效方式：插件跑在 Host 进程里，仍需**手动重启一次 DSH** 后，App 上的「重启 DSH」
+  才走新逻辑。
+
 ## 2026-11-15（重启 DSH 真的能把 PC 端重新拉起来）
 
 ### plugin 0.3.5
