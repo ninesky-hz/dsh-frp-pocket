@@ -347,7 +347,7 @@ void main() {
     await _disposeChat(tester, remote);
   });
 
-  testWidgets('reasoning / tool-call 折叠成一行小字', (tester) async {
+  testWidgets('reasoning / tool-call 答完折成一行，点开才是逐项', (tester) async {
     final remote = await _pumpChat(
       tester,
       history: SessionHistory(
@@ -380,7 +380,14 @@ void main() {
     await _openSnapshot(tester, remote);
 
     expect(find.text('结果如下'), findsOneWidget);
-    // 详细模式逐项一行：思考一行，工具调用一行（带工具名与参数摘要）。
+    // 定稿的消息默认收成一行统计（和网页端「回答结束后收起工作步骤」一致）。
+    expect(find.text('思考 · 1 次工具调用'), findsOneWidget);
+    expect(find.text('工具调用 · ops_bash · ls'), findsNothing);
+
+    // 点开摘要：详细模式下逐项一行，工具那行带工具名与参数摘要。
+    await tester.tap(find.byKey(const ValueKey<String>('notes-fold')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
     expect(find.text('思考'), findsOneWidget);
     expect(find.text('工具调用 · ops_bash · ls'), findsOneWidget);
 

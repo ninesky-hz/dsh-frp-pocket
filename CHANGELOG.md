@@ -1,3 +1,27 @@
+## 2026-11-15（答完之后把工作步骤收起来）
+
+### app 1.3.17+32
+
+- **需求**：网页端 DSH 一轮答完，前面的思考和工具调用会折成轮次头上的一行摘要，
+  点开才逐项展开；手机端一直是永久平铺——长任务二十几次工具调用会在气泡下面挂一长串
+  灰字，正文被顶到看不见。要跟网页端对齐。
+- **网页端到底是怎么做的**（读 `@deepseek-ai/dsh-client-ui-chat` 源码确认）：
+  - `presentation-policy.ts` 里 `detailed`（默认）与 `compact`/`standard` 都是
+    `foldCompletedTurns: true`，只有 `verbose`（「完全展开」）才不折；
+    `collapseTiming` 默认 `completion`，即「回答结束后」收起。
+  - 也就是说：不是删掉，而是折成一行，点开就有。
+- **改法**：
+  - `NotesLine` 改成有状态的：定稿的一轮（`ChatMessage.streaming == false`）只留一行
+    `思考 · N 次工具调用` + 展开箭头（key `notes-fold`），点一下逐项展开；
+    正在流式的那一轮保持实时展开——那时候「正在干什么」本身就是正文。
+  - 新增设置 `dsh_frp.chatNotesFold`（默认开）与设置页开关「完成后收起过程」，
+    关掉就回到老样子逐项平铺；原有的「详细 / 简洁」密度设置继续管展开后怎么排。
+  - 简洁模式仍是一行统计，不挂箭头（本来就是一句话，没什么可展开）。
+- 测试：`chat_notes_setting_test.dart` 增加「答完折一行→点开逐项→切简洁只留统计」
+  与「关掉开关又铺开」「设置页开关落盘」；`session_chat_screen_test.dart`、
+  `chat_note_rows_test.dart` 的老用例改成先展开再断言行高与热区。
+  全量 375 通过，`flutter analyze` No issues。
+
 ## 2026-11-14（人格预设弹窗能往上滑了）
 
 ### app 1.3.16+31

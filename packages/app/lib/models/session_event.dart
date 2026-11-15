@@ -184,6 +184,7 @@ class ChatMessage {
     this.localId,
     this.images = const <ChatImageRef>[],
     this.requestId,
+    this.streaming = false,
   });
 
   /// 列表 key：durable 消息用 `seq:<n>`，本地待发消息用 `local:<n>`。
@@ -210,6 +211,12 @@ class ChatMessage {
   /// 宿主把队列项的 `rpcId` 记成它，撤回时靠它把本地气泡和队列项对上。
   final String? requestId;
 
+  /// 这一条还在流式输出（草稿气泡），不是已定稿的历史消息。
+  ///
+  /// 决定气泡下面那行过程小字是实时展开还是折成摘要：进行中要看得见
+  /// 「现在在干什么」，定稿之后再折。
+  final bool streaming;
+
   /// 发送失败且还在列表里时，界面要给出可点重试的入口。
   bool get retryable => delivery == ChatDelivery.failed;
 
@@ -220,6 +227,7 @@ class ChatMessage {
     List<ChatNote>? notes,
     List<ChatImageRef>? images,
     String? requestId,
+    bool? streaming,
   }) {
     return ChatMessage(
       key: key ?? this.key,
@@ -232,6 +240,7 @@ class ChatMessage {
       localId: localId,
       images: images ?? this.images,
       requestId: requestId ?? this.requestId,
+      streaming: streaming ?? this.streaming,
     );
   }
 

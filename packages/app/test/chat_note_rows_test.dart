@@ -45,6 +45,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // 定稿的那一轮默认折成一行摘要，先点开再看每行有多高。
+    await tester.tap(find.byKey(const ValueKey<String>('notes-fold')));
+    await tester.pumpAndSettle();
+
     final first = find.byKey(const ValueKey<String>('note-row.0'));
     final second = find.byKey(const ValueKey<String>('note-row.1'));
     expect(first, findsOneWidget);
@@ -74,6 +78,10 @@ void main() {
         ]),
       ),
     );
+    await tester.pumpAndSettle();
+
+    // 先展开那一行摘要，逐项的行才存在。
+    await tester.tap(find.byKey(const ValueKey<String>('notes-fold')));
     await tester.pumpAndSettle();
 
     // 点在第二行靠右（箭头附近）的位置，命中区仍然是整行。

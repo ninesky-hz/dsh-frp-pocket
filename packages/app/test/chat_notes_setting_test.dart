@@ -88,7 +88,7 @@ SessionSummary _session() => SessionSummary(
 );
 
 void main() {
-  testWidgets('设置切到「简洁」后，聊天里那行小字立刻跟着变', (tester) async {
+  testWidgets('答完之后过程折成一行，点一下展开；切「简洁」只留统计', (tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final settings = SettingsStore();
     await settings.load();
@@ -113,16 +113,57 @@ void main() {
     remote.frames.add(const DshStreamFrame(kind: DshFrameKind.snapshot, asOfSeq: 1));
     await tester.pumpAndSettle();
 
-    // 详细模式：每项一行，思考取第一行、工具带参数摘要。
+    // 默认：详细模式 + 完成后收起，历史消息只剩一行摘要。
+    expect(find.text('思考 · 1 次工具调用'), findsOneWidget);
+    expect(find.text('思考 · 先读简报，再改代码'), findsNothing);
+    expect(find.text('工具调用 · read · .agi/BRIEF.md'), findsNothing);
+
+    // 点一下摘要，逐项展开（思考取第一行、工具带参数摘要）。
+    await tester.tap(find.byKey(const ValueKey<String>('notes-fold')));
+    await tester.pumpAndSettle();
     expect(find.text('思考 · 先读简报，再改代码'), findsOneWidget);
     expect(find.text('工具调用 · read · .agi/BRIEF.md'), findsOneWidget);
-    expect(find.text('思考 · 1 次工具调用'), findsNothing);
 
+    // 切「简洁」：永远只留一行统计，没有箭头也没得展开。
     await settings.setChatNotesMode(ChatNotesMode.compact);
     await tester.pumpAndSettle();
 
     expect(find.text('思考 · 1 次工具调用'), findsOneWidget);
     expect(find.text('工具调用 · read · .agi/BRIEF.md'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('notes-fold')), findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
+    await remote.close();
+  });
+
+  testWidgets('关掉「完成后收起过程」，历史消息又逐项铺开', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final settings = SettingsStore();
+    await settings.load();
+    await settings.setFoldNotesWhenDone(false);
+    final hosts = HostStore();
+    final remote = _FakeRemote();
+
+    await tester.pumpWidget(
+      AppScope(
+        hosts: hosts,
+        settings: settings,
+        child: MaterialApp(
+          home: SessionChatScreen(
+            host: _host,
+            session: _session(),
+            remote: remote,
+            snapshotTimeout: Duration.zero,
+          ),
+        ),
+      ),
+    );
+    remote.frames.add(const DshStreamFrame(kind: DshFrameKind.snapshot, asOfSeq: 1));
+    await tester.pumpAndSettle();
+
+    expect(find.text('思考 · 先读简报，再改代码'), findsOneWidget);
+    expect(find.text('工具调用 · read · .agi/BRIEF.md'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('notes-fold')), findsNothing);
 
     await tester.pumpWidget(const SizedBox());
     await remote.close();
@@ -151,5 +192,30 @@ void main() {
 
     expect(settings.chatNotesMode, ChatNotesMode.compact);
     expect(find.textContaining('次工具调用'), findsOneWidget);
+  });
+
+  testWidgets('设置页有「完成后收起过程」开关，点一下写进 store 并落盘', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final settings = SettingsStore();
+    await settings.load();
+    final hosts = HostStore();
+
+    await tester.pumpWidget(
+      AppScope(
+        hosts: hosts,
+        settings: settings,
+        child: const MaterialApp(home: SettingsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(settings.foldNotesWhenDone, isTrue, reason: '默认跟网页端一样：答完就折');
+
+    await tester.tap(find.text('完成后收起过程'));
+    await tester.pumpAndSettle();
+
+    expect(settings.foldNotesWhenDone, isFalse);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool('dsh_frp.chatNotesFold'), isFalse);
   });
 }

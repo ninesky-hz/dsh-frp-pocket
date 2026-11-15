@@ -2539,6 +2539,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         role: ChatRole.assistant,
         text: draft.text,
         notes: draft.notes,
+        streaming: true,
       ),
   ];
 

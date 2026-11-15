@@ -75,6 +75,13 @@ class SettingsScreen extends StatelessWidget {
                 secondary: const Icon(AppIcons.lock),
               ),
               _SectionHeader(title: '会话'),
+              SwitchListTile(
+                value: settings.foldNotesWhenDone,
+                onChanged: settings.setFoldNotesWhenDone,
+                title: const Text('完成后收起过程'),
+                subtitle: const Text('一轮答完把思考和工具调用折成一行摘要，点开再看细节'),
+                secondary: const Icon(AppIcons.notes),
+              ),
               ListTile(
                 leading: const Icon(AppIcons.notes),
                 title: const Text('工具调用显示'),

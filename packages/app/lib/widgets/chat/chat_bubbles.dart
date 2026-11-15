@@ -225,6 +225,9 @@ class MessageBubble extends StatelessWidget {
                 padding: EdgeInsets.only(top: message.text.isEmpty ? 0 : 6),
                 child: NotesLine(
                   notes: message.notes,
+                  // 已定稿的一轮：过程折成一行摘要，点开才逐项（对齐网页端
+                  // 「回答结束后收起工作步骤」）；还在流式的那一轮保持展开。
+                  foldWhenDone: !message.streaming,
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: foreground.withValues(alpha: 0.7),
                   ),
@@ -760,37 +763,124 @@ class ChatErrorView extends StatelessWidget {
 /// 测试里没有 `AppScope`，退回「详细」，和以前逐字一致。
 ///
 /// 详细模式逐项一行（带工具参数摘要，太长就省略号），简洁模式仍是一行统计。
-class NotesLine extends StatelessWidget {
-  const NotesLine({super.key, required this.notes, required this.style});
+///
+/// 轮次结束后默认**折成一行摘要**（`已思考 · N 次工具调用`），点一下才逐项展开——
+/// 对齐网页端的 `foldCompletedTurns`：一轮跑二十几次工具调用时，平铺出来会把气泡
+/// 撑得看不到正文。正在流式的那一轮（[foldWhenDone] 为 false）照旧实时展开，因为
+/// 那时候「正在做什么」本身就是正文。
+class NotesLine extends StatefulWidget {
+  const NotesLine({
+    super.key,
+    required this.notes,
+    required this.style,
+    this.foldWhenDone = false,
+  });
 
   final List<ChatNote> notes;
   final TextStyle? style;
 
+  /// 这一轮已经结束（durable 消息）：按设置把过程折成一行。
+  final bool foldWhenDone;
+
+  @override
+  State<NotesLine> createState() => _NotesLineState();
+}
+
+class _NotesLineState extends State<NotesLine> {
+  bool _expanded = false;
+
   @override
   Widget build(BuildContext context) {
     final settings = AppScope.maybeOf(context)?.settings;
-    if (settings == null) return _detailed(context);
+    if (settings == null) {
+      return _body(context, ChatNotesMode.detailed, fold: widget.foldWhenDone);
+    }
     return AnimatedBuilder(
       animation: settings,
-      builder: (context, _) => settings.chatNotesMode == ChatNotesMode.compact
-          ? Text(noteSummaryCompact(notes), style: style)
-          : _detailed(context),
+      builder: (context, _) => _body(
+        context,
+        settings.chatNotesMode,
+        fold: settings.foldNotesWhenDone && widget.foldWhenDone,
+      ),
     );
   }
 
-  Widget _detailed(BuildContext context) {
-    if (notes.isEmpty) return Text('', style: style);
-    if (notes.length == 1) return _noteRow(context, notes.first, 0);
+  Widget _body(BuildContext context, ChatNotesMode mode, {required bool fold}) {
+    final notes = widget.notes;
+    if (notes.isEmpty) return Text('', style: widget.style);
+    // 简洁模式本来就是一行，折叠与否都只给统计；不再挂展开箭头。
+    if (mode == ChatNotesMode.compact) {
+      return Text(noteSummaryCompact(notes), style: widget.style);
+    }
+    // 详细模式但关掉了折叠：老样子把每项铺开。
+    if (!fold) return _detailed(context, notes);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        for (var i = 0; i < notes.length; i++)
-          Padding(
-            padding: EdgeInsets.only(top: i == 0 ? 0 : kNoteRowGap),
-            child: _noteRow(context, notes[i], i),
-          ),
+        _foldHeader(notes),
+        if (_expanded) ..._rows(context, notes, firstGap: kNoteRowGap),
       ],
     );
+  }
+
+  /// 折起来的那一行：摘要 + 展开／收起箭头，整行可点。
+  ///
+  /// 摘要固定走 [noteSummaryCompact]（`思考 · 3 次工具调用`），不跟详细模式走——
+  /// 折起来的意义就是把二十几行压成一句，这时候还把每项列出来等于没折。
+  Widget _foldHeader(List<ChatNote> notes) {
+    final summary = noteSummaryCompact(notes);
+    return GestureDetector(
+      key: const ValueKey<String>('notes-fold'),
+      behavior: HitTestBehavior.opaque,
+      onTap: () => setState(() => _expanded = !_expanded),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: kNoteRowMinHeight),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  summary.isEmpty ? '过程' : summary,
+                  style: widget.style,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Icon(
+                _expanded ? AppIcons.collapse : AppIcons.expand,
+                size: 14,
+                color: widget.style?.color?.withValues(alpha: 0.55),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _detailed(BuildContext context, List<ChatNote> notes) {
+    if (notes.isEmpty) return Text('', style: widget.style);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: _rows(context, notes),
+    );
+  }
+
+  /// 逐项列出的那些行；[firstGap] 是第一行上面留的空（折叠态用来和摘要行分开）。
+  List<Widget> _rows(
+    BuildContext context,
+    List<ChatNote> notes, {
+    double firstGap = 0,
+  }) {
+    return <Widget>[
+      for (var i = 0; i < notes.length; i++)
+        Padding(
+          padding: EdgeInsets.only(top: i == 0 ? firstGap : kNoteRowGap),
+          child: _noteRow(context, notes[i], i),
+        ),
+    ];
   }
 
   /// 一行小字。有原文的行整行可点，右侧挂个小箭头，点开摊全文。
@@ -802,7 +892,7 @@ class NotesLine extends StatelessWidget {
   Widget _noteRow(BuildContext context, ChatNote note, int index) {
     final label = Text(
       note.detailedText,
-      style: style,
+      style: widget.style,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
@@ -828,7 +918,7 @@ class NotesLine extends StatelessWidget {
               Icon(
                 AppIcons.expand,
                 size: 14,
-                color: style?.color?.withValues(alpha: 0.55),
+                color: widget.style?.color?.withValues(alpha: 0.55),
               ),
             ],
           ),
