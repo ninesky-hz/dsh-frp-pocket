@@ -8,6 +8,7 @@ import 'package:dsh_frp_app/models/session_summary.dart';
 import 'package:dsh_frp_app/screens/session_chat_screen.dart';
 import 'package:dsh_frp_app/services/dsh_api.dart';
 import 'package:dsh_frp_app/services/dsh_remote.dart';
+import 'package:dsh_frp_app/services/turn_alerts.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -203,6 +204,10 @@ Future<void> _disposeChat(WidgetTester tester, _FakeRemote remote) async {
 }
 
 void main() {
+  // 答完提醒挂在全局单例上：这些用例里的 turn/end 会真弹一条，并留下收起计时器。
+  // 每个用例收尾把它撤掉，否则测试框架会报「还有 Timer 没跑完」。
+  tearDown(TurnAlertCenter.instance.dismiss);
+
   testWidgets('历史消息渲染成气泡，asOfSeq 作为 throughSeq', (tester) async {
     final remote = await _pumpChat(
       tester,

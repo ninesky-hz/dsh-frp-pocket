@@ -1,13 +1,13 @@
-/// 全局常量：版本、契约版本、网关接口前缀。
+﻿/// 全局常量：版本、契约版本、网关接口前缀。
 ///
 /// 版本号与 `pubspec.yaml` 的 `version:` 保持一致，改版本时两处一起改。
 library;
 
 /// App 版本（与 pubspec version 的版本段一致）。
-const String kAppVersion = '1.3.25';
+const String kAppVersion = '1.4.0';
 
 /// App 构建号（与 pubspec version 的 `+N` 一致）。
-const String kBuildNumber = '40';
+const String kBuildNumber = '41';
 
 /// 作者署名（设置页「关于」展示）。
 const String kAppAuthor = '九天';

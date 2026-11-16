@@ -25,7 +25,9 @@ import '../services/dsh_remote.dart';
 import '../services/draft_store.dart';
 import '../services/outbox_store.dart';
 import '../services/pending_store.dart';
+import '../services/platform_bridge.dart';
 import '../services/probe.dart';
+import '../services/turn_alerts.dart';
 import '../widgets/chat/chat_bubbles.dart';
 import '../widgets/ignore_show_on_screen.dart';
 import '../widgets/chat/chat_scroll.dart';
@@ -239,6 +241,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   Offset? _pointerDownAt;
   DateTime? _pointerDownTime;
   bool _disposed = false;
+
+  /// App 是否在前台。答完提醒按它分流：前台弹灵动岛，后台发系统通知。
+  bool _appActive = true;
   String? _loadError;
   int? _asOfSeq;
   int _lastSeq = 0;
@@ -407,6 +412,15 @@ class _SessionChatScreenState extends State<SessionChatScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_disposed) {
+      // resumed 之前的状态都算「不在前台」：inactive 时人已经切走了，
+      // 只是系统还没来得及把窗口藏起来。
+      _appActive = state == AppLifecycleState.resumed;
+      if (_appActive) {
+        // 回来了：通知栏那条已经没意义，撤掉，别等它自然过期。
+        unawaited(const PlatformBridge().cancelRoundDone());
+      }
+    }
     if (state != AppLifecycleState.resumed || _disposed) return;
     // 后台期间 WS 基本一定断了，回前台重连一次（服务端会再推 snapshot）。
     _start();
@@ -708,6 +722,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
           changed = true;
         }
       case 'turn/end':
+        // 只有「本来在跑」才算这一轮真的答完：进页面时补推的旧 turn/end
+        // 有一堆，那些不该把人喊回来。
+        final wasRunning = _running || _streaming;
         if (_running || _streaming) {
           _running = false;
           _streaming = false;
@@ -715,7 +732,10 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         }
         // 这一轮结束了还没等到定稿（比如被中断）：草稿没有下文，收掉。
         final endedTurn = asInt(event.data['turn']);
+        // 草稿里的正文收掉就没了，先留一份给提醒用。
+        final orphanText = _latestDraftText();
         if (endedTurn != null && _drafts.dropTurn(endedTurn)) changed = true;
+        if (wasRunning) _announceTurnDone(orphanText: orphanText);
       case 'assistant/message':
         if (_streaming) {
           _streaming = false;
@@ -753,6 +773,78 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     if (added && !_atBottom) _hasNew = true;
     _scheduleFlush();
     if (added && _atBottom) _scrollToBottom();
+  }
+
+  /// 一轮答完的提醒：前台弹灵动岛，后台发系统通知。
+  ///
+  /// 两条路都走同一个内容源 [TurnAlert]：标题是会话名，正文是这一轮最后那段
+  /// 回复（压成一行、截断），点开滚到最新。提醒内容只在本地拼，不额外发请求。
+  void _announceTurnDone({String? orphanText}) {
+    if (_disposed || !mounted) return;
+    final enabled =
+        AppScope.maybeOf(context)?.settings.turnAlertEnabled ?? true;
+    if (!enabled) return;
+    final durable = _latestAnswerText();
+    final raw = durable.isNotEmpty ? durable : (orphanText ?? '');
+    final body = _squashForAlert(raw);
+    final title = _title.trim().isEmpty ? '新会话' : _squashForAlert(_title);
+    if (_appActive) {
+      TurnAlertCenter.instance.show(
+        TurnAlert(
+          sessionId: _outboxSessionId,
+          title: title,
+          body: body.isEmpty ? '这一轮没有正文，点开看看' : body,
+          at: DateTime.now(),
+          onOpen: _onAlertTapped,
+        ),
+      );
+      return;
+    }
+    // 后台：系统通知栏那条。发不出去（没权限/没桥）就算了，不打断任何流程。
+    unawaited(
+      const PlatformBridge().notifyRoundDone(
+        title: title,
+        body: body.isEmpty ? '这一轮已答完' : body,
+        sessionId: _outboxSessionId,
+      ),
+    );
+  }
+
+  /// 点了胶囊：把人带回最新那一条。
+  void _onAlertTapped() {
+    if (_disposed || !mounted) return;
+    _hasNew = false;
+    setState(() => _atBottom = true);
+    _scrollToBottom();
+  }
+
+  /// 提醒正文要一行能读完：换行、连续空格都压掉，太长就截断。
+  String _squashForAlert(String text) {
+    final squashed = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    const limit = 120;
+    if (squashed.length <= limit) return squashed;
+    return '${squashed.substring(0, limit)}…';
+  }
+
+  /// 最近一条 assistant 正文（定稿后的）。
+  String _latestAnswerText() {
+    for (var i = _messages.length - 1; i >= 0; i--) {
+      final message = _messages[i];
+      if (message.role != ChatRole.assistant) continue;
+      if (message.text.trim().isEmpty) continue;
+      return message.text;
+    }
+    return '';
+  }
+
+  /// 最后一条草稿的正文：一轮被中断时定稿不来，正文只存在于草稿里。
+  String? _latestDraftText() {
+    final drafts = _drafts.drafts;
+    for (var i = drafts.length - 1; i >= 0; i--) {
+      if (drafts[i].text.trim().isEmpty) continue;
+      return drafts[i].text;
+    }
+    return null;
   }
 
   bool _resolvePending(SessionLogEvent event) {

@@ -7,6 +7,7 @@ import 'data/settings_store.dart';
 import 'screens/hosts_screen.dart';
 import 'services/probe.dart';
 import 'theme/app_theme.dart';
+import 'widgets/dynamic_island.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -59,6 +60,10 @@ class DshFrpApp extends StatelessWidget {
               GlobalWidgetsLocalizations.delegate,
               GlobalCupertinoLocalizations.delegate,
             ],
+            // 灵动岛挂在 Navigator 之外：它要浮在所有页面之上，包括会话页
+            // 自己的 AppBar 与弹窗。
+            builder: (context, child) =>
+                DynamicIslandHost(child: child ?? const SizedBox.shrink()),
             home: HostsScreen(probe: probe),
           ),
         );

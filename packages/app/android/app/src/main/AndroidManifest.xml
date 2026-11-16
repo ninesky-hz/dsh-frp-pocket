@@ -3,6 +3,11 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- 扫码添加主机 -->
     <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- 一轮答完在后台发通知（Android 13+ 需要运行时授权） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.VIBRATE"/>
+    <!-- 小米/HyperOS 焦点通知（顶部灵动岛）走的是系统内部字段，认不认由 ROM 决定 -->
+    <uses-permission android:name="miui.permission.USE_INTERNAL_GENERAL_API"/>
 
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
 

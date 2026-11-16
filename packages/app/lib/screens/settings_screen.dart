@@ -94,6 +94,13 @@ class SettingsScreen extends StatelessWidget {
               ),
               _SectionHeader(title: '会话'),
               SwitchListTile(
+                value: settings.turnAlertEnabled,
+                onChanged: settings.setTurnAlertEnabled,
+                title: const Text('答完提醒（灵动岛）'),
+                subtitle: const Text('一轮答完在屏幕顶部弹一条摘要；App 在后台时改发系统通知'),
+                secondary: const Icon(AppIcons.spark),
+              ),
+              SwitchListTile(
                 value: settings.foldNotesWhenDone,
                 onChanged: settings.setFoldNotesWhenDone,
                 title: const Text('完成后收起过程'),

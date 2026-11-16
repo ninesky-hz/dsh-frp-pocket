@@ -67,6 +67,9 @@ abstract final class AppIcons {
   static const IconData notes = CupertinoIcons.text_alignleft;
   static const IconData schedule = CupertinoIcons.clock;
 
+  /// 答完提醒（灵动岛 / 系统通知）。
+  static const IconData spark = CupertinoIcons.bell;
+
   // -------------------------------------------------------------- 主机/连接
   static const IconData qrScan = CupertinoIcons.qrcode_viewfinder;
   static const IconData qrCode = CupertinoIcons.qrcode;

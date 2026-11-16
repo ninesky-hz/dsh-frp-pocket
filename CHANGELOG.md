@@ -1,3 +1,28 @@
+## 2026-11-16（一轮答完，顶部弹一颗灵动岛）
+
+### app 1.4.0+41
+
+手机上挂着任务去干别的，回来才发现早就答完了——这一版补上「答完提醒」。
+
+- **前台：灵动岛**。会话页在 `turn/end` 时往 `TurnAlertCenter` 推一条提醒，
+  `DynamicIslandHost` 挂在 `MaterialApp.builder`（Navigator 之外）把它画成屏幕顶部
+  正中一颗黑胶囊：先展开显示「会话名 + 时间 + 两行摘要」，3 秒后收成「回复完成」小胶囊，
+  再留 7 秒自动消失；点一下滚到最新，上滑直接收起。跟主题无关，固定深色，
+  免得被当成普通 SnackBar。
+- **后台：系统通知**。App 不在前台时改走原生桥 `notifyRoundDone`：高优先级通道 +
+  横幅；顺手塞一份 MIUI/HyperOS「焦点通知」的 extras，系统认了就会画进它自己的
+  灵动岛区，不认就当普通横幅（`MainActivity.applyFocusExtras`，整段 try 兜底）。
+  回到 App 时把通知栏那条撤掉（`cancelRoundDone`）。Android 13+ 首次发通知时
+  顺带申请一次 `POST_NOTIFICATIONS`。
+- **不吵人**：只有「本来在跑」的那一轮才算答完——进页面时服务端补推的历史
+  `turn/end` 不会弹。设置页新增「答完提醒（灵动岛）」开关（默认开，落盘
+  `dsh_frp.turnAlert`）。
+- **一处刻意分工**：计时归 `DynamicIslandHost` 而不是 `TurnAlertCenter`——
+  「什么时候收起」属于怎么显示；顺带保证没人显示时不留挂空计时器。
+- 测试：新增 `test/turn_alert_island_test.dart`（7 条：展开/收起/消失、新条顶掉旧条并
+  重置计时、点开先收起、会话页 `turn/end` 带摘要、补推的旧 `turn/end` 不提醒、开关落盘）；
+  `session_chat_screen_test.dart` 加一条 `tearDown` 清全局提醒。全量 401 条通过。
+
 ## 2026-11-16（启动前先问一句：这个域名被占了吗）
 
 ### 宿主插件 0.3.9（App 未改动，不需要重新装包）

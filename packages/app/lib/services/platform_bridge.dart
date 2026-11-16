@@ -4,7 +4,8 @@ import 'package:flutter/services.dart';
 
 /// 原生桥：调用 `MainActivity` 里注册的 MethodChannel。
 ///
-/// 只做 Flutter 侧缺失的三件事：屏幕常亮、交给 DownloadManager 下载、开系统浏览器。任何平台异常都吞掉并返回降级值，绝不影响主流程。
+/// 只做 Flutter 侧缺失的四件事：屏幕常亮、交给 DownloadManager 下载、开系统浏览器、
+/// 一轮答完发条系统通知。任何平台异常都吞掉并返回降级值，绝不影响主流程。
 class PlatformBridge {
   const PlatformBridge();
 
@@ -65,6 +66,46 @@ class PlatformBridge {
     try {
       final result = await _channel
           .invokeMethod<bool>('openUrl', url)
+          .timeout(_timeout, onTimeout: () => null);
+      return result ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// 一轮答完时发一条系统通知（App 不在前台时用）。
+  ///
+  /// 原生侧把它做成高优先级通知：小米/HyperOS 会自动套进顶部灵动岛区域，
+  /// 其它 ROM 就是一条横幅。没有通知权限时原生侧顺手申请一次并返回 false，
+  /// 调用方不需要为这件事分叉——下一轮自然会发出去。
+  Future<bool> notifyRoundDone({
+    required String title,
+    required String body,
+    String? sessionId,
+  }) async {
+    try {
+      final result = await _channel
+          .invokeMethod<bool>('notifyRoundDone', <String, Object?>{
+            'title': title,
+            'body': body,
+            'sessionId': sessionId,
+          })
+          .timeout(_timeout, onTimeout: () => null);
+      return result ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// 撤回上面那条通知：用户已经回到 App，别再在通知栏里挂着。
+  Future<bool> cancelRoundDone() async {
+    try {
+      final result = await _channel
+          .invokeMethod<bool>('cancelRoundDone')
           .timeout(_timeout, onTimeout: () => null);
       return result ?? false;
     } on MissingPluginException {
