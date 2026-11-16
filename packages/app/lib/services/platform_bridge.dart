@@ -2,10 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
+import '../models/notify_permission.dart';
+
 /// 原生桥：调用 `MainActivity` 里注册的 MethodChannel。
 ///
 /// 只做 Flutter 侧缺失的四件事：屏幕常亮、交给 DownloadManager 下载、开系统浏览器、
-/// 一轮答完发条系统通知。任何平台异常都吞掉并返回降级值，绝不影响主流程。
+/// 一轮答完发条系统通知（外加这条通知的权限查询/申请）。任何平台异常都吞掉并返回
+/// 降级值，绝不影响主流程。
 class PlatformBridge {
   const PlatformBridge();
 
@@ -19,6 +22,9 @@ class PlatformBridge {
   /// 不 resolve 也不抛，直接挂住；调用方在 UI 线程上 await 就会永远转圈。
   /// 超时当成「没办成」，让调用方走降级分支。
   static const Duration _timeout = Duration(seconds: 2);
+
+  /// 要等用户点按钮的往返（授权框、跳系统设置）走这个：2 秒会把正常操作掐断。
+  static const Duration _slowTimeout = Duration(seconds: 90);
 
   /// 保持屏幕常亮（Android `FLAG_KEEP_SCREEN_ON`）。
   Future<bool> setKeepAwake(bool enabled) async {
@@ -107,6 +113,55 @@ class PlatformBridge {
       final result = await _channel
           .invokeMethod<bool>('cancelRoundDone')
           .timeout(_timeout, onTimeout: () => null);
+      return result ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// 查系统通知权限现状（不只是权限位，还有系统总开关和通道）。
+  ///
+  /// 桥不可用时返回 [NotifyPermission.unavailable]，调用方据此只说一句「这台设备
+  /// 拿不到」，不要显示一个点了没反应的按钮。
+  Future<NotifyPermission> notificationPermission() async {
+    try {
+      final result = await _channel
+          .invokeMethod<Map<Object?, Object?>>('notificationStatus')
+          .timeout(_timeout, onTimeout: () => null);
+      if (result == null) return const NotifyPermission.unavailable();
+      return NotifyPermission.fromMap(result);
+    } on MissingPluginException {
+      return const NotifyPermission.unavailable();
+    } on PlatformException {
+      return const NotifyPermission.unavailable();
+    }
+  }
+
+  /// 弹系统授权框；用户点完才返回（所以给 90 秒）。
+  ///
+  /// 返回值是「点完之后到底给没给」，调用方仍然应该重新查一次状态——某些
+  /// ROM 在这里回调的是上一次的结果。
+  Future<bool> requestNotificationPermission() async {
+    try {
+      final result = await _channel
+          .invokeMethod<bool>('requestNotificationPermission')
+          .timeout(_slowTimeout, onTimeout: () => null);
+      return result ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// 跳到系统的「本应用通知设置」页。权限被永久拒绝后只能走这条路。
+  Future<bool> openNotificationSettings() async {
+    try {
+      final result = await _channel
+          .invokeMethod<bool>('openNotificationSettings')
+          .timeout(_slowTimeout, onTimeout: () => null);
       return result ?? false;
     } on MissingPluginException {
       return false;

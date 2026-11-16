@@ -36,6 +36,30 @@ Future<void> _revealAbout(WidgetTester tester) async {
 }
 
 void main() {
+  // 设置页现在会问原生要通知权限状态；这里给个「都开着」的假回答，
+  // 免得那条 2 秒超时在测试结束时还挂着。
+  const channel = MethodChannel('com.ninesky.dsh_frp_app/native');
+
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method != 'notificationStatus') return null;
+      return <String, Object?>{
+        'platform': 34,
+        'granted': true,
+        'canAsk': false,
+        'appNotificationsEnabled': true,
+        'channelReady': true,
+        'channelImportance': 4,
+      };
+    });
+  });
+
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
+  });
+
   testWidgets('设置页「关于」里有开源仓库与作者', (tester) async {
     await _pumpSettings(tester);
     await _revealAbout(tester);

@@ -6,6 +6,7 @@ import '../constants.dart';
 import '../models/app_settings.dart';
 import '../services/platform_bridge.dart';
 import '../theme/app_icons.dart';
+import '../widgets/turn_alert_permission_tile.dart';
 
 /// 设置页（CONTRACT §7.2.4）。
 class SettingsScreen extends StatelessWidget {
@@ -100,6 +101,7 @@ class SettingsScreen extends StatelessWidget {
                 subtitle: const Text('一轮答完在屏幕顶部弹一条摘要；App 在后台时改发系统通知'),
                 secondary: const Icon(AppIcons.spark),
               ),
+              if (settings.turnAlertEnabled) const TurnAlertPermissionTile(),
               SwitchListTile(
                 value: settings.foldNotesWhenDone,
                 onChanged: settings.setFoldNotesWhenDone,

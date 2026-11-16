@@ -12,6 +12,7 @@ import 'package:dsh_frp_app/screens/session_chat_screen.dart';
 import 'package:dsh_frp_app/screens/settings_screen.dart';
 import 'package:dsh_frp_app/services/dsh_remote.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -88,6 +89,29 @@ SessionSummary _session() => SessionSummary(
 );
 
 void main() {
+  // 设置页会问原生要通知权限状态；给个假回答，别让那条 2 秒超时挂到测试结束。
+  const channel = MethodChannel('com.ninesky.dsh_frp_app/native');
+
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method != 'notificationStatus') return null;
+      return <String, Object?>{
+        'platform': 34,
+        'granted': true,
+        'canAsk': false,
+        'appNotificationsEnabled': true,
+        'channelReady': true,
+        'channelImportance': 4,
+      };
+    });
+  });
+
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
+  });
+
   testWidgets('答完之后过程折成一行，点一下展开；切「简洁」只留统计', (tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final settings = SettingsStore();
@@ -186,6 +210,14 @@ void main() {
 
     expect(find.text('工具调用显示'), findsOneWidget);
     expect(find.text('逐项列出，带工具参数摘要'), findsOneWidget);
+
+    // 会话分组里多了「答完提醒 + 通知权限」两行，详细/简洁被顶到视口外了。
+    await tester.dragUntilVisible(
+      find.text('简洁'),
+      find.byType(ListView),
+      const Offset(0, -120),
+    );
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('简洁'));
     await tester.pumpAndSettle();

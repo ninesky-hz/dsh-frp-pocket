@@ -1,3 +1,28 @@
+## 2026-11-16（装完没弹权限框？设置里能自己查、自己申请）
+
+### app 1.5.0+42
+
+上一条灵动岛装上之后有人问「怎么没跟我要通知权限」——因为那条授权框只在真的
+要发通知时才弹，可那已经是「后台答完」那一刻了，用户看不到也就想不到。
+
+- **设置页新增「系统通知权限」一行**（在「答完提醒（灵动岛）」开关下面，开关关掉
+  时整行隐藏）。它一次查三层：`POST_NOTIFICATIONS` 有没有给、系统里本应用通知总开关、
+  「答完提醒」通道有没有被关。三层任何一层不对通知都出不来，但用户看到的症状都一样，
+  所以直接把是哪一层写进副标题。
+- **按钮跟着状态走**：还能弹框 → 「去申请」（点了立刻弹系统授权框，点完当场刷新成
+  「已允许」）；已经拒绝过（系统不再弹框）→ 「去设置」，跳 `ACTION_APP_NOTIFICATION_SETTINGS`，
+  老系统退到应用详情页；权限齐了 → 「系统设置」，想细调横幅/锁屏自己去。
+- **从系统设置回来会重查**（`WidgetsBindingObserver`），不用退出去再进。
+- **原生侧**：新增 `notificationStatus` / `requestNotificationPermission` /
+  `openNotificationSettings` 三个方法。授权框是异步的，所以把 `MethodChannel.Result`
+  挂起，等 `onRequestPermissionsResult` 再兑现；`shouldShowRequestPermissionRationale`
+  在「没问过」和「不再询问」两种情况下都是 false，另外记一个 `notif_asked` 标记才分得清。
+- 顺手把 `areNotificationsEnabled`（API 24）和 `getNotificationChannel`（API 26）
+  加了版本判断——它们是 `NoSuchMethodError`，try-catch 接 Exception 接不住。
+- 测试：新增 `test/notify_permission_test.dart` 8 条（map 解码、桥不可用、四种状态的
+  文案与按钮、申请成功/被拒、设置页开关联动隐藏）；`chat_notes_setting_test.dart` 与
+  `settings_about_test.dart` 补上通道假回答。全量 409 条通过。
+
 ## 2026-11-16（一轮答完，顶部弹一颗灵动岛）
 
 ### app 1.4.0+41
