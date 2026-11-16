@@ -87,8 +87,11 @@ class PlatformBridge {
   /// 并返回 false，调用方不需要为这件事分叉——下一轮自然会发出去。
   ///
   /// [focus] 打开时原生侧会塞 MIUI/HyperOS 焦点通知的 extras（画进顶部灵动岛）。
-  /// 默认关：第三方 App 没有 `miui.permission.USE_INTERNAL_GENERAL_API`，塞了这些
-  /// 字段在部分 ROM 上会让整条通知被丢掉——先把「能弹出来」保住。
+  /// 发一条「这一轮答完了」的系统通知。
+  ///
+  /// [focus] 为真时顺带塞上小米焦点通知的 `miui.focus.param`（JSON 字符串）：
+  /// 系统支持且有焦点通知权限时，这条会直接画进顶部灵动岛/超级岛；没权限时
+  /// 官方语义是退化成普通通知，所以失败也不会丢提醒。
   Future<bool> notifyRoundDone({
     required String title,
     required String body,
@@ -204,6 +207,23 @@ class PlatformBridge {
       return false;
     } on PlatformException {
       return false;
+    }
+  }
+
+  /// 查小米焦点通知（超级岛）支持到哪一步：系统版本 + 本应用有没有权限。
+  ///
+  /// 不加超时：这是查询性质的只读调用，超时会在测试里挂一个还在跑的 Timer。
+  /// 桥不可用时返回 null，调用方据此什么都不显示。
+  Future<FocusStatus?> focusStatus() async {
+    try {
+      final result = await _channel
+          .invokeMethod<Map<Object?, Object?>>('focusStatus');
+      if (result == null) return null;
+      return FocusStatus.fromMap(result);
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
     }
   }
 }

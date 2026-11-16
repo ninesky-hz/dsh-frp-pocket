@@ -1,3 +1,29 @@
+## 2026-11-16（按小米官方格式重发焦点通知：参数得是 JSON，还得有焦点通知权限）
+
+### app 1.8.0+47
+
+「我们的 APP 不能上小米的灵动岛通知吗？」——能上，但要按小米那套来。
+
+- **根因：`miui.focus.param` 塞错了类型**。官方（dev.mi.com/xiaomihyperos，
+  焦点通知开发指南 pId=2131）要求这个 extra 是 **JSON 字符串**，形如
+  `{"param_v2": {...}}`；我们之前塞的是 `Bundle`，系统解不出来就整段忽略，
+  于是从来只有普通通知。
+- **改法**：`applyFocusExtras` 重写成 `buildFocusParamJson`——`protocol`、`timeout`、
+  `enableFloat`、`islandFirstFloat`、`ticker`、`aodTitle`、`baseInfo`、
+  `param_island{bigIslandArea, smallIslandArea}`（文本组件走 `miui.focus.paramtextInfo`）。
+  整段包 try/catch，拼不出来就当普通通知发。
+- **先查再塞**：新增 `focusProtocolVersion()`（读 `notification_focus_protocol`：
+  0 不支持 / 2 OS2 焦点通知 / 3 OS3 超级岛）与 `hasFocusPermission()`
+  （`content://miui.statusbar.notification.public` 的 `canShowFocus`）。两个都过才塞参数。
+- **这是有门槛的**：焦点通知权限要在小米那边按包名开通（邮件申请 → 平台配置），
+  第三方默认没有。没开通时系统按 `filterWhenNoPermission=false` 退化成普通通知，
+  所以提醒本身不会丢，只是不上岛。
+- **设置页能看见了**：新增桥方法 `focusStatus` 与 `FocusStatus` 模型，「试一下」发完的
+  提示会直说「这台机器支持小米岛、焦点通知参数也带上了」还是「支持岛但应用还没开通权限」。
+  答完提醒的系统通知也改成一并带 `focus: true`，权限一到就自动上岛。
+- 测试：`notify_permission_test.dart` 加三条（focusStatus 解码、试一下带上焦点参数、
+  没权限时如实说明）。全量 423 条通过。
+
 ## 2026-11-16（通知栏里有，屏幕上不弹？换 id 重发，再把话说清楚）
 
 ### app 1.7.1+46

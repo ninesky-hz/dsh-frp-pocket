@@ -77,3 +77,50 @@ class NotifyPermission {
   bool get bannerSilent =>
       channelReady && channelImportance >= 0 && channelImportance < 4;
 }
+
+/// 小米 HyperOS「焦点通知 / 小米超级岛」的支持情况。
+///
+/// 两层门槛：系统得先支持（`protocol >= 2`），本应用还要在小米那边按包名
+/// 开通焦点通知权限（`canShowFocus`，邮件申请、平台配置后才有）。两样都满足
+/// 才会真的画进岛里；缺一样就退化成普通通知。
+class FocusStatus {
+  const FocusStatus({
+    this.protocol = 0,
+    this.canShowFocus = false,
+  });
+
+  /// 桥不可用（非 Android / 原生端没实现）时的状态。
+  const FocusStatus.unavailable()
+    : protocol = 0,
+      canShowFocus = false;
+
+  factory FocusStatus.fromMap(Map<Object?, Object?> map) {
+    int number(String key, int fallback) {
+      final value = map[key];
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      return fallback;
+    }
+
+    final show = map['canShowFocus'];
+    return FocusStatus(
+      protocol: number('protocol', 0),
+      canShowFocus: show is bool ? show : false,
+    );
+  }
+
+  /// `notification_focus_protocol`：0 不支持 / 1 OS1 / 2 OS2 / 3 OS3 超级岛。
+  final int protocol;
+
+  /// 本应用是否已拿到焦点通知权限（小米按包名开通）。
+  final bool canShowFocus;
+
+  /// 系统这一层支持焦点通知（OS2 起）。
+  bool get supported => protocol >= 2;
+
+  /// 系统是 OS3，岛上那套「超级岛」样式可用。
+  bool get island => protocol >= 3;
+
+  /// 权限、系统都过了，发出去就是岛。
+  bool get ready => supported && canShowFocus;
+}

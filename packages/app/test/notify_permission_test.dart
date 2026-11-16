@@ -52,6 +52,15 @@ class _FakeBridge extends PlatformBridge {
   int notifyCalls = 0;
   bool notifyResult = true;
 
+  /// 最后一次发通知有没有要求带小米焦点通知参数。
+  bool? lastNotifyFocus;
+
+  /// 小米焦点通知状态；null＝这台设备问不到（非小米或桥没实现）。
+  FocusStatus? focus;
+
+  @override
+  Future<FocusStatus?> focusStatus() async => focus;
+
   @override
   Future<bool> notifyRoundDone({
     required String title,
@@ -60,6 +69,7 @@ class _FakeBridge extends PlatformBridge {
     bool focus = false,
   }) async {
     notifyCalls++;
+    lastNotifyFocus = focus;
     return notifyResult;
   }
 }
@@ -234,6 +244,51 @@ void main() {
     await _pumpTile(tester, bridge);
 
     expect(find.byKey(const ValueKey<String>('notify-test-action')), findsNothing);
+  });
+
+  test('桥把小米焦点通知状态解出来', () async {
+    const channel = MethodChannel('com.ninesky.dsh_frp_app/native');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'focusStatus');
+      return <String, Object?>{'protocol': 3, 'canShowFocus': true};
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final status = await const PlatformBridge().focusStatus();
+    expect(status, isNotNull);
+    expect(status!.protocol, 3);
+    expect(status.supported, isTrue);
+    expect(status.island, isTrue);
+    expect(status.ready, isTrue);
+  });
+
+  testWidgets('「试一下」把小米焦点通知的参数一起发出去', (tester) async {
+    final bridge = _FakeBridge(_status(granted: true))
+      ..focus = const FocusStatus(protocol: 3, canShowFocus: true);
+    await _pumpTile(tester, bridge);
+
+    await tester.tap(find.byKey(const ValueKey<String>('notify-test-action')));
+    await tester.pumpAndSettle();
+
+    expect(bridge.lastNotifyFocus, isTrue, reason: '参数不带上去，系统就没机会画岛');
+    expect(find.textContaining('焦点通知参数也带上了'), findsOneWidget);
+    TurnAlertCenter.instance.dismiss();
+  });
+
+  testWidgets('系统支持超级岛但应用没开通权限：如实说是普通通知', (tester) async {
+    final bridge = _FakeBridge(_status(granted: true))
+      ..focus = const FocusStatus(protocol: 3, canShowFocus: false);
+    await _pumpTile(tester, bridge);
+
+    await tester.tap(find.byKey(const ValueKey<String>('notify-test-action')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('还没开通焦点通知权限'), findsOneWidget);
+    TurnAlertCenter.instance.dismiss();
   });
 
   testWidgets('非 Android / 桥不可用：只说明，不给按钮', (tester) async {    final bridge = _FakeBridge(const NotifyPermission.unavailable());

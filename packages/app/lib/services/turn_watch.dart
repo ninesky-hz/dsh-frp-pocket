@@ -91,11 +91,14 @@ class TurnWatch {
       return;
     }
     // 后台：系统通知栏那条。发不出去（没权限/没桥）就算了，不打断任何流程。
+    // `focus: true` 是让原生带上小米焦点通知的 JSON 参数——系统支持且有权限时
+    // 它才会上岛；没有权限时按官方语义退化成普通通知，不影响这条提醒本身。
     unawaited(
       _bridge.notifyRoundDone(
         title: cleanTitle,
         body: cleanBody.isEmpty ? '这一轮已答完' : cleanBody,
         sessionId: sessionId,
+        focus: true,
       ),
     );
   }

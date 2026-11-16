@@ -26,6 +26,9 @@ class TurnAlertPermissionTile extends StatefulWidget {
 class _TurnAlertPermissionTileState extends State<TurnAlertPermissionTile>
     with WidgetsBindingObserver {
   NotifyPermission? _state;
+
+  /// 小米焦点通知/超级岛的支持情况。null＝这台设备问不到（非 Android 或旧版原生）。
+  FocusStatus? _focus;
   bool _busy = false;
   bool _loaded = false;
 
@@ -50,9 +53,11 @@ class _TurnAlertPermissionTileState extends State<TurnAlertPermissionTile>
 
   Future<void> _refresh() async {
     final status = await widget.bridge.notificationPermission();
+    final focus = await widget.bridge.focusStatus();
     if (!mounted) return;
     setState(() {
       _state = status;
+      _focus = focus;
       _loaded = true;
     });
   }
@@ -106,16 +111,27 @@ class _TurnAlertPermissionTileState extends State<TurnAlertPermissionTile>
       final ok = await widget.bridge.notifyRoundDone(
         title: '试一下',
         body: '这条是你点「试一下」发的。收得到，答完的提醒就一定能弹出来。',
+        // 顺手把小米焦点通知的参数也带上：有权限就直接画进岛里，
+        // 没权限系统按官方语义退化成普通通知，不会更差。
+        focus: true,
       );
       if (!mounted) return;
-      _toast(
-        ok
-            ? '已经发出去：上面是 App 内的胶囊，下拉通知栏看那条系统通知有没有横幅。'
-            : '系统没接受这条通知：权限或通道那一层还没通。',
-      );
+      _toast(ok ? _testToast() : '系统没接受这条通知：权限或通道那一层还没通。');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// 「试一下」成功时那句话，顺带交代小米岛这一层到底通到哪。
+  String _testToast() {
+    const base = '已经发出去：上面是 App 内的胶囊，下拉通知栏看那条系统通知有没有横幅。';
+    final focus = _focus;
+    if (focus == null || !focus.supported) return base;
+    if (focus.ready) {
+      return '$base 这台机器支持小米岛，焦点通知参数也带上了，去看顶部有没有上岛。';
+    }
+    return '$base 这台机器支持小米超级岛，但本应用还没开通焦点通知权限，'
+        '所以这条只会是普通通知——权限要在小米那边按包名申请。';
   }
 
   @override
