@@ -6,6 +6,7 @@ import 'data/host_store.dart';
 import 'data/settings_store.dart';
 import 'screens/hosts_screen.dart';
 import 'services/probe.dart';
+import 'services/turn_watch.dart';
 import 'theme/app_theme.dart';
 import 'widgets/dynamic_island.dart';
 
@@ -15,6 +16,10 @@ Future<void> main() async {
   final settings = SettingsStore();
   final hosts = HostStore();
   await Future.wait<void>(<Future<void>>[settings.load(), hosts.load()]);
+
+  // 「答完提醒」的开关来源：提醒由全局的 TurnWatch 投递，它不挂在任何页面上，
+  // 拿不到 AppScope，所以在这里把设置项接过去（读的是活值，改了立刻生效）。
+  TurnWatch.instance.enabled = () => settings.turnAlertEnabled;
 
   runApp(DshFrpApp(hostStore: hosts, settingsStore: settings));
 }

@@ -27,7 +27,7 @@ import '../services/outbox_store.dart';
 import '../services/pending_store.dart';
 import '../services/platform_bridge.dart';
 import '../services/probe.dart';
-import '../services/turn_alerts.dart';
+import '../services/turn_watch.dart';
 import '../widgets/chat/chat_bubbles.dart';
 import '../widgets/ignore_show_on_screen.dart';
 import '../widgets/chat/chat_scroll.dart';
@@ -243,11 +243,18 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   DateTime? _pointerDownTime;
   bool _disposed = false;
 
-  /// App 是否在前台。答完提醒按它分流：前台弹灵动岛，后台发系统通知。
+  /// App 是否在前台。
+  ///
+  /// 只用来决定「回前台要不要重连」；「弹胶囊还是发通知」归全局的
+  /// [TurnWatch] 判断，它比页面活得久。
   bool _appActive = true;
 
-  /// 现在有没有挂着一轮的前台保活服务。没有就别去调桥收它（尤其是 dispose 里）。
-  bool _watchHeld = false;
+  /// 进页面时全局那边正替我们盯着一轮（上一页关掉时还没答完）。
+  ///
+  /// 只用来让这一轮的 `turn/end` 照样算「真的答完」，不参与界面状态：
+  /// 否则会话页会一直停在「正在回复」，动画也收不下来。
+  bool _adoptedInFlight = false;
+
   String? _loadError;
   int? _asOfSeq;
   int _lastSeq = 0;
@@ -371,6 +378,10 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _running = widget.session.running;
+    // 全局那边还挂着保活服务 = 上一页关掉时这一轮还没答完。会话摘要里的 `running`
+    // 可能已经过期（列表是进页面前拿的），所以「这一轮要不要收尾提醒」以服务为准。
+    // 注意只影响收尾判断，不能直接置 `_running`：那会让界面一直停在「正在回复」。
+    _adoptedInFlight = TurnWatch.instance.held;
     _title = widget.session.title.trim().isEmpty
         ? kUntitledSession
         : widget.session.title;
@@ -383,6 +394,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     _agentPreset = widget.session.agentPreset;
     if (_agentPreset == null) unawaited(_hydrateAgentPreset());
     _input.addListener(_onDraftChanged);
+    // 这一页自己就盯着这一轮：全局那份接手交给它也没用了，还会撞成两条提醒。
+    TurnWatch.instance.dropAdopted(sessionId: widget.session.sessionId);
     _start();
     unawaited(_restoreOutbox());
     unawaited(_restoreDraft());
@@ -407,16 +420,28 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     _draftTimer?.cancel();
     // 页面被销毁前把最后一个字写下去：用户是「返回列表」而不是「不要了」。
     unawaited(_draftStore.save(_outboxHostId, _outboxSessionId, _input.text));
-    // 人已经离开这一页，没人再处理 turn/end 了：保活服务留着只会变成一条撤不掉的
-    // 「正在等」。前台服务必须在 App 前台起，收掉没有限制。
-    if (_watchHeld) {
-      _watchHeld = false;
-      unawaited(const PlatformBridge().stopTurnWatch());
+    // 人已经离开这一页：把还在跑的这一轮交给全局的 TurnWatch 接着听。
+    // 它会在答完时收掉保活服务并弹提醒——这正是「发完就退回列表」最常见的姿势，
+    // 不接手的话 turn/end 没人收，提醒永远不响。
+    final running = _running || _streaming;
+    final handedOff = running && TurnWatch.instance.held;
+    if (handedOff) {
+      // 连这条连接一起交出去：登录态与订阅都还在，不用重新握手。
+      TurnWatch.instance.adopt(
+        remote: _remote,
+        sessionId: widget.session.sessionId,
+        title: _title,
+        text: _latestAnswerText(),
+        ownsRemote: _ownsRemote,
+      );
+    } else if (TurnWatch.instance.held) {
+      unawaited(TurnWatch.instance.release());
     }
     _scroll.dispose();
     _input.dispose();
     _focus.dispose();
-    if (_ownsRemote) _remote.dispose();
+    // 交接出去之后这条连接归 TurnWatch 收尾，页面不能再关它。
+    if (_ownsRemote && !handedOff) _remote.dispose();
     super.dispose();
   }
 
@@ -732,12 +757,14 @@ class _SessionChatScreenState extends State<SessionChatScreen>
           changed = true;
           // 这一轮开跑了：挂个前台服务把进程顶住。否则切到后台几十秒后进程被冻，
           // WS 收不到 turn/end，提醒就永远不会触发（「权限给了还是不弹」就是这个）。
-          _holdProcess();
+          TurnWatch.instance.hold(title: _title);
         }
       case 'turn/end':
         // 只有「本来在跑」才算这一轮真的答完：进页面时补推的旧 turn/end
-        // 有一堆，那些不该把人喊回来。
-        final wasRunning = _running || _streaming;
+        // 有一堆，那些不该把人喊回来。`_adoptedInFlight` 是「上一页关掉时还在跑」
+        // 的那一轮——它的 turn/end 才是我们等的那条。
+        final wasRunning = _running || _streaming || _adoptedInFlight;
+        _adoptedInFlight = false;
         if (_running || _streaming) {
           _running = false;
           _streaming = false;
@@ -748,11 +775,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         // 草稿里的正文收掉就没了，先留一份给提醒用。
         final orphanText = _latestDraftText();
         if (endedTurn != null && _drafts.dropTurn(endedTurn)) changed = true;
-        // 这一轮到头了：保活服务没用了，收掉，通知栏里那条常驻也跟着走。
-        if (wasRunning && _watchHeld) {
-          _watchHeld = false;
-          unawaited(const PlatformBridge().stopTurnWatch());
-        }
+        // 这一轮到头了：保活服务收掉、提醒发出去（[TurnWatch.finish] 一并干）。
         if (wasRunning) _announceTurnDone(orphanText: orphanText);
       case 'assistant/message':
         if (_streaming) {
@@ -793,49 +816,20 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     if (added && _atBottom) _scrollToBottom();
   }
 
-  /// 一轮在跑的时候把进程顶住（前台服务）。
-  ///
-  /// 必须在 App 还前台时调：Android 12+ 不允许后台起前台服务，原生侧起不来会返回
-  /// false，那就只剩「人回来才看得到」这一条路——不是错误，是系统限制。
-  void _holdProcess() {
-    if (_disposed || _watchHeld) return;
-    _watchHeld = true;
-    final title = _title.trim().isEmpty ? '这一轮对话' : _squashForAlert(_title);
-    unawaited(const PlatformBridge().startTurnWatch(text: title));
-  }
-
   /// 一轮答完的提醒：前台弹灵动岛，后台发系统通知。
   ///
-  /// 两条路都走同一个内容源 [TurnAlert]：标题是会话名，正文是这一轮最后那段
-  /// 回复（压成一行、截断），点开滚到最新。提醒内容只在本地拼，不额外发请求。
+  /// 内容与投递都交给全局的 [TurnWatch]：它同时管着保活服务，也管着「页面已经关掉」
+  /// 那种情况下的同类提醒——两边走同一条路，行为才不会分叉。点开滚到最新是靠这里
+  /// 传过去的 [onOpen]。
   void _announceTurnDone({String? orphanText}) {
     if (_disposed || !mounted) return;
-    final enabled =
-        AppScope.maybeOf(context)?.settings.turnAlertEnabled ?? true;
-    if (!enabled) return;
     final durable = _latestAnswerText();
     final raw = durable.isNotEmpty ? durable : (orphanText ?? '');
-    final body = _squashForAlert(raw);
-    final title = _title.trim().isEmpty ? '新会话' : _squashForAlert(_title);
-    if (_appActive) {
-      TurnAlertCenter.instance.show(
-        TurnAlert(
-          sessionId: _outboxSessionId,
-          title: title,
-          body: body.isEmpty ? '这一轮没有正文，点开看看' : body,
-          at: DateTime.now(),
-          onOpen: _onAlertTapped,
-        ),
-      );
-      return;
-    }
-    // 后台：系统通知栏那条。发不出去（没权限/没桥）就算了，不打断任何流程。
-    unawaited(
-      const PlatformBridge().notifyRoundDone(
-        title: title,
-        body: body.isEmpty ? '这一轮已答完' : body,
-        sessionId: _outboxSessionId,
-      ),
+    TurnWatch.instance.finish(
+      title: _title,
+      body: raw,
+      sessionId: _outboxSessionId,
+      onOpen: _onAlertTapped,
     );
   }
 
@@ -845,14 +839,6 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     _hasNew = false;
     setState(() => _atBottom = true);
     _scrollToBottom();
-  }
-
-  /// 提醒正文要一行能读完：换行、连续空格都压掉，太长就截断。
-  String _squashForAlert(String text) {
-    final squashed = text.replaceAll(RegExp(r'\s+'), ' ').trim();
-    const limit = 120;
-    if (squashed.length <= limit) return squashed;
-    return '${squashed.substring(0, limit)}…';
   }
 
   /// 最近一条 assistant 正文（定稿后的）。

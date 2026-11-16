@@ -8,6 +8,7 @@ import 'package:dsh_frp_app/models/session_summary.dart';
 import 'package:dsh_frp_app/screens/session_chat_screen.dart';
 import 'package:dsh_frp_app/services/dsh_remote.dart';
 import 'package:dsh_frp_app/services/turn_alerts.dart';
+import 'package:dsh_frp_app/services/turn_watch.dart';
 import 'package:dsh_frp_app/widgets/dynamic_island.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -147,6 +148,8 @@ Future<void> _pumpIsland(
 
 void main() {
   tearDown(TurnAlertCenter.instance.dismiss);
+  // 接手状态与保活服务都是全局的：一条用例漏收，下一条就会带着上一条的残留。
+  tearDown(TurnWatch.instance.release);
 
   testWidgets('提醒先展开，收起之后自己消失', (tester) async {
     final center = TurnAlertCenter();
@@ -327,7 +330,7 @@ void main() {
     await remote.frames.close();
   });
 
-  testWidgets('人离开会话页也把保活服务收掉', (tester) async {
+  testWidgets('人离开会话页之后，接手这一轮，答完才收并提醒', (tester) async {
     final calls = _mockNative();
     final remote = _StreamRemote();
     await _pumpChat(tester, remote);
@@ -337,12 +340,86 @@ void main() {
       remote,
       _event('turn/start', 40, <String, Object?>{'turn': 4}),
     );
+    expect(calls, contains('startTurnWatch'));
     calls.clear();
 
     await tester.pumpWidget(const SizedBox());
-    expect(calls, contains('stopTurnWatch'));
+    expect(
+      calls,
+      isNot(contains('stopTurnWatch')),
+      reason: '页面关了但这一轮还在跑：常驻通知别撤，撤了这条答完就没人提醒',
+    );
+    expect(TurnWatch.instance.adopted, isTrue, reason: '得有人接着听 turn/end');
 
-    await remote.frames.close();
+    await _push(
+      tester,
+      remote,
+      _event('turn/end', 41, <String, Object?>{'turn': 4}),
+    );
+    expect(calls, contains('stopTurnWatch'), reason: '答完了才收');
+    expect(
+      TurnAlertCenter.instance.isShowing,
+      isTrue,
+      reason: '页面关着也要提醒——这才是「发完就退回列表」该有的样子',
+    );
+    expect(TurnWatch.instance.adopted, isFalse, reason: '收尾后别留常驻连接');
+  });
+
+  testWidgets('页面关着、人在别的 App：答完发系统通知，不弹胶囊', (tester) async {
+    final calls = _mockNative();
+    final remote = _StreamRemote();
+    await _pumpChat(tester, remote);
+
+    await _push(
+      tester,
+      remote,
+      _event('turn/start', 50, <String, Object?>{'turn': 5}),
+    );
+    await tester.pumpWidget(const SizedBox());
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    calls.clear();
+
+    await _push(
+      tester,
+      remote,
+      _event('turn/end', 51, <String, Object?>{'turn': 5}),
+    );
+    expect(calls, contains('notifyRoundDone'), reason: '后台只能走通知栏');
+    expect(TurnAlertCenter.instance.isShowing, isFalse, reason: '人不在，胶囊没人看得见');
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+  });
+
+  testWidgets('重新打开会话页就把接手断掉，别提醒两遍', (tester) async {
+    final calls = _mockNative();
+    final remote = _StreamRemote();
+    await _pumpChat(tester, remote);
+
+    await _push(
+      tester,
+      remote,
+      _event('turn/start', 60, <String, Object?>{'turn': 6}),
+    );
+    await tester.pumpWidget(const SizedBox());
+    expect(TurnWatch.instance.adopted, isTrue);
+    calls.clear();
+
+    await _pumpChat(tester, remote);
+    expect(TurnWatch.instance.adopted, isFalse, reason: '页面回来了，自己盯着就行');
+    expect(
+      calls,
+      isNot(contains('stopTurnWatch')),
+      reason: '这一轮还在跑，保活服务得继续挂着',
+    );
+
+    await _push(
+      tester,
+      remote,
+      _event('turn/end', 61, <String, Object?>{'turn': 6}),
+    );
+    expect(calls, contains('stopTurnWatch'));
   });
 
   test('答完提醒默认开，关掉会落盘', () async {    SharedPreferences.setMockInitialValues(<String, Object>{});

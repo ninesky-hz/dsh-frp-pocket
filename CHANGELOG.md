@@ -1,3 +1,29 @@
+## 2026-11-16（退回列表也照样提醒：答完这件事不再归会话页管）
+
+### app 1.7.0+45
+
+「答完提醒」原来挂在会话页里：页面一销毁，`turn/end` 就没人接，提醒也就没有触发点。
+现在把这件事挪成 App 级的一块状态，页面只是它的一个「前台窗口」。
+
+- **症状**：在会话页里等，答完能弹胶囊；退回会话列表（或去别的页面）再等，答完静悄悄。
+- **根因**：保活服务和提醒投递都在 `_SessionChatScreenState` 里，`dispose` 一跑就全收掉；
+  而那一轮还在主机上跑，`turn/end` 推下来已经没有听众。
+- **改法**：新增 `packages/app/lib/services/turn_watch.dart`（`TurnWatch` 单例）：
+  - `hold` / `finish` / `enabled` —— 谁在跑、要不要提醒、前台还是后台，统一在这里判断；
+  - 会话页 `dispose` 时这一轮没答完 → `adopt(remote:, sessionId:, title:, text:, ownsRemote:)`，
+    把页面手上那条 `DshRemote` 连着 sessionId 接过来，自己听 `followSession` 的 `turn/end`。
+    **不新开连接**：`DshApi` 的 cookie jar 是每实例私有的，重开一条要重新按 PIN 握手；
+  - 接手时用 `snapshot.asOfSeq` 当基线，早于它的 `turn/end` 一律忽略，免得一离开页面就被
+    补推的历史记录喊回去；
+  - 前台（`WidgetsBinding.lifecycleState == resumed` 或取不到）走 `TurnAlertCenter` 胶囊，
+    否则走 `PlatformBridge.notifyRoundDone` 系统通知；
+  - 重新打开会话页时 `dropAdopted(sessionId:)`，同一条答完不会提醒两遍。
+- **页面侧只留一个收尾标记**：`_adoptedInFlight` 记「进页面时全局那边正跑着」，只参与
+  `turn/end` 的判定，不进界面状态——直接并进 `_running` 会让页面一直停在「正在回复」，
+  动画收不下来（`session_chat_turn_fold_test.dart` 的 `pumpAndSettle` 就是这么红的）。
+- 测试：`turn_alert_island_test.dart` 改/加三条——离开页面后接手并在答完时收服务+提醒、
+  后台走系统通知不弹胶囊、重新进页面断掉接手不重复提醒。全量 418 条通过。
+
 ## 2026-11-16（只有一两条消息时，第一条也能顶到上面）
 
 ### app 1.6.1+44
