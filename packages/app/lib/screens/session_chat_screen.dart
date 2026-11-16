@@ -152,6 +152,24 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   final List<ChatMessage> _messages = <ChatMessage>[];
   final List<ChatMessage> _pending = <ChatMessage>[];
 
+  /// 宿主队列里的待处理输入（`session/observeState` 的 `queue`，带正文）。
+  ///
+  /// 排队中的消息**不在** `session/page` 里——宿主那边它只活在 inbox
+  /// （`agent/inbox/spliced`），真正开跑才追加 `user/message`。所以「等待中那条」
+  /// 有两个来源：本地的 [_pending]（自己发的、带图带原始字节）和这份队列快照
+  /// （权威、跨客户端、但只有宿主给的 content）。以前只信前者，落盘一丢
+  /// （异步 apply + 进程被杀）就彻底看不见了；PC 端之所以还在，正是因为它读的是
+  /// 这份队列。
+  List<DshQueuedItem> _hostQueue = const <DshQueuedItem>[];
+
+  /// 队列快照的拉取状态（同一时刻只允许一份在路上）。
+  bool _queueRefreshing = false;
+
+  /// 盘上的待回显条目已经读回来了。
+  ///
+  /// 读完之前任何一次整表落盘都是「用空的表覆盖真数据」——那不叫同步，叫删库。
+  bool _pendingReady = false;
+
   // ------------------------------------------------------------ 图片附件
 
   /// 一次最多带几张图：服务端单条上限 20，但手机端 5 张已经足够，
@@ -499,6 +517,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     setState(() => _link = state);
     if (state == DshLinkState.online) {
       unawaited(_flushOutbox());
+      // 断线期间队列可能被别的客户端（PC）改过：链路回来先对一次。
+      unawaited(_refreshQueue());
       // 断线期间补拉失败过就没再试了：链路回来时补一次。
       if (_permission == null) unawaited(_hydratePermission());
     }
@@ -567,6 +587,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
           return;
         }
         _asOfSeq = asOf;
+        // 快照到齐 = 状态已经拿到手：这时候的队列才是最准的一份。
+        unawaited(_refreshQueue());
         if (_messages.isEmpty) {
           unawaited(_loadHistory(throughSeq: asOf));
         } else if (asOf > _lastSeq) {
@@ -759,6 +781,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
           // WS 收不到 turn/end，提醒就永远不会触发（「权限给了还是不弹」就是这个）。
           TurnWatch.instance.hold(title: _title);
         }
+        // 开跑时队列刚被吃掉一条：重排一次，免得界面还挂着「排队中」。
+        unawaited(_refreshQueue());
       case 'turn/end':
         // 只有「本来在跑」才算这一轮真的答完：进页面时补推的旧 turn/end
         // 有一堆，那些不该把人喊回来。`_adoptedInFlight` 是「上一页关掉时还在跑」
@@ -777,6 +801,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         if (endedTurn != null && _drafts.dropTurn(endedTurn)) changed = true;
         // 这一轮到头了：保活服务收掉、提醒发出去（[TurnWatch.finish] 一并干）。
         if (wasRunning) _announceTurnDone(orphanText: orphanText);
+        // 上一轮结束，宿主会把队列里的下一条提上来：这里是队列变化最频繁的点。
+        unawaited(_refreshQueue());
       case 'assistant/message':
         if (_streaming) {
           _streaming = false;
@@ -802,6 +828,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         if (_resolvePending(event)) changed = true;
         // 队列项也顺手摘掉（能拿到 requestId 才有意义，拿不到不做猜测）。
         if (_resolveOutboxEcho(event)) changed = true;
+        // 回显之后宿主队列里就少一条，同步一次让合成行跟着消失。
+        unawaited(_refreshQueue());
     }
 
     final message = chatMessageOf(event);
@@ -1447,6 +1475,112 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     return true;
   }
 
+  // ------------------------------------------------------------ 宿主队列
+
+  /// 拉一次宿主队列（`session/observeState` 的 `queue`）。
+  ///
+  /// 这份快照是「等待中的消息」的权威来源：跨客户端一致（PC 上排的队这里也看得见），
+  /// 而且带了 `content`，能直接还原成气泡。本地 [_pending] 只是它的副本 ——
+  /// 副本丢了（落盘异步、进程被杀）还能靠它补回来。
+  Future<void> _refreshQueue() async {
+    // 断线时不去取：`queuedItems` 要开一次 mux 流，连不上就得干等超时，
+    // 而队列这会儿也改不了。链路回来时 `_onLinkState` 会补一次。
+    if (_disposed || _queueRefreshing || !_linkOnline) return;
+    // 没有一轮在跑、也没有待处理的气泡时，宿主队列必然是空的（输入只有在这一轮
+    // 忙着、或自己刚发出去的时候才会排队）。这个判据省掉的是「闲聊时每进一次
+    // 会话都多开一条流」这种纯浪费。
+    if (!_running &&
+        !_streaming &&
+        _pending.isEmpty &&
+        _hostQueue.isEmpty &&
+        !widget.session.running) {
+      return;
+    }
+    _queueRefreshing = true;
+    try {
+      final items = await _remote.queuedItems(widget.session.sessionId);
+      if (_disposed) return;
+      if (!_sameQueue(items, _hostQueue)) {
+        if (mounted) {
+          setState(() => _hostQueue = items);
+        } else {
+          _hostQueue = items;
+        }
+      }
+    } catch (error) {
+      debugPrint('SessionChat: 取宿主队列失败 $error');
+    } finally {
+      _queueRefreshing = false;
+    }
+  }
+
+  static bool _sameQueue(List<DshQueuedItem> a, List<DshQueuedItem> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id ||
+          a[i].placement != b[i].placement ||
+          a[i].rpcId != b[i].rpcId ||
+          a[i].text != b[i].text) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// 宿主队列里那些「本地已经没有对应气泡」的条目，还原成消息行。
+  ///
+  /// 去重按三件事：同一条的 `rpcId` 已经在 [_pending] 里（本地那份更完整，带
+  /// 原始图片字节）、`rpcId` 已经在历史里、或者历史里已经出现同一句话（seq 非空
+  /// 的真人消息才算，避免同一句话发两次时误判）。
+  List<ChatMessage> get _hostQueueRows {
+    if (_hostQueue.isEmpty) return const <ChatMessage>[];
+    final pendingRequestIds = <String>{
+      for (final message in _pending)
+        if (message.requestId != null) message.requestId!,
+    };
+    final echoedRequestIds = <String>{
+      for (final message in _messages)
+        if (message.requestId != null) message.requestId!,
+    };
+    final rows = <ChatMessage>[];
+    for (final item in _hostQueue) {
+      final requestId = item.rpcId;
+      if (requestId != null &&
+          (pendingRequestIds.contains(requestId) ||
+              echoedRequestIds.contains(requestId))) {
+        continue;
+      }
+      final body = item.text?.trim() ?? '';
+      final echoedByText =
+          body.isNotEmpty &&
+          _messages.any(
+            (message) =>
+                message.role == ChatRole.user &&
+                message.seq != null &&
+                message.text.trim() == body,
+          );
+      if (echoedByText) continue;
+      final message = item.toMessage();
+      if (message != null) rows.add(message);
+    }
+    return rows;
+  }
+
+  /// 合成行的宿主队列项 id（`queue:<itemId>`）；不是这种行返回 null。
+  static String? _queueItemIdOf(ChatMessage message) =>
+      message.key.startsWith('queue:') ? message.key.substring(6) : null;
+
+  /// 从宿主队列里摘掉一条（用户点了撤回，界面上先摘，下一轮刷新再对齐）。
+  void _dropHostQueueRow(String itemId) {
+    setState(() {
+      _hostQueue = <DshQueuedItem>[
+        for (final item in _hostQueue)
+          if (item.id != itemId) item,
+      ];
+    });
+    unawaited(_refreshQueue());
+  }
+
   // ---------------------------------------------------------------- 权限预设
 
   /// 按需拉权限目录。
@@ -2008,7 +2142,13 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       _restoredLocalIds.add(entry.localId);
       _pendingSentAt[entry.localId] = entry.sentAt;
     }
-    if (alive.isEmpty) return;
+    if (alive.isEmpty) {
+      // 盘上要么是空的，要么读回来的都已经变成历史了：这时候才允许「写空表」，
+      // 因为它确实该是空的。之前恢复完成前的任何一次落盘都可能是拿空表覆盖真数据。
+      _pendingReady = true;
+      unawaited(_persistPending());
+      return;
+    }
     void apply() {
       for (final entry in alive) {
         if (_pending.any((item) => item.localId == entry.localId)) continue;
@@ -2022,6 +2162,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     } else {
       apply();
     }
+    _pendingReady = true;
     unawaited(_reconcilePending());
   }
 
@@ -2077,7 +2218,11 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   }
 
   /// 把当前 `_pending` 整表写盘（只写有文字的那些，纯图消息存了也点不开）。
+  ///
+  /// 恢复没读完之前一律不写：那会儿内存里的表还是空的，整表覆盖等于把盘上
+  /// 刚存下的「等待中」抹掉 —— 正是「退出会话再进来就没了」的一半原因。
   Future<void> _persistPending() {
+    if (!_pendingReady) return Future<void>.value();
     final entries = <PendingEntry>[];
     for (final message in _pending) {
       final localId = message.localId;
@@ -2269,15 +2414,22 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   /// `rpcId`）就只摘界面，并且如实告诉用户 —— 那句话不能被谎称撤回了。
   Future<void> _dropQueued(ChatMessage message) async {
     final localId = message.localId;
-    if (localId == null) return;
-    final index = _pending.indexWhere((item) => item.localId == localId);
-    if (index < 0) return;
-    setState(() => _pending.removeAt(index));
-    _restoredLocalIds.remove(localId);
-    unawaited(_persistPending());
+    final queuedId = _queueItemIdOf(message);
+    final index = localId == null
+        ? -1
+        : _pending.indexWhere((item) => item.localId == localId);
+    if (queuedId != null) {
+      // 合成行（这条只在宿主队列里，本地没有副本）：直接从队列快照里摘。
+      _dropHostQueueRow(queuedId);
+    } else {
+      if (localId == null || index < 0) return;
+      setState(() => _pending.removeAt(index));
+      _restoredLocalIds.remove(localId);
+      unawaited(_persistPending());
+    }
 
     final requestId = message.requestId;
-    if (requestId == null) {
+    if (requestId == null && queuedId == null) {
       _toast('已从界面移除；这条服务端可能仍会处理');
       return;
     }
@@ -2286,17 +2438,19 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       final items = await _remote.queuedItems(sessionId);
       DshQueuedItem? target;
       for (final item in items) {
-        if (item.rpcId == requestId) {
+        if (queuedId != null ? item.id == queuedId : item.rpcId == requestId) {
           target = item;
           break;
         }
       }
       if (target == null || !target.waiting) {
         _toast('已经开始处理了，只能从界面移除');
+        unawaited(_refreshQueue());
         return;
       }
       final removed = await _remote.removeQueued(sessionId, target.id);
       _toast(removed ? '已撤回这条排队消息' : '宿主没有撤回这条消息');
+      unawaited(_refreshQueue());
     } on Object catch (error) {
       debugPrint('SessionChat: 撤回失败 $error');
       _toast('撤回失败：${_permissionErrorText(error)}');
@@ -2310,7 +2464,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   /// 发消息 —— 重发会在宿主那边变成两条，只把队列项改成 `steering`。
   Future<void> _steerQueued(ChatMessage message) async {
     final requestId = message.requestId;
-    if (requestId == null) {
+    final queuedId = _queueItemIdOf(message);
+    if (requestId == null && queuedId == null) {
       _toast('这条没有队列信息，插不了队');
       return;
     }
@@ -2319,13 +2474,14 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       final items = await _remote.queuedItems(sessionId);
       DshQueuedItem? target;
       for (final item in items) {
-        if (item.rpcId == requestId) {
+        if (queuedId != null ? item.id == queuedId : item.rpcId == requestId) {
           target = item;
           break;
         }
       }
       if (target == null) {
         _toast('宿主队列里已经没有它了');
+        unawaited(_refreshQueue());
         return;
       }
       if (!target.waiting) {
@@ -2334,6 +2490,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       }
       final steered = await _remote.steerQueued(sessionId, target.id);
       _toast(steered ? '已插到这一轮前面' : '宿主没有接受这次插队');
+      unawaited(_refreshQueue());
     } on Object catch (error) {
       debugPrint('SessionChat: 插队失败 $error');
       _toast('插队失败：${_permissionErrorText(error)}');
@@ -2777,6 +2934,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
             )
           : _messages),
       ..._pending,
+      ..._hostQueueRows,
       ..._outboxMessages,
       ..._draftMessages,
     ];
@@ -3396,8 +3554,14 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   }
 
   /// 还在等、且已经被服务端收下的消息条数（气泡上标着「排队中」的那些）。
+  ///
+  /// 两边相加：[_hostQueueRows] 在构造时已经把与本地重复的条目剔掉了，所以不会
+  /// 同一条数两遍。
   int get _queuedCount =>
-      _pending.where((item) => item.delivery == ChatDelivery.queued).length;
+      _pending.where((item) => item.delivery == ChatDelivery.queued).length +
+      _hostQueueRows
+          .where((item) => item.delivery == ChatDelivery.queued)
+          .length;
 
   Widget _buildThinking() {
     final theme = Theme.of(context);

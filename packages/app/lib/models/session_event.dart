@@ -279,7 +279,7 @@ ChatMessage? chatMessageOf(SessionLogEvent event) {
       if (!isRealUserMessage(message)) return null;
       final images = contentImages(message['content']);
       final text =
-          _contentText(message['content']) ??
+          contentText(message['content']) ??
           asText(message['text']) ??
           asText(event.data['text']);
       // 纯图消息（只发了图、没打字）是合法的一条消息，不能因为文本为空丢掉。
@@ -321,7 +321,7 @@ ChatMessage? chatMessageOf(SessionLogEvent event) {
           }
         }
       } else {
-        final text = _contentText(content) ?? asText(message['text']);
+        final text = contentText(content) ?? asText(message['text']);
         if (text != null && text.trim().isNotEmpty) texts.add(text.trim());
       }
       if (texts.isEmpty && notes.isEmpty && images.isEmpty) return null;
@@ -355,7 +355,7 @@ bool isRealUserMessage(Map<String, Object?> message) {
   // 老数据可能没有 source：带 rpcId 的当真人输入，否则按已知注入前缀兜底。
   if (asText(source['rpcId']) != null) return true;
   final text =
-      (_contentText(message['content']) ?? asText(message['text']) ?? '')
+      (contentText(message['content']) ?? asText(message['text']) ?? '')
           .trimLeft();
   // 老数据里纯图消息没有文字：不能因为「没文字」就判成系统注入。
   if (text.isEmpty) return contentImages(message['content']).isNotEmpty;
@@ -401,7 +401,7 @@ void _addNote(List<ChatNote> notes, ChatNote note) {
 }
 
 /// 消息 content 可能是字符串，也可能是 `[{type, text}]` 分片列表。
-String? _contentText(Object? content) {
+String? contentText(Object? content) {
   if (content is String) return content;
   if (content is! List) return null;
   final texts = <String>[];

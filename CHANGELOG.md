@@ -1,3 +1,27 @@
+## 2026-11-17（退出会话再进来，排队中的那条消息不见了）
+
+### app 1.8.1+48
+
+「会话在跑的时候我发了一条，它排队等着；我退出去再进来，那条就没了——PC 上还在。」
+
+- **根因一：排队中的消息根本不在「历史」里**。宿主把 `mode: queue` 的输入只挂在 agent
+  inbox（写成 `agent/inbox/spliced`），**不产生 `user/message`**，真正轮到它开跑才追加成
+  durable 消息。PC 端读的是 `session/observeState` 的 `queue`（带 `{id, placement, rpcId,
+  content}`），App 之前只信自己内存里的 `_pending` 与 SharedPreferences 副本，宿主队列里
+  那份 `content` 被直接丢掉了——副本一丢就没有第二个地方能补回来。
+- **根因二：副本自己会被空表抹掉**。`_persistPending()` 是整表覆盖写，而 `_restorePending()`
+  是异步的；退出会话时落盘链还没跑完、或恢复没读完就又触发一次 persist，盘上就变成空表。
+- **改法一：宿主队列成为第二来源**。`DshQueuedItem` 补 `text` / `images`（解析 `content`）与
+  `toMessage()`，行 key 用 `queue:<id>`；`_hostQueueRows` 按 `rpcId`（再兜文本）与本地
+  `_pending`、历史去重后并进 `_displayItems`，`_queuedCount` 两边相加。刷新点是 snapshot 帧、
+  `turn/start`、`turn/end`、`user/message`、链路恢复，且只在「有轮次在跑 / 有等待气泡」时才拉。
+- **改法二：恢复没读完之前禁止落盘**。新增 `_pendingReady` 守卫，`_persistPending()` 在恢复
+  完成前一律直接返回，不再出现「用空表覆盖真数据」。
+- **撤回 / 插队支持合成行**：`queue:<id>` 直接按队列项 id 走 `session/updateQueue`。
+- 测试：新增 `session_chat_queue_source_test.dart` 三条（盘上空白+宿主队列有条 → 仍显示
+  「排队中」；已回显不重影；副本与队列项同一条不显示两遍），`dsh_queue_test.dart` 补 content
+  解析两条。摘掉修复后第一条必红。全量 430 条通过，`flutter analyze` No issues。
+
 ## 2026-11-16（按小米官方格式重发焦点通知：参数得是 JSON，还得有焦点通知权限）
 
 ### app 1.8.0+47

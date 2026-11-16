@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dsh_frp_app/models/host.dart';
 import 'package:dsh_frp_app/models/host_event.dart';
 import 'package:dsh_frp_app/models/prompt_image.dart';
+import 'package:dsh_frp_app/models/dsh_queue.dart';
 import 'package:dsh_frp_app/models/session_event.dart';
 import 'package:dsh_frp_app/models/session_summary.dart';
 import 'package:dsh_frp_app/screens/session_chat_screen.dart';
@@ -98,6 +99,12 @@ class _FakeRemote extends DshRemote {
   /// 因为初始 offline 被禁用而改变既有断言的语义。
   @override
   DshLinkState get linkState => DshLinkState.online;
+
+  /// 这些用例不关心宿主队列（那由 `session_chat_queue_test.dart` 覆盖）：
+  /// 直接给空表，别真的去开一条 mux 流等超时。
+  @override
+  Future<List<DshQueuedItem>> queuedItems(String sessionId) async =>
+      const <DshQueuedItem>[];
 
   @override
   Stream<DshHostEvent> followEvents() => hostEvents.stream;

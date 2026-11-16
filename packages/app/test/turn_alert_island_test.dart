@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dsh_frp_app/data/settings_store.dart';
 import 'package:dsh_frp_app/models/host.dart';
 import 'package:dsh_frp_app/models/host_event.dart';
+import 'package:dsh_frp_app/models/dsh_queue.dart';
 import 'package:dsh_frp_app/models/session_event.dart';
 import 'package:dsh_frp_app/models/session_summary.dart';
 import 'package:dsh_frp_app/screens/session_chat_screen.dart';
@@ -43,6 +44,11 @@ class _StreamRemote extends DshRemote {
 
   @override
   DshLinkState get linkState => DshLinkState.online;
+
+  /// 提醒相关用例不关心宿主队列：给空表，别真去开一条 mux 流等超时。
+  @override
+  Future<List<DshQueuedItem>> queuedItems(String sessionId) async =>
+      const <DshQueuedItem>[];
 
   @override
   Future<SessionHistory> page(
