@@ -83,13 +83,17 @@ class PlatformBridge {
 
   /// 一轮答完时发一条系统通知（App 不在前台时用）。
   ///
-  /// 原生侧把它做成高优先级通知：小米/HyperOS 会自动套进顶部灵动岛区域，
-  /// 其它 ROM 就是一条横幅。没有通知权限时原生侧顺手申请一次并返回 false，
-  /// 调用方不需要为这件事分叉——下一轮自然会发出去。
+  /// 原生侧把它做成高优先级通知，带声音和横幅。没有通知权限时原生侧顺手申请一次
+  /// 并返回 false，调用方不需要为这件事分叉——下一轮自然会发出去。
+  ///
+  /// [focus] 打开时原生侧会塞 MIUI/HyperOS 焦点通知的 extras（画进顶部灵动岛）。
+  /// 默认关：第三方 App 没有 `miui.permission.USE_INTERNAL_GENERAL_API`，塞了这些
+  /// 字段在部分 ROM 上会让整条通知被丢掉——先把「能弹出来」保住。
   Future<bool> notifyRoundDone({
     required String title,
     required String body,
     String? sessionId,
+    bool focus = false,
   }) async {
     try {
       final result = await _channel
@@ -97,6 +101,7 @@ class PlatformBridge {
             'title': title,
             'body': body,
             'sessionId': sessionId,
+            'focus': focus,
           })
           .timeout(_timeout, onTimeout: () => null);
       return result ?? false;
@@ -113,6 +118,38 @@ class PlatformBridge {
       final result = await _channel
           .invokeMethod<bool>('cancelRoundDone')
           .timeout(_timeout, onTimeout: () => null);
+      return result ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// 挂一个前台服务把进程顶住（[text] 写在那条常驻通知上）。
+  ///
+  /// 一轮对话开始时调，答完立刻 [stopTurnWatch]。必须在 App 还在前台时调：
+  /// Android 12+ 不允许从后台起前台服务，原生侧起不来就返回 false。
+  ///
+  /// 这两个是「发完就不管」的调用，**不加超时**：超时会在 dispose 里挂一个还在
+  /// 跑的 Timer（widget 测试直接报 pending timer），而这里也确实不需要等结果。
+  Future<bool> startTurnWatch({String? text}) async {
+    try {
+      final result = await _channel.invokeMethod<bool>('startTurnWatch', {
+        'text': text,
+      });
+      return result ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// 这一轮结束了（或人离开了会话页）：收掉保活服务。
+  Future<bool> stopTurnWatch() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('stopTurnWatch');
       return result ?? false;
     } on MissingPluginException {
       return false;

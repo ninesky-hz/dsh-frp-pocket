@@ -10,6 +10,7 @@ import 'package:dsh_frp_app/services/dsh_remote.dart';
 import 'package:dsh_frp_app/services/turn_alerts.dart';
 import 'package:dsh_frp_app/widgets/dynamic_island.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -87,8 +88,23 @@ Future<void> _push(
   await tester.pump(const Duration(milliseconds: 20));
 }
 
-DshStreamFrame _event(String type, int seq, Map<String, Object?> data) {
-  return DshStreamFrame(
+/// 接住原生桥的调用，只记方法名（返回值随便给个 true，调用方不关心细节）。
+///
+/// 必须在 `testWidgets` 里调：拿的是当前 binding 的 messenger。
+List<String> _mockNative() {
+  const channel = MethodChannel('com.ninesky.dsh_frp_app/native');
+  final calls = <String>[];
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  messenger.setMockMethodCallHandler(channel, (call) async {
+    calls.add(call.method);
+    return true;
+  });
+  addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+  return calls;
+}
+
+DshStreamFrame _event(String type, int seq, Map<String, Object?> data) {  return DshStreamFrame(
     kind: DshFrameKind.event,
     event: SessionLogEvent(type: type, seq: seq, data: data),
   );
@@ -288,8 +304,48 @@ void main() {
     await remote.frames.close();
   });
 
-  test('答完提醒默认开，关掉会落盘', () async {
-    SharedPreferences.setMockInitialValues(<String, Object>{});
+  testWidgets('一轮在跑时挂保活服务，答完收掉', (tester) async {
+    final calls = _mockNative();
+    final remote = _StreamRemote();
+    await _pumpChat(tester, remote);
+
+    await _push(
+      tester,
+      remote,
+      _event('turn/start', 30, <String, Object?>{'turn': 3}),
+    );
+    expect(calls, contains('startTurnWatch'), reason: '开跑就得把进程顶住，否则后台收不到 turn/end');
+
+    await _push(
+      tester,
+      remote,
+      _event('turn/end', 31, <String, Object?>{'turn': 3}),
+    );
+    expect(calls, contains('stopTurnWatch'), reason: '答完就该收掉，别留一条撤不掉的常驻');
+
+    await tester.pumpWidget(const SizedBox());
+    await remote.frames.close();
+  });
+
+  testWidgets('人离开会话页也把保活服务收掉', (tester) async {
+    final calls = _mockNative();
+    final remote = _StreamRemote();
+    await _pumpChat(tester, remote);
+
+    await _push(
+      tester,
+      remote,
+      _event('turn/start', 40, <String, Object?>{'turn': 4}),
+    );
+    calls.clear();
+
+    await tester.pumpWidget(const SizedBox());
+    expect(calls, contains('stopTurnWatch'));
+
+    await remote.frames.close();
+  });
+
+  test('答完提醒默认开，关掉会落盘', () async {    SharedPreferences.setMockInitialValues(<String, Object>{});
     final settings = SettingsStore();
     await settings.load();
     expect(settings.turnAlertEnabled, isTrue);

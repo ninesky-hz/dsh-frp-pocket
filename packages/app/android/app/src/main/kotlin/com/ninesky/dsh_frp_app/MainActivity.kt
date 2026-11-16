@@ -19,11 +19,13 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * 极小的原生桥：只提供 Flutter 侧拿不到的四件事
+ * 极小的原生桥：只提供 Flutter 侧拿不到的几件事
  *  - keepAwake       保持屏幕常亮（FLAG_KEEP_SCREEN_ON）
  *  - download        交给系统 DownloadManager 下载（带 Cookie）
  *  - openUrl         用系统浏览器打开链接（ACTION_VIEW）
  *  - notifyRoundDone 一轮答完发条通知（前台由 Flutter 侧画灵动岛，这里只管后台）
+ *  - startTurnWatch  一轮在跑时挂前台服务，别让系统在后台把进程冻住
+ *  - stopTurnWatch   这一轮结束了，把上面那个服务收掉
  *
  * 外加这条通知的权限面：`notificationStatus` / `requestNotificationPermission` /
  * `openNotificationSettings`——设置页靠它们显示「到底哪一层没开」。
@@ -91,8 +93,17 @@ class MainActivity : FlutterActivity() {
                             ?: appLabel()
                         val body = (args?.get("body") as? String)?.takeIf { it.isNotBlank() }
                             ?: "这一轮已答完"
-                        result.success(notifyRoundDone(title, body))
+                        val focus = args?.get("focus") as? Boolean ?: false
+                        result.success(notifyRoundDone(title, body, focus))
                     }
+
+                    "startTurnWatch" -> {
+                        val args = call.arguments as? Map<*, *>
+                        val text = (args?.get("text") as? String)?.takeIf { it.isNotBlank() }
+                        result.success(startTurnWatch(text))
+                    }
+
+                    "stopTurnWatch" -> result.success(stopTurnWatch())
 
                     "cancelRoundDone" -> {
                         try {
@@ -173,17 +184,50 @@ class MainActivity : FlutterActivity() {
      * 只有 App 在后台时才会走到这里（前台由 Flutter 侧的灵动岛负责）。三件事：
      *  1. Android 13+ 没给通知权限就顺手要一次，这一条先不发（返回 false）；
      *  2. 通道用 IMPORTANCE_HIGH，横幅 + 声音，别做成静默弹一下就沉进列表；
-     *  3. 顺手塞一份 MIUI/HyperOS「焦点通知」的 extras —— 系统认了就会画进顶部
-     *     灵动岛，不认就当普通横幅，不影响任何逻辑（[applyFocusExtras]）。
+     *  3. `focus=true` 时才顺手塞一份 MIUI/HyperOS「焦点通知」的 extras —— 系统认了
+     *     就会画进顶部灵动岛，不认就当普通横幅（[applyFocusExtras]）。默认不发：
+     *     没有 `miui.permission.USE_INTERNAL_GENERAL_API` 的第三方 App 塞了这些字段，
+     *     有些 ROM 版本会整条丢掉，那样用户看到的就是「权限给了、通知没了」。
      */
-    private fun notifyRoundDone(title: String, body: String): Boolean {
+    private fun notifyRoundDone(title: String, body: String, focus: Boolean): Boolean {
         val manager =
             getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (!ensureNotificationPermission()) return false
         return try {
             ensureTurnChannel(manager)
-            val notification = buildTurnNotification(title, body)
+            val notification = buildTurnNotification(title, body, focus)
             manager.notify(turnNotificationId, notification)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * 挂一个前台服务把进程顶住，别让系统在后台把它冻住。
+     *
+     * 只在一轮对话开始（Flutter 侧收到 `turn/start`）时调，答完立刻 [stopTurnWatch]。
+     * 调用点必须在 App 还在前台：Android 12+ 不允许从后台起前台服务。
+     */
+    private fun startTurnWatch(text: String?): Boolean {
+        return try {
+            val intent = Intent(this, TurnWatchService::class.java)
+                .putExtra("text", text ?: "这一轮还没答完")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            true
+        } catch (e: Exception) {
+            // 起不来（后台限制 / 系统策略）就算了：最多少一条后台提醒，不影响前台。
+            false
+        }
+    }
+
+    private fun stopTurnWatch(): Boolean {
+        return try {
+            stopService(Intent(this, TurnWatchService::class.java))
             true
         } catch (e: Exception) {
             false
@@ -388,7 +432,11 @@ class MainActivity : FlutterActivity() {
     }
 
     @Suppress("DEPRECATION")
-    private fun buildTurnNotification(title: String, body: String): Notification {
+    private fun buildTurnNotification(
+        title: String,
+        body: String,
+        focus: Boolean
+    ): Notification {
         val context = applicationContext
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(context, turnChannelId)
@@ -404,13 +452,16 @@ class MainActivity : FlutterActivity() {
             .setWhen(System.currentTimeMillis())
             .setShowWhen(true)
             .setAutoCancel(true)
+            .setCategory(Notification.CATEGORY_MESSAGE)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setColor(0xFF3DDC97.toInt())
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             builder.setPriority(Notification.PRIORITY_HIGH)
+            builder.setDefaults(Notification.DEFAULT_ALL)
         }
         launchIntent()?.let { builder.setContentIntent(it) }
         val notification = builder.build()
-        applyFocusExtras(notification, title, body)
+        if (focus) applyFocusExtras(notification, title, body)
         return notification
     }
 

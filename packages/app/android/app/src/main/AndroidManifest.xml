@@ -6,6 +6,9 @@
     <!-- 一轮答完在后台发通知（Android 13+ 需要运行时授权） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
+    <!-- 一轮在跑时挂前台服务：系统不会把进程冻住，WS 才收得到 turn/end -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <!-- 小米/HyperOS 焦点通知（顶部灵动岛）走的是系统内部字段，认不认由 ROM 决定 -->
     <uses-permission android:name="miui.permission.USE_INTERNAL_GENERAL_API"/>
 
@@ -38,6 +41,11 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- 一轮对话在跑时的保活服务：只为了让后台进程别被冻住 -->
+        <service
+            android:name=".TurnWatchService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"/>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

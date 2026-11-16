@@ -1,3 +1,30 @@
+## 2026-11-16（通知给了还是不弹：把进程顶住，再给一个能当场验证的按钮）
+
+### app 1.6.0+43
+
+「权限通知打开了，但是还是没有消息出来」——查下来不是通知本身的事，是**后台进程
+被系统冻住了**：答完那一刻的 `turn/end` 事件靠 WebSocket 推下来，进程一冻，事件
+就永远收不到，也就没人去发通知。人回到 App 时才补上那条消息，于是看起来「一直是没提醒」。
+
+- **一轮在跑时挂前台服务**（`TurnWatchService`）：`turn/start` 一到就把进程顶住，
+  `turn/end` 或离开会话页立刻收掉。通道 `turn_watch` 用 `IMPORTANCE_LOW`，静默常驻，
+  只在「正在等这一轮答完」期间存在。Android 12+ 不允许后台起前台服务，所以起点放在
+  对话开始那一刻（那时 App 一定前台）。
+- **通知默认不再冒充 MIUI 焦点通知**：`miui.focus.*` extras 改成 `focus` 参数控制、
+  默认关。第三方 App 没有 `miui.permission.USE_INTERNAL_GENERAL_API`，塞了这些字段
+  在部分 ROM 上会让整条通知被丢掉——先把「能弹出来」保住，胶囊那套留在 App 内。
+- **设置页那行权限右挂「试一下」**：直接发一条测试通知，把故障面切成两半——弹得出来
+  说明原生与权限都通，弹不出来就跟对话逻辑无关。做成 trailing 里的第二个按钮而不是
+  新开一行，免得把「工具调用显示」这些入口挤出首屏。
+- **顺手补的通知细节**：`CATEGORY_MESSAGE` + `VISIBILITY_PUBLIC`（锁屏也显示摘要），
+  8.0 以下补 `DEFAULT_ALL`（声音/震动/呼吸灯）。
+- 修一个测试期的坑：`startTurnWatch`/`stopTurnWatch` 是发完就不管的调用，去掉
+  `.timeout()`——超时会在 `dispose` 里挂一个还在跑的 Timer，widget 测试直接报
+  `A Timer is still pending even after the widget tree was disposed`（98 条红）。
+- 测试：`turn_alert_island_test.dart` 加「一轮在跑时挂保活、答完收掉」「离开页面也收掉」
+  两条（用 mock MethodChannel 记方法名）；`notify_permission_test.dart` 加「试一下」
+  成功/失败/无权限时不显示三条。全量 416 条通过。
+
 ## 2026-11-16（装完没弹权限框？设置里能自己查、自己申请）
 
 ### app 1.5.0+42

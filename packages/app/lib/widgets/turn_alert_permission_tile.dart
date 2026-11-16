@@ -82,6 +82,25 @@ class _TurnAlertPermissionTileState extends State<TurnAlertPermissionTile>
     messenger?.showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// 直接发一条通知，不走「答完那一轮」的链路。
+  ///
+  /// 这一下能把故障面切成两半：弹出来 → 原生和权限都没问题，问题在后台收不收得到
+  /// turn/end；弹不出来 → 就是通知权限/通道那一层，与对话逻辑无关。
+  Future<void> _sendTest() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final ok = await widget.bridge.notifyRoundDone(
+        title: '试一下',
+        body: '这条是你点「试一下」发的。收得到，答完的提醒就一定能弹出来。',
+      );
+      if (!mounted) return;
+      _toast(ok ? '已经发出去，下拉通知栏看看。' : '系统没接受这条通知：权限或通道那一层还没通。');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final status = _state;
@@ -104,6 +123,32 @@ class _TurnAlertPermissionTileState extends State<TurnAlertPermissionTile>
       );
     }
 
+    // 权限齐了就顺带给一个「试一下」：直接发一条测试通知，把故障面切成两半——
+    // 弹得出来说明原生和权限都没问题，弹不出来就不是对话那边的事。做成 trailing
+    // 里的第二个按钮而不是新开一行：设置页每多一行，别的入口就被挤出首屏。
+    final trailing = _busy
+        ? const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (status.ready)
+                TextButton(
+                  key: const ValueKey<String>('notify-test-action'),
+                  onPressed: _sendTest,
+                  child: const Text('试一下'),
+                ),
+              TextButton(
+                key: const ValueKey<String>('notify-perm-action'),
+                onPressed: () => _onAction(status),
+                child: Text(_actionLabel(status)),
+              ),
+            ],
+          );
+
     return ListTile(
       key: const ValueKey<String>('notify-perm-tile'),
       leading: Icon(
@@ -112,17 +157,7 @@ class _TurnAlertPermissionTileState extends State<TurnAlertPermissionTile>
       ),
       title: const Text('系统通知权限'),
       subtitle: Text(_subtitle(status)),
-      trailing: _busy
-          ? const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : TextButton(
-              key: const ValueKey<String>('notify-perm-action'),
-              onPressed: () => _onAction(status),
-              child: Text(_actionLabel(status)),
-            ),
+      trailing: trailing,
     );
   }
 

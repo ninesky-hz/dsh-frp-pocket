@@ -31,6 +31,7 @@ import '../services/turn_alerts.dart';
 import '../widgets/chat/chat_bubbles.dart';
 import '../widgets/ignore_show_on_screen.dart';
 import '../widgets/chat/chat_scroll.dart';
+import '../widgets/chat/chat_tail_filler.dart';
 import '../widgets/chrome.dart';
 import '../widgets/status_dot.dart';
 import '../theme/app_icons.dart';
@@ -244,6 +245,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
 
   /// App 是否在前台。答完提醒按它分流：前台弹灵动岛，后台发系统通知。
   bool _appActive = true;
+
+  /// 现在有没有挂着一轮的前台保活服务。没有就别去调桥收它（尤其是 dispose 里）。
+  bool _watchHeld = false;
   String? _loadError;
   int? _asOfSeq;
   int _lastSeq = 0;
@@ -403,6 +407,12 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     _draftTimer?.cancel();
     // 页面被销毁前把最后一个字写下去：用户是「返回列表」而不是「不要了」。
     unawaited(_draftStore.save(_outboxHostId, _outboxSessionId, _input.text));
+    // 人已经离开这一页，没人再处理 turn/end 了：保活服务留着只会变成一条撤不掉的
+    // 「正在等」。前台服务必须在 App 前台起，收掉没有限制。
+    if (_watchHeld) {
+      _watchHeld = false;
+      unawaited(const PlatformBridge().stopTurnWatch());
+    }
     _scroll.dispose();
     _input.dispose();
     _focus.dispose();
@@ -720,6 +730,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
           _running = true;
           _streaming = true;
           changed = true;
+          // 这一轮开跑了：挂个前台服务把进程顶住。否则切到后台几十秒后进程被冻，
+          // WS 收不到 turn/end，提醒就永远不会触发（「权限给了还是不弹」就是这个）。
+          _holdProcess();
         }
       case 'turn/end':
         // 只有「本来在跑」才算这一轮真的答完：进页面时补推的旧 turn/end
@@ -735,6 +748,11 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         // 草稿里的正文收掉就没了，先留一份给提醒用。
         final orphanText = _latestDraftText();
         if (endedTurn != null && _drafts.dropTurn(endedTurn)) changed = true;
+        // 这一轮到头了：保活服务没用了，收掉，通知栏里那条常驻也跟着走。
+        if (wasRunning && _watchHeld) {
+          _watchHeld = false;
+          unawaited(const PlatformBridge().stopTurnWatch());
+        }
         if (wasRunning) _announceTurnDone(orphanText: orphanText);
       case 'assistant/message':
         if (_streaming) {
@@ -773,6 +791,17 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     if (added && !_atBottom) _hasNew = true;
     _scheduleFlush();
     if (added && _atBottom) _scrollToBottom();
+  }
+
+  /// 一轮在跑的时候把进程顶住（前台服务）。
+  ///
+  /// 必须在 App 还前台时调：Android 12+ 不允许后台起前台服务，原生侧起不来会返回
+  /// false，那就只剩「人回来才看得到」这一条路——不是错误，是系统限制。
+  void _holdProcess() {
+    if (_disposed || _watchHeld) return;
+    _watchHeld = true;
+    final title = _title.trim().isEmpty ? '这一轮对话' : _squashForAlert(_title);
+    unawaited(const PlatformBridge().startTurnWatch(text: title));
   }
 
   /// 一轮答完的提醒：前台弹灵动岛，后台发系统通知。
@@ -3066,6 +3095,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
           ),
         ),
         const SliverToBoxAdapter(child: SizedBox(height: 12)),
+        // 内容不满一屏时把第一条消息顶到视口顶边：尾部补的这段空白，正好
+        // 让「负方向内容 + 正方向内容」等于视口高度。满了就是 0，不影响长会话。
+        ChatTailFiller(centerKey: _centerSliverKey, rowCount: items.length),
       ],
     );
   }

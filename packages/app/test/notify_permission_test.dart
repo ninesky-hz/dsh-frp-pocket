@@ -46,6 +46,21 @@ class _FakeBridge extends PlatformBridge {
     settingsCalls++;
     return true;
   }
+
+  /// 「试一下」发的测试通知也记下来：它验证的就是原生那条路通不通。
+  int notifyCalls = 0;
+  bool notifyResult = true;
+
+  @override
+  Future<bool> notifyRoundDone({
+    required String title,
+    required String body,
+    String? sessionId,
+    bool focus = false,
+  }) async {
+    notifyCalls++;
+    return notifyResult;
+  }
 }
 
 const int _sdk = 34;
@@ -171,8 +186,35 @@ void main() {
     expect(find.text('去申请'), findsOneWidget);
   });
 
-  testWidgets('非 Android / 桥不可用：只说明，不给按钮', (tester) async {
-    final bridge = _FakeBridge(const NotifyPermission.unavailable());
+  testWidgets('权限齐了能当场发一条测试通知，结果直接说出来', (tester) async {
+    final bridge = _FakeBridge(_status(granted: true));
+    await _pumpTile(tester, bridge);
+
+    await tester.tap(find.byKey(const ValueKey<String>('notify-test-action')));
+    await tester.pumpAndSettle();
+
+    expect(bridge.notifyCalls, 1, reason: '点一下就该真的发一条，验证系统收不收');
+    expect(find.textContaining('已经发出去'), findsOneWidget);
+  });
+
+  testWidgets('测试通知发不出去时如实说，不假装成功', (tester) async {
+    final bridge = _FakeBridge(_status(granted: true))..notifyResult = false;
+    await _pumpTile(tester, bridge);
+
+    await tester.tap(find.byKey(const ValueKey<String>('notify-test-action')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('系统没接受'), findsOneWidget);
+  });
+
+  testWidgets('没权限时不显示「试一下」：按了必然失败', (tester) async {
+    final bridge = _FakeBridge(_status(canAsk: true));
+    await _pumpTile(tester, bridge);
+
+    expect(find.byKey(const ValueKey<String>('notify-test-action')), findsNothing);
+  });
+
+  testWidgets('非 Android / 桥不可用：只说明，不给按钮', (tester) async {    final bridge = _FakeBridge(const NotifyPermission.unavailable());
     await _pumpTile(tester, bridge);
 
     expect(find.textContaining('拿不到通知状态'), findsOneWidget);
