@@ -1,3 +1,25 @@
+## 2026-11-16（通知栏里有，屏幕上不弹？换 id 重发，再把话说清楚）
+
+### app 1.7.1+46
+
+「点了试一下，通知栏里确实有这条消息，但屏幕上没有弹横幅，也没有灵动岛。」
+
+- **根因一：同一个通知 id 反复用**。`notify()` 拿同一个 id 再发一次属于「更新已有通知」，
+  系统只改内容、**不会再弹横幅**。以前 `turnNotificationId = 0x4453` 写死，第二条起就静悄悄。
+  现在每次发都取一个新 id（0…63 循环递增），并记住最后一条给 `cancelRoundDone` 撤。
+- **根因二：「试一下」不走 App 内的胶囊**。那条测试通知只走原生，系统横幅被 ROM 吞掉时
+  用户什么都看不到。现在点「试一下」会**同时**弹一条 App 内的灵动岛——胶囊不归系统管，
+  一眼就能分清是「原生那条被拦」还是「整条链路都不通」。
+- **把「静默」这个状态说出来**：`NotifyPermission.bannerSilent`——通道重要性低于 HIGH（4）
+  时，设置页那行副标题改成「通知能发，但被系统降成静默 · 只进通知栏，不弹横幅」。
+  小米上这一档通常叫「悬浮通知」，默认常关，只能用户自己在系统里开。
+- **设置跳转先试 MIUI 自己的页面**：`openNotificationSettings` 增加
+  `miui.intent.action.APP_NOTIFICATION_SETTINGS`（带 `miui.intent.extra.APPLICATION_SETTINGS`），
+  能直接落到应用通知页，那里才有「悬浮通知」开关；不认的 ROM 照旧退到标准页。
+- 兜底：8.0 以下 `PRIORITY_HIGH` → `PRIORITY_MAX`，并显式 `setOnlyAlertOnce(false)`。
+- 测试：`notify_permission_test.dart` 加两条（「试一下」同时弹 App 内胶囊、通道被降静默时的文案），
+  `_status()` 增加 `importance` 参数。全量 420 条通过。
+
 ## 2026-11-16（退回列表也照样提醒：答完这件事不再归会话页管）
 
 ### app 1.7.0+45

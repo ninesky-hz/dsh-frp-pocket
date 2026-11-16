@@ -71,4 +71,9 @@ class NotifyPermission {
 
   /// 现在就能正常弹通知。
   bool get ready => granted && !blocked;
+
+  /// 通知发得出去，但通道重要性被降到了 HIGH（4）以下：只会安静地进通知栏，
+  /// 不会盖在屏幕上方弹横幅。小米上这个开关叫「悬浮通知」，默认经常是关的。
+  bool get bannerSilent =>
+      channelReady && channelImportance >= 0 && channelImportance < 4;
 }

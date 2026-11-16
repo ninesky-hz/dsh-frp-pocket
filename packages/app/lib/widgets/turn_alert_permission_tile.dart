@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/notify_permission.dart';
 import '../services/platform_bridge.dart';
+import '../services/turn_alerts.dart';
 import '../theme/app_icons.dart';
 
 /// 设置页里那行「系统通知权限」：查现状、当场申请、实在不行跳系统设置。
@@ -86,16 +87,32 @@ class _TurnAlertPermissionTileState extends State<TurnAlertPermissionTile>
   ///
   /// 这一下能把故障面切成两半：弹出来 → 原生和权限都没问题，问题在后台收不收得到
   /// turn/end；弹不出来 → 就是通知权限/通道那一层，与对话逻辑无关。
+  ///
+  /// 同时在前台弹一条 App 内的灵动岛：系统横幅归 ROM 管（小米的「悬浮通知」开关、
+  /// 通道重要性都能把它吃掉），App 内的胶囊不归它管——两条一起给，用户一眼能分清
+  /// 「是原生那条被系统拦了」还是「整条链路都不通」。
   Future<void> _sendTest() async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
+      TurnAlertCenter.instance.show(
+        TurnAlert(
+          sessionId: '',
+          title: '试一下',
+          body: '这是 App 内的灵动岛，不经过系统通知；通知栏那条才是系统通知。',
+          at: DateTime.now(),
+        ),
+      );
       final ok = await widget.bridge.notifyRoundDone(
         title: '试一下',
         body: '这条是你点「试一下」发的。收得到，答完的提醒就一定能弹出来。',
       );
       if (!mounted) return;
-      _toast(ok ? '已经发出去，下拉通知栏看看。' : '系统没接受这条通知：权限或通道那一层还没通。');
+      _toast(
+        ok
+            ? '已经发出去：上面是 App 内的胶囊，下拉通知栏看那条系统通知有没有横幅。'
+            : '系统没接受这条通知：权限或通道那一层还没通。',
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -162,6 +179,9 @@ class _TurnAlertPermissionTileState extends State<TurnAlertPermissionTile>
   }
 
   String _subtitle(NotifyPermission status) {
+    if (status.ready && status.bannerSilent) {
+      return '通知能发，但被系统降成静默 · 只进通知栏，不弹横幅';
+    }
     if (status.ready) return '已允许 · 切到后台答完也会提醒';
     if (!status.granted && status.canAsk) return '还没允许 · 不给的话后台答完不会有提醒';
     if (!status.granted) return '系统里关着 · 只能去设置里手动打开';

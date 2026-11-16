@@ -4,6 +4,7 @@ import 'package:dsh_frp_app/data/settings_store.dart';
 import 'package:dsh_frp_app/models/notify_permission.dart';
 import 'package:dsh_frp_app/screens/settings_screen.dart';
 import 'package:dsh_frp_app/services/platform_bridge.dart';
+import 'package:dsh_frp_app/services/turn_alerts.dart';
 import 'package:dsh_frp_app/widgets/turn_alert_permission_tile.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -70,13 +71,14 @@ NotifyPermission _status({
   bool canAsk = true,
   bool appEnabled = true,
   bool channelReady = true,
+  int importance = 4,
 }) => NotifyPermission(
   platform: _sdk,
   granted: granted,
   canAsk: canAsk,
   appNotificationsEnabled: appEnabled,
   channelReady: channelReady,
-  channelImportance: channelReady ? 4 : 0,
+  channelImportance: channelReady ? importance : 0,
 );
 
 Future<void> _pumpTile(WidgetTester tester, PlatformBridge bridge) async {
@@ -195,6 +197,26 @@ void main() {
 
     expect(bridge.notifyCalls, 1, reason: '点一下就该真的发一条，验证系统收不收');
     expect(find.textContaining('已经发出去'), findsOneWidget);
+  });
+
+  testWidgets('「试一下」同时弹 App 内的胶囊：横幅被 ROM 吃掉时也能看到效果', (tester) async {
+    final bridge = _FakeBridge(_status(granted: true));
+    await _pumpTile(tester, bridge);
+
+    await tester.tap(find.byKey(const ValueKey<String>('notify-test-action')));
+    await tester.pumpAndSettle();
+
+    expect(TurnAlertCenter.instance.isShowing, isTrue);
+    expect(TurnAlertCenter.instance.current?.title, '试一下');
+    TurnAlertCenter.instance.dismiss();
+  });
+
+  testWidgets('通道被降成静默时说清楚，不让用户以为发了就会弹横幅', (tester) async {
+    final bridge = _FakeBridge(_status(granted: true, importance: 3));
+    await _pumpTile(tester, bridge);
+
+    expect(find.textContaining('只进通知栏，不弹横幅'), findsOneWidget);
+    expect(find.text('已允许 · 切到后台答完也会提醒'), findsNothing);
   });
 
   testWidgets('测试通知发不出去时如实说，不假装成功', (tester) async {

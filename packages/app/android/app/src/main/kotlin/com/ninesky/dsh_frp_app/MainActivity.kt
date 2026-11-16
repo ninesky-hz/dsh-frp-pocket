@@ -34,9 +34,19 @@ class MainActivity : FlutterActivity() {
 
     private val channelName = "com.ninesky.dsh_frp_app/native"
 
-    /** 答完提醒的通道与通知 id：同一个 id 反复用，新一轮直接顶掉上一轮。 */
+    /** 答完提醒的通道与通知 id。 */
     private val turnChannelId = "turn_done"
     private val turnNotificationId = 0x4453
+
+    /**
+     * 每发一条就换一个 id。
+     *
+     * 同一个 id 再 `notify` 属于「更新已有通知」：系统只改内容，**不会再弹一次横幅**
+     * （用户点「试一下」第二下就毫无反应，答完提醒连着来两轮也只响第一下）。
+     * 所以 id 按 0…63 循环递增，并记住最后一条，[cancelRoundDone] 用它撤。
+     */
+    private var turnNotificationSeq = 0
+    private var lastTurnNotificationId = 0x4453
 
     /** 通知权限的请求码，与上面那个 id 错开，别让两件事的回调撞车。 */
     private val notificationRequestCode = 0x4454
@@ -110,6 +120,7 @@ class MainActivity : FlutterActivity() {
                             val manager =
                                 getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                             manager.cancel(turnNotificationId)
+                            manager.cancel(lastTurnNotificationId)
                             result.success(true)
                         } catch (e: Exception) {
                             result.success(false)
@@ -196,11 +207,19 @@ class MainActivity : FlutterActivity() {
         return try {
             ensureTurnChannel(manager)
             val notification = buildTurnNotification(title, body, focus)
-            manager.notify(turnNotificationId, notification)
+            val id = nextTurnNotificationId()
+            lastTurnNotificationId = id
+            manager.notify(id, notification)
             true
         } catch (e: Exception) {
             false
         }
+    }
+
+    /** 每次换一个 id：同 id 更新不会重新弹横幅（见字段注释）。 */
+    private fun nextTurnNotificationId(): Int {
+        turnNotificationSeq = (turnNotificationSeq + 1) and 0x3F
+        return turnNotificationId + turnNotificationSeq
     }
 
     /**
@@ -394,6 +413,14 @@ class MainActivity : FlutterActivity() {
     /** 跳到系统的「本应用通知设置」页；老系统上退到应用详情页。 */
     private fun openNotificationSettings(): Boolean {
         val candidates = ArrayList<Intent>()
+        // MIUI / HyperOS：「悬浮通知」（真正决定有没有横幅的那一档）藏在应用的通知页里，
+        // 原生通知页进不去那么深，只能靠它自己的私有 action 直接送到位。
+        candidates.add(
+            Intent("miui.intent.action.APP_NOTIFICATION_SETTINGS")
+                .putExtra("miui.intent.extra.APPLICATION_SETTINGS", true)
+                .putExtra("app_package_name", packageName)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+        )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             candidates.add(
                 Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
@@ -454,9 +481,12 @@ class MainActivity : FlutterActivity() {
             .setAutoCancel(true)
             .setCategory(Notification.CATEGORY_MESSAGE)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
+            // 同一条通知再更新时也要再响一次：反正 id 每次都是新的，这条只是兜底。
+            .setOnlyAlertOnce(false)
             .setColor(0xFF3DDC97.toInt())
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            builder.setPriority(Notification.PRIORITY_HIGH)
+            // 8.0 以下没有通道，横幅只看 priority，给到 MAX 才会盖在屏幕上方弹出来。
+            builder.setPriority(Notification.PRIORITY_MAX)
             builder.setDefaults(Notification.DEFAULT_ALL)
         }
         launchIntent()?.let { builder.setContentIntent(it) }
