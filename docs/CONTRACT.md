@@ -154,6 +154,41 @@ dsh-frp-pocket/
 
 重启后 `sessionKey` 换新，`frp_auth` 与 `dsh-auth-*` 全部失效：手机必须用 PIN 重新握手（§4.3）。桌面版的重启由一段脱离进程树的助手脚本完成——插件先把自己所在的进程树杀掉，再由脚本重新拉起可执行文件，所以宿主的退出确认弹窗**不会**出现在手机这侧。
 
+### 4.7 宿主目录浏览（需 cookie，只接受 POST）
+
+手机端「新建会话 → 其他目录… → 浏览」用它。**为什么不复用 DSH 的 `directoryPicker`**：那个 seam 只有一个 capability —— PC 桌面组合成 `native`（只会弹系统框，`list` 直接回 `directory-picker/unavailable`），换成 `browse` 又会让 PC 端的新建目录从系统框变成内置浏览器。这两条端点与 DSH 的 picker 完全解耦：PC 端行为一行不改，手机端单独拿到浏览能力。
+
+**`POST /frp-pocket/api/fs/list`**
+
+```json
+{ "path": "D:\\Ai-Project", "showHidden": false }
+```
+
+- `path` 省略或为空 → 用宿主家目录（手机第一次进来有地方站）。
+- 只接受绝对路径（Windows 盘符或完整 UNC）；相对路径一律 `400 {"error":"bad-path"}`——相对路径在宿主上会解析成进程工作目录，用户看不见那个语义。
+
+```json
+{ "ok": true, "path": "D:\\Ai-Project", "parent": "D:\\", "home": "C:\\Users\\Chen",
+  "roots": [{ "name": "D:", "path": "D:\\" }],
+  "entries": [{ "name": "demo", "path": "D:\\Ai-Project\\demo", "dir": true, "hidden": false }],
+  "truncated": false }
+```
+
+- 目录在前、文件在后，同级按不区分大小写排序；单层最多 1000 条，超出用 `truncated: true` 标（GitHub 式截断，不是错误）。
+- `hidden` 只按点前缀近似（Windows 的隐藏属性 `opendir` 拿不到）；`showHidden=false` 时这些项不出现在结果里。
+- 文件条目只用来帮用户认出位置，App 里点不动。
+
+**`POST /frp-pocket/api/fs/mkdir`**
+
+必须带 `x-frp-pocket-action: fs.mkdir`（理由同 §4.6：跨站表单发不出自定义头）。`path` 是已存在的父目录绝对路径，`name` 是单段名字（不含分隔符、不能是 `.`/`..`）。
+
+```json
+{ "ok": true, "path": "D:\\Ai-Project\\demo2" }
+```
+
+- 错误码：`bad-path` / `bad-name` / `not-found`(404) / `exists`(409) / `unreadable`(403) / `not-directory`(400)，与其余 API 的 JSON 形状一致。
+- 两条都**不接受 `?pin=`**：列目录比探活敏感得多，绕开 cookie 一律 401。
+
 ### 4.5 其余路径
 
 - `/frp-pocket/api/*` 未列出的 → 404 JSON。
@@ -213,6 +248,7 @@ subdomain = "home"
 2. **添加/编辑**：名称、URL、PIN；"扫码添加"（扫 `dshf rp://` 或纯 URL+pin 的二维码）；"测试连接"按钮（info + login 校验）。
 3. **WebView**：首屏 `url/?pin=PIN`；Cookie 持久化；支持文件上传/下载、深链、返回键=历史后退、长按选择、下拉刷新、断线重连提示；底部/顶部显示主机名与连接状态。
 4. **设置**：深色/浅色、保持屏幕常亮、桌面 UA 切换（排查用）、清除某主机 Cookie、关于。
+5. **宿主目录浏览**（「新建会话 → 其他目录… → 浏览」）：列出宿主机上的一层目录、可新建子目录、可选当前目录作为新会话的 cwd。数据走 §4.7，与 PC 端的系统选择框互不影响。
 
 ### 7.3 二维码内容（插件设置页生成，App 扫）
 

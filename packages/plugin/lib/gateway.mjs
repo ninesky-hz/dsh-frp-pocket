@@ -13,11 +13,16 @@ import http from 'node:http';
 import net from 'node:net';
 import { constants as zlibConstants, createBrotliCompress, createGzip } from 'node:zlib';
 
+import { FsBrowseError, listDir, makeDir } from './fs-browse.mjs';
+
 export const API_PREFIX = '/frp-pocket/api';
 export const COOKIE_NAME = 'frp_auth';
 export const COOKIE_MAX_AGE = 30 * 24 * 60 * 60; // 30 天（秒）
 /** 破坏性动作必须带这枚自定义头（CONTRACT §4.6）：跨站表单发不出，挡住 CSRF。 */
 export const ACTION_HEADER = 'x-frp-pocket-action';
+
+/** 建目录用的动作头取值：与重启分开，避免一个头能同时驱动两类动作。 */
+export const FS_ACTION = 'fs.mkdir';
 
 /**
  * 重启隧道前留给响应回程的时间（毫秒）。
@@ -636,6 +641,73 @@ export function createGateway({
       };
       if (res.writableEnded) arm();
       else res.once('finish', arm);
+      return true;
+    }
+
+    // 契约 §4.7：宿主目录浏览（手机端「新建会话目录」用）。
+    //
+    // 只认 cookie：列目录比探活敏感得多，不允许 `?pin=` 放行——否则一条带明文
+    // PIN 的 URL 就能把整块盘列出来。建目录额外要求动作头（跨站表单发不出）。
+    if (path === `${API_PREFIX}/fs/list` || path === `${API_PREFIX}/fs/mkdir`) {
+      if (req.method !== 'POST') {
+        jsonResponse(res, 405, { ok: false, error: 'method_not_allowed' }, common);
+        return true;
+      }
+      const g = gate(req);
+      if (!g.ok) {
+        const viaPin = url.searchParams.get('pin');
+        if (viaPin) limiter.record(clientIp(req));
+        jsonResponse(res, 401, { ok: false, error: 'unauthorized' }, common);
+        return true;
+      }
+      const writing = path === `${API_PREFIX}/fs/mkdir`;
+      if (writing && String(req.headers[ACTION_HEADER] ?? '') !== FS_ACTION) {
+        jsonResponse(res, 400, { ok: false, error: 'action_header_required' }, common);
+        return true;
+      }
+      readBody(req, 16 * 1024)
+        .then(async (raw) => {
+          let body;
+          try {
+            body = raw.length === 0 ? {} : JSON.parse(raw.toString('utf8'));
+          } catch {
+            jsonResponse(res, 400, { ok: false, error: 'bad_json' }, common);
+            return;
+          }
+          const payload = body && typeof body === 'object' ? body : {};
+          try {
+            if (!writing) {
+              const listing = await listDir(payload.path, {
+                showHidden: payload.showHidden === true,
+                withFiles: payload.withFiles !== false,
+              });
+              jsonResponse(res, 200, { ok: true, ...listing }, common);
+              return;
+            }
+            const created = await makeDir(
+              typeof payload.path === 'string' ? payload.path : '',
+              typeof payload.name === 'string' ? payload.name : '',
+            );
+            jsonResponse(res, 200, { ok: true, path: created }, common);
+          } catch (error) {
+            const code = error instanceof FsBrowseError ? error.code : 'unreadable';
+            const status = code === 'not-found'
+              ? 404
+              : code === 'exists'
+                ? 409
+                : code === 'unreadable'
+                  ? 403
+                  : 400;
+            jsonResponse(res, status, {
+              ok: false,
+              error: code,
+              message: String(error?.message ?? ''),
+            }, common);
+          }
+        })
+        .catch(() => {
+          jsonResponse(res, 400, { ok: false, error: 'bad_request' }, common);
+        });
       return true;
     }
 

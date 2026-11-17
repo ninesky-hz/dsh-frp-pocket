@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:dsh_frp_app/models/host.dart';
+import 'package:dsh_frp_app/models/host_dir.dart';
 import 'package:dsh_frp_app/models/host_event.dart';
 import 'package:dsh_frp_app/models/session_event.dart';
 import 'package:dsh_frp_app/models/session_summary.dart';
@@ -32,6 +33,38 @@ class _FakeApi extends DshApi {
 
   @override
   Future<List<SessionSummary>> listSessions(Host host) async => sessions;
+
+  /// 「浏览」用的假目录树：家目录 `D:\Ai-Project` 里只有一个 `demo`。
+  @override
+  Future<HostDirListing> listHostDir(
+    Host host,
+    String path, {
+    bool showHidden = false,
+  }) async {
+    const home = r'D:\Ai-Project';
+    final target = path.trim().isEmpty ? home : path;
+    final atHome = target == home;
+    return HostDirListing.fromJson(<String, Object?>{
+      'ok': true,
+      'path': target,
+      'parent': atHome ? r'D:\' : home,
+      'home': home,
+      'roots': <Object?>[
+        <String, Object?>{'name': 'D:', 'path': r'D:\'},
+      ],
+      'entries': atHome
+          ? <Object?>[
+              <String, Object?>{
+                'name': 'demo',
+                'path': r'D:\Ai-Project\demo',
+                'dir': true,
+                'hidden': false,
+              },
+            ]
+          : const <Object?>[],
+      'truncated': false,
+    });
+  }
 }
 
 /// 记录 `session/create` 的入参；工作区流由测试手动推帧，其余流保持空。
@@ -177,8 +210,43 @@ void main() {
     expect(find.byType(SessionChatScreen), findsOneWidget);
   });
 
-  testWidgets('失败时留在列表页并提示，不推进会话页', (tester) async {
-    final remote = _FakeRemote(
+  testWidgets('「其他目录」可以浏览宿主目录，选完回填路径再建会话', (tester) async {
+    final remote = _FakeRemote();
+    await _pump(tester, remote);
+
+    await tester.tap(find.byKey(const ValueKey<String>('new-session')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('new-session.other')));
+    await tester.pumpAndSettle();
+
+    // 弹窗里的「浏览」推开宿主目录页。
+    await tester.tap(find.byKey(const ValueKey<String>('new-session.browse')));
+    await tester.pumpAndSettle();
+    expect(find.text('选择目录'), findsOneWidget);
+    expect(find.text(r'D:\Ai-Project'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('dir-picker.entry.demo')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('dir-picker.confirm')));
+    await tester.pumpAndSettle();
+
+    // 回到输入框：路径已经填上，点「创建」用这条 cwd。
+    final field = tester.widget<TextField>(
+      find.byKey(const ValueKey<String>('new-session.path')),
+    );
+    expect(field.controller?.text, r'D:\Ai-Project\demo');
+
+    await tester.tap(find.text('创建'));
+    await tester.pumpAndSettle();
+
+    expect(remote.creates, hasLength(1));
+    expect(remote.creates.single['cwd'], r'D:\Ai-Project\demo');
+    expect(remote.creates.single['workspaceId'], isNull);
+  });
+
+  testWidgets('失败时留在列表页并提示，不推进会话页', (tester) async {    final remote = _FakeRemote(
       createError: const DshApiException('session/denied', '不允许在这里开会话'),
     );
     await _pump(tester, remote);

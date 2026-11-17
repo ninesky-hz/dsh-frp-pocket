@@ -1,3 +1,33 @@
+## 2026-11-17（手机能直接浏览 PC 目录，PC 端系统选择框一行不改）
+
+### app 1.9.0+49
+
+「app 新建目录会话，app 能不能加载 pc 端目录？」——能，但**不能靠把宿主的目录选择器切成 browse**。
+
+- **为什么不能直接开 DSH 的 `directoryPicker`**：那个 seam 只有**一个** capability。
+  本机 win32 + loopback 判成 `native`，于是 `directoryPicker/list` 永远回
+  `directory-picker/unavailable`（实测过，网关与直连 58525 都一样）；把它切成 `browse`
+  确实能让手机浏览，但 **PC 端「新建目录」会从系统选择框变成内置浏览器**——这是我们
+  明确不接受的那半个代价。
+- **改法：手机这条读目录的需求由网关自己承担**。插件新增两条端点
+  `POST /frp-pocket/api/fs/list` 与 `/fs/mkdir`（`lib/fs-browse.mjs`），与 DSH 的
+  picker 完全解耦：PC 端走 `native` 弹系统框，手机端走网关列目录，互不影响。
+  - `normalizeDir` 只收绝对路径（相对路径会解析成宿主进程的工作目录，用户看不见那个语义）；
+    `listDir` 用 `opendir` 流式读、目录在前按不区分大小写排序、单层 1000 条截断；
+    `makeDir` 只管单段名字，重名回 `exists` 而不是静默成功。
+  - 两条都只收 POST、只认 cookie（`?pin=` 一律 401：列目录比探活敏感），
+    `mkdir` 强制 `x-frp-pocket-action: fs.mkdir`，挡跨站表单。
+- **App**：新增 `HostDirPickerScreen`（路径条 + 盘符/家目录快捷入口 + 上一级 + 隐藏项开关 +
+  新建子目录 + 「用这个目录」），入口在「新建会话 → 其他目录…」弹窗的输入框右侧；
+  选中后回填路径，再照旧 `session/create {cwd}`。
+- **测试**：插件 `fs-browse` 8 条 + `gateway-fs` 8 条（401 / `?pin=` / 目录在前 / 400 / 404 /
+  405 / 动作头 / 409 / bad-name）；App `host_dir_api` 6 条（含 401 重握手、空路径不发 `path`）、
+  `host_dir_picker` 7 条、`new_session` 补 1 条（浏览→回填→`createSession` 收到 cwd）。
+  摘掉修复后新用例必红。全量 444 条通过，`flutter analyze` No issues。
+
+**安装**：下载 `dsh-pocket-1.9.0-49.apk`，`adb install -r` 覆盖安装（签名不变）。宿主插件
+需重启 DSH 才会加载 0.4.0 的两条新端点。
+
 ## 2026-11-17（退出会话再进来，排队中的那条消息不见了）
 
 ### app 1.8.1+48

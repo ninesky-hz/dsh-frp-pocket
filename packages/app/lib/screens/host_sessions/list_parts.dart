@@ -481,7 +481,13 @@ String _formatThousands(int value) {
 /// 退出动画却还会重建这棵树，外面 new 一个控制器会踩到
 /// 「A TextEditingController was used after being disposed」。
 class _PathDialog extends StatefulWidget {
-  const _PathDialog();
+  const _PathDialog({this.onBrowse});
+
+  /// 点「浏览」时去宿主上挑一个目录（返回 null 表示放弃）。
+  ///
+  /// 用回调而不是直接 import 浏览页：这个文件只负责对话框的形态，
+  /// 「去哪挑」由调用方（会话列表页）决定，测试里也好替换。
+  final Future<String?> Function(String current)? onBrowse;
 
   @override
   State<_PathDialog> createState() => _PathDialogState();
@@ -498,8 +504,18 @@ class _PathDialogState extends State<_PathDialog> {
 
   void _submit() => Navigator.of(context).pop(_controller.text);
 
+  Future<void> _browse() async {
+    final browse = widget.onBrowse;
+    if (browse == null) return;
+    final picked = await browse(_controller.text);
+    if (!mounted || picked == null || picked.isEmpty) return;
+    _controller.text = picked;
+    _controller.selection = TextSelection.collapsed(offset: picked.length);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final canBrowse = widget.onBrowse != null;
     return AlertDialog(
       title: const Text('新会话目录'),
       content: TextField(
@@ -507,9 +523,17 @@ class _PathDialogState extends State<_PathDialog> {
         controller: _controller,
         autofocus: true,
         textInputAction: TextInputAction.done,
-        decoration: const InputDecoration(
+        decoration: InputDecoration(
           labelText: '宿主上的绝对路径',
           hintText: r'D:\Ai-Project\demo',
+          suffixIcon: canBrowse
+              ? IconButton(
+                  key: const ValueKey<String>('new-session.browse'),
+                  tooltip: '浏览宿主目录',
+                  icon: const Icon(AppIcons.folder),
+                  onPressed: _browse,
+                )
+              : null,
         ),
         onSubmitted: (_) => _submit(),
       ),

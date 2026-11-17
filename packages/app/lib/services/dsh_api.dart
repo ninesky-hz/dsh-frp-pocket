@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 
 import '../models/host.dart';
+import '../models/host_dir.dart';
 import '../models/session_summary.dart';
 
 /// `frp_auth` 这枚 cookie 由网关在 PIN 校验后下发。
@@ -37,6 +38,19 @@ const String kDshRestartPath = '/frp-pocket/api/dsh/restart';
 /// 破坏性动作必须带的头：网关用它挡跨站请求（自定义头跨站表单发不出来）。
 const String kActionHeader = 'x-frp-pocket-action';
 const String kActionRestart = 'restart';
+
+/// 宿主目录浏览：列一层（网关端点，不走 DSH 的 `directoryPicker`）。
+///
+/// DSH 那边只有一个 directoryPicker seam，组合成 native 之后 `list` 永远
+/// 401/不可用；把组合换成 browse 又会让 PC 端「新建目录」从系统框变成内置
+/// 浏览器。所以手机端这条读目录的需求由我们自己的网关端点承担。
+const String kFsListPath = '/frp-pocket/api/fs/list';
+
+/// 在宿主上新建目录（同样是我们自己的端点）。
+const String kFsMkdirPath = '/frp-pocket/api/fs/mkdir';
+
+/// 新建目录的动作头值：写操作必须显式声明，挡掉跨站请求。
+const String kActionFsMkdir = 'fs.mkdir';
 
 /// DSH 原生接口的错误。
 ///
@@ -139,6 +153,39 @@ class DshApi {
     return _asText(body['mode']) ?? 'app';
   }
 
+  /// 列宿主上的一层目录（[path] 为宿主绝对路径，首次可传空串让宿主给家目录）。
+  ///
+  /// 返回的条目里目录在前、文件在后：文件只是用来帮你认出位置，不能选中。
+  Future<HostDirListing> listHostDir(
+    Host host,
+    String path, {
+    bool showHidden = false,
+  }) async {
+    final body = await _postGateway(host, kFsListPath, <String, Object?>{
+      // 不给 path 时宿主用它的 home 当前落点：手机端第一次进来就有地方站。
+      if (path.trim().isNotEmpty) 'path': path,
+      'showHidden': showHidden,
+    });
+    return HostDirListing.fromJson(body);
+  }
+
+  /// 在宿主目录 [path] 里新建子目录 [name]，返回新建目录的绝对路径。
+  ///
+  /// [name] 只能是单层名字（不含分隔符）；重名时服务端回 409。
+  Future<String> makeHostDir(
+    Host host, {
+    required String path,
+    required String name,
+  }) async {
+    final body = await _postGateway(
+      host,
+      kFsMkdirPath,
+      <String, Object?>{'path': path, 'name': name},
+      action: kActionFsMkdir,
+    );
+    return _asText(body['path']) ?? '';
+  }
+
   /// 只读 `/info` 探活：返回服务器时间（毫秒）；连不上 / 不是网关时返回 null。
   ///
   /// 重启窗口里不能轮询 `/health`：那需要 cookie，而 sessionKey 换了 cookie 必然
@@ -156,6 +203,50 @@ class DshApi {
     } on Object {
       return null;
     }
+  }
+
+  /// 调我们自己的网关端点（`/frp-pocket/api/*`）：401 时重新握手再试一次。
+  ///
+  /// 与 [_postAction] 的区别只在于它不写死 `restart` 动作头、错误码原样透传，
+  /// 界面可以按 `not-found` / `exists` / `bad-name` 给出不同的提示。
+  Future<Map<String, Object?>> _postGateway(
+    Host host,
+    String path,
+    Map<String, Object?> payload, {
+    String? action,
+  }) async {
+    Future<http.Response> send() {
+      final jar = _jar(host);
+      return _fetch(
+        Uri.parse('${host.url}$path'),
+        method: 'POST',
+        headers: <String, String>{
+          'content-type': 'application/json; charset=utf-8',
+          'accept': 'application/json',
+          kActionHeader: ?action,
+          'cookie': _cookieHeader(jar),
+        },
+        body: jsonEncode(payload),
+      );
+    }
+
+    await ensureAuth(host);
+    var response = await send();
+    if (response.statusCode == 401) {
+      // cookie 被服务端换掉（插件重载过）：重新握手再来一次
+      clearAuth(host);
+      await ensureAuth(host);
+      response = await send();
+    }
+
+    final body = _decodeObject(response) ?? const <String, Object?>{};
+    if (response.statusCode == 200 && body['ok'] == true) return body;
+
+    final code = _asText(body['error']) ?? 'http_${response.statusCode}';
+    final message =
+        _asText(body['message']) ??
+        (response.statusCode == 401 ? '登录态已失效（HTTP 401）' : '网关返回 HTTP ${response.statusCode}');
+    throw DshApiException(code, message, statusCode: response.statusCode);
   }
 
   Future<Map<String, Object?>> _postAction(Host host, String path) async {

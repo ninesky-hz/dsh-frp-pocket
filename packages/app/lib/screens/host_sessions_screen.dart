@@ -13,6 +13,7 @@ import '../services/dsh_api.dart';
 import '../services/dsh_remote.dart';
 import '../services/seen_store.dart';
 import '../utils/time_format.dart';
+import 'host_dir_picker_screen.dart';
 import 'session_chat_screen.dart';
 import '../theme/app_icons.dart';
 
@@ -599,12 +600,28 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
     if (choice.cwd == '' && choice.workspaceId == null) {
       final path = await showDialog<String>(
         context: context,
-        builder: (_) => const _PathDialog(),
+        builder: (_) => _PathDialog(onBrowse: _browseHostDir),
       );
       if (!mounted || path == null || path.trim().isEmpty) return null;
       return (workspaceId: null, cwd: path.trim());
     }
     return choice;
+  }
+
+  /// 在宿主上挑一个目录（「其他目录」弹窗里的「浏览」）。
+  ///
+  /// 走网关自己的 `/frp-pocket/api/fs/*`：宿主 DSH 的 directoryPicker 组合成
+  /// native 之后列不了目录，而把它切成 browse 又会改掉 PC 端的系统选择框。
+  Future<String?> _browseHostDir(String current) {
+    return Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (_) => HostDirPickerScreen(
+          host: widget.host,
+          api: _api,
+          initialPath: current,
+        ),
+      ),
+    );
   }
 
   Future<void> _openSession(SessionSummary session) async {
