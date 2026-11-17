@@ -256,6 +256,9 @@ subdomain = "home"
    - 工具/思考行改成竖排时间线（左侧细线 + 圆点），折叠与展开逻辑不变。
    - **链接可点**：`http`/`https` 的 `[文字](url)` 与裸链接都交给系统浏览器（`openExternalLink` → `PlatformBridge.openUrl` → 原生 `Intent.ACTION_VIEW`，不引入 `url_launcher`）；打不开时复制到剪贴板并提示。相对路径 / `#锚点` / `mailto:` 不画成链接（`isOpenableUrl` 只认 http/https）。点击识别器挂在**叶子** span 上——命中测试取的是最深那层，挂外层点不到。
    - 配色/字号集中在 `MdStyle.of(theme)`（`md_style.dart`），要更贴近 PC 只改这一个文件。
+   - 「展开全文」的阅读页（`widgets/chat/text_viewer.dart`）对 assistant 走同一套 `MdView`
+     （`showTextSheet(..., markdown: true)`），所以标题/表格/代码块/可点链接与气泡一致；
+     用户自己发的消息仍按纯文本渲染。
 
 ### 7.3 二维码内容（插件设置页生成，App 扫）
 

@@ -1,3 +1,23 @@
+## 2026-11-17（展开全文的阅读页改用同一套渲染）
+
+### app 1.11.1+52
+
+「app 里展开全文，也要同步修改吧？」——长回复点「展开全文」进去还是纯文本，markdown 和链接都丢了。
+
+- **症状**：会话里的长回复（>1200 字）气泡里已经是渲染好的 markdown，但点「展开全文」进阅读页，
+  标题又带上了 `##`、表格变回一排竖线、代码块和反引号挤在正文里；上一版刚做好的链接在这个页面上也点不动。
+- **根因**：`showTextSheet` 的阅读页是独立页面，用的是最朴素的 `SelectableText(text)`，
+  和气泡不是同一条渲染路径——气泡改成 `MdView` 之后这页没跟着改。
+- **改法**：`text_viewer.dart` 加 `markdown` 开关（默认 false，用户自己发的消息仍是纯文本）：
+  开的时候用 `MdView(text, style: MdStyle.of(theme), onLinkTap: openExternalLink)` 渲染，
+  标题、表格、代码块、可点的链接全部与气泡一致，选字与「复制全文」保持不变；
+  `chat_bubbles.dart` 里 assistant 那一处调用带上 `markdown: true`。
+- 测试：`test/chat_long_text_test.dart` 的阅读页断言按 `SelectableText.rich` 取文本
+  （`.data` 为 null，改读 `textSpan.toPlainText()`），并新增一条：阅读页把 `## 交付` 渲染成标题、
+  页面里的链接点下去会调原生 `openUrl`。全量 485 条通过，`flutter analyze` 无问题。
+
+**安装**：下载 `dsh-pocket-1.11.1-52.apk`，`adb install -r` 覆盖安装即可（签名不变）。
+
 ## 2026-11-17（会话正文里的链接真的能点开了）
 
 ### app 1.11.0+51

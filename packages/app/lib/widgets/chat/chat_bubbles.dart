@@ -191,6 +191,7 @@ class MessageBubble extends StatelessWidget {
               context,
               text: message.text,
               label: '全文（${message.text.length} 字）',
+              markdown: true,
             ),
             style: TextButton.styleFrom(
               foregroundColor: theme.textTheme.bodyMedium?.color,
