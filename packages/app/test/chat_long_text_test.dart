@@ -36,8 +36,9 @@ void main() {
     await tester.pumpWidget(_wrap(_message(long)));
     await tester.pumpAndSettle();
 
-    // 气泡里不该再有整段可选中文本：那是滚动卡顿的来源。
-    expect(find.byType(SelectableText), findsNothing);
+    // 气泡里只渲染前 kLongTextChars 字的 markdown：末尾那句不在屏幕上，
+    // 整条几千字一次性排版正是滚动卡顿的来源。
+    expect(find.textContaining('第 399 句正文'), findsNothing);
     expect(find.text('展开全文'), findsOneWidget);
 
     await tester.tap(find.text('展开全文'));
@@ -53,7 +54,9 @@ void main() {
 
     await tester.pageBack();
     await tester.pumpAndSettle();
-    expect(find.byType(SelectableText), findsNothing);
+    // 回到气泡：又只剩预览，正文里没有整段全文。
+    expect(find.text(long), findsNothing);
+    expect(find.textContaining('第 399 句正文'), findsNothing);
   });
 
   testWidgets('短正文照旧就地可选', (tester) async {

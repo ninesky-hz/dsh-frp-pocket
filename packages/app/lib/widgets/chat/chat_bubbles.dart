@@ -11,6 +11,9 @@ import '../../models/session_event.dart';
 import '../../theme/app_icons.dart';
 import '../ignore_show_on_screen.dart';
 import 'chat_note_sheet.dart';
+import 'markdown/md_doc.dart';
+import 'markdown/md_style.dart';
+import 'markdown/md_view.dart';
 import 'text_viewer.dart';
 import 'image_viewer.dart';
 
@@ -108,60 +111,104 @@ class MessageBubble extends StatelessWidget {
   /// 否则长按之后想微调选区，一动就把整条列表带着滑走。
   final ValueChanged<TextSelection>? onSelectionChanged;
 
-  /// 气泡正文：短的就地可选，长的先给预览。
+  /// 气泡正文：agent 的话按 markdown 渲染，自己发的话原样贴。
   ///
-  /// 一条消息几千字时，`SelectableText` 的排版与选区几何要按整段小作文算，
-  /// 滚动进来一次能卡住上百毫秒；连着几条就把「往上翻」变成「卡住」。
-  /// 超过 [kLongTextChars] 字只渲染前 [kLongTextPreviewLines] 行，其余点开
-  /// 阅读页看——那里一次只有一条，选字、复制都还在。
+  /// 只用一层 `Text` 的时候，模型输出里的 `##`、表格竖线、围栏反引号全被当
+  /// 标点画出来——网页端是渲染过的，手机端读同一段话像在读源码。这里接上
+  /// [MdView]：标题、列表、表格、代码块（带语言标签、复制、高亮）逐块渲染。
+  ///
+  /// 自己发的话不解析：用户敲进去的 `*` 就是星号，按字面显示。
+  ///
+  /// 长文的处理沿用老规矩——超过 [kLongTextChars] 字只渲染前一段，剩下的
+  /// 交给阅读页：`SelectableText` 的选区几何要按整段算，一条几千字的消息滚
+  /// 进来会卡住上百毫秒。
   Widget _bubbleText(
     BuildContext context,
     ThemeData theme,
     Color foreground,
-    bool typing,
-  ) {
+    bool typing, {
+    required bool isUser,
+  }) {
     final style = theme.textTheme.bodyMedium?.copyWith(
       color: foreground,
       height: 1.45,
     );
-    if (typing) {
-      // 流式期间正文每一帧都在变长：用普通 Text。`SelectableText` 每次重排
-      // 都要重算整段选区几何，正在滚动的列表能明显感到掉帧。
-      return Text('${message.text}▌', style: style);
-    }
-    if (message.text.length <= kLongTextChars) {
-      return SelectableText(
-        message.text,
-        onSelectionChanged: (selection, cause) =>
-            onSelectionChanged?.call(selection),
-        style: style,
+    final long = message.text.length > kLongTextChars;
+
+    if (isUser) {
+      if (typing) return Text('${message.text}▌', style: style);
+      if (!long) {
+        return SelectableText(
+          message.text,
+          onSelectionChanged: (selection, cause) =>
+              onSelectionChanged?.call(selection),
+          style: style,
+        );
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Text(
+            message.text,
+            maxLines: kLongTextPreviewLines,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+          TextButton(
+            onPressed: () => showTextSheet(
+              context,
+              text: message.text,
+              label: '全文（${message.text.length} 字）',
+            ),
+            style: TextButton.styleFrom(
+              foregroundColor: foreground,
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              minimumSize: const Size(0, 32),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('展开全文'),
+          ),
+        ],
       );
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        Text(
-          message.text,
-          maxLines: kLongTextPreviewLines,
-          overflow: TextOverflow.ellipsis,
-          style: style,
-        ),
-        TextButton(
-          onPressed: () => showTextSheet(
-            context,
-            text: message.text,
-            label: '全文（${message.text.length} 字）',
+
+    if (long && !typing) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          MdView(
+            text: previewMarkdown(message.text, kLongTextChars),
+            style: MdStyle.of(theme),
+            onSelectionChanged: onSelectionChanged,
           ),
-          style: TextButton.styleFrom(
-            foregroundColor: foreground,
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            minimumSize: const Size(0, 32),
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          TextButton(
+            key: const ValueKey<String>('bubble.expand'),
+            onPressed: () => showTextSheet(
+              context,
+              text: message.text,
+              label: '全文（${message.text.length} 字）',
+            ),
+            style: TextButton.styleFrom(
+              foregroundColor: theme.textTheme.bodyMedium?.color,
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              minimumSize: const Size(0, 32),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('展开全文'),
           ),
-          child: const Text('展开全文'),
-        ),
-      ],
+        ],
+      );
+    }
+
+    return MdView(
+      text: message.text,
+      style: MdStyle.of(theme),
+      streaming: typing,
+      // 流式时关掉选字：每帧重建 `SelectableText` 的选区几何正是掉帧的主因。
+      selectable: !typing,
+      onSelectionChanged: onSelectionChanged,
     );
   }
 
@@ -172,25 +219,29 @@ class MessageBubble extends StatelessWidget {
     final foreground = isUser
         ? theme.colorScheme.onPrimary
         : theme.colorScheme.onSurface;
-    final maxWidth = MediaQuery.sizeOf(context).width * 0.78;
+    final maxWidth = MediaQuery.sizeOf(context).width;
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        constraints: BoxConstraints(maxWidth: maxWidth),
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: isUser
-              ? theme.colorScheme.primary
-              : theme.colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: Radius.circular(isUser ? 16 : 4),
-            bottomRight: Radius.circular(isUser ? 4 : 16),
-          ),
-        ),
+        // agent 的话走「无气泡」版式（对齐网页端）：满宽、无底色、留白排版，
+        // markdown 的表格和代码块本来就需要横向空间，78% 宽度会把它们压扁。
+        constraints: BoxConstraints(maxWidth: isUser ? maxWidth * 0.78 : maxWidth),
+        margin: EdgeInsets.symmetric(vertical: isUser ? 4 : 6),
+        padding: isUser
+            ? const EdgeInsets.symmetric(horizontal: 14, vertical: 10)
+            : EdgeInsets.zero,
+        decoration: isUser
+            ? BoxDecoration(
+                color: theme.colorScheme.primary,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(16),
+                  topRight: Radius.circular(16),
+                  bottomLeft: Radius.circular(16),
+                  bottomRight: Radius.circular(4),
+                ),
+              )
+            : null,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -217,7 +268,13 @@ class MessageBubble extends StatelessWidget {
                     selectionColor: foreground.withValues(alpha: 0.32),
                     selectionHandleColor: foreground,
                   ),
-                  child: _bubbleText(context, theme, foreground, typing),
+                  child: _bubbleText(
+                    context,
+                    theme,
+                    foreground,
+                    typing,
+                    isUser: isUser,
+                  ),
                 ),
               ),
             if (message.notes.isNotEmpty)
@@ -819,8 +876,33 @@ class _NotesLineState extends State<NotesLine> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         _foldHeader(notes),
-        if (_expanded) ..._rows(context, notes, firstGap: kNoteRowGap),
+        if (_expanded) _rail(_rows(context, notes, firstGap: kNoteRowGap)),
       ],
+    );
+  }
+
+  /// 把逐项小字挂在一条竖线上——对齐网页端的「工作步骤时间线」。
+  ///
+  /// 只做视觉：宿主给的 [ChatNote] 没有耗时字段，所以这一列不画「1.2s」那种
+  /// 右侧计时，只有圆点 + 名称 + 参数摘要。
+  Widget _rail(List<Widget> rows) {
+    final tint = widget.style?.color;
+    return Container(
+      margin: const EdgeInsets.only(left: 4),
+      padding: const EdgeInsets.only(left: 10),
+      decoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(
+            color: (tint ?? Colors.grey).withValues(alpha: 0.22),
+            width: 1,
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: rows,
+      ),
     );
   }
 
@@ -863,10 +945,7 @@ class _NotesLineState extends State<NotesLine> {
 
   Widget _detailed(BuildContext context, List<ChatNote> notes) {
     if (notes.isEmpty) return Text('', style: widget.style);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: _rows(context, notes),
-    );
+    return _rail(_rows(context, notes));
   }
 
   /// 逐项列出的那些行；[firstGap] 是第一行上面留的空（折叠态用来和摘要行分开）。
@@ -897,11 +976,36 @@ class _NotesLineState extends State<NotesLine> {
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
+    // 时间线上的那颗点。思考用空心、工具调用用实心，扫一眼能分开。
+    final dot = Padding(
+      padding: const EdgeInsets.only(right: 7),
+      child: SizedBox(
+        width: 6,
+        height: 6,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: note.kind == ChatNoteKind.tool
+                ? (widget.style?.color ?? Colors.grey).withValues(alpha: 0.55)
+                : Colors.transparent,
+            border: note.kind == ChatNoteKind.reasoning
+                ? Border.all(
+                    color: (widget.style?.color ?? Colors.grey)
+                        .withValues(alpha: 0.45),
+                  )
+                : null,
+          ),
+        ),
+      ),
+    );
     if (!note.expandable) {
       return Padding(
         key: ValueKey<String>('note-row.$index'),
         padding: const EdgeInsets.symmetric(vertical: 3),
-        child: label,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: <Widget>[dot, Expanded(child: label)],
+        ),
       );
     }
     return GestureDetector(
@@ -914,6 +1018,7 @@ class _NotesLineState extends State<NotesLine> {
           padding: const EdgeInsets.symmetric(vertical: 6),
           child: Row(
             children: <Widget>[
+              dot,
               Expanded(child: label),
               const SizedBox(width: 6),
               Icon(

@@ -127,7 +127,9 @@ Future<void> _pumpChat(WidgetTester tester, _StreamRemote remote) async {
 Future<void> _push(WidgetTester tester, _StreamRemote remote, DshStreamFrame frame) async {
   remote.frames.add(frame);
   await tester.pump();
-  await tester.pump(const Duration(milliseconds: 20));
+  // markdown 渲染对流式帧做了节流（`kMdStreamThrottle`，120ms）：测试里得
+  // 把时间推过去，否则读到的永远是上一帧的解析结果。
+  await tester.pump(const Duration(milliseconds: 140));
 }
 
 Future<void> _disposeChat(WidgetTester tester, _StreamRemote remote) async {
@@ -150,10 +152,10 @@ void main() {
     await _pumpChat(tester, remote);
 
     // 起手一条都没上屏（草稿是空的，不占位）。
-    expect(find.textContaining('▌'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('md-caret')), findsNothing, reason: '光标是独立的块，不混在正文里');
 
     await _push(tester, remote, _frame(_start()));
-    expect(find.textContaining('▌'), findsNothing, reason: '空草稿不该占一行');
+    expect(find.byKey(const ValueKey<String>('md-caret')), findsNothing, reason: '空草稿不该占一行');
 
     // reasoning 先来：只有「思考」一行，没有正文。
     await _push(
@@ -170,7 +172,7 @@ void main() {
     await _push(tester, remote, _frame(_chunk(1, _delta('reasoning-delta', 0, '先想'))));
     expect(find.text('思考 · 先想'), findsOneWidget);
     // 正文还没开始：气泡里只有光标，正文为空。
-    expect(find.text('▌'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('md-caret')), findsOneWidget);
     expect(find.text('先想'), findsNothing, reason: '思考过程不直接铺在正文里');
 
     // 正文块：逐字长出来，带正在输入的光标。
@@ -186,11 +188,13 @@ void main() {
       ),
     );
     await _push(tester, remote, _frame(_chunk(3, _delta('text-delta', 1, '你'))));
-    expect(find.text('你▌'), findsOneWidget);
+    expect(find.text('你'), findsOneWidget);
+    // 流式光标是独立的一块（不是拼进正文的字符）：定稿后它会消失。
+    expect(find.byKey(const ValueKey<String>('md-caret')), findsOneWidget);
 
     await _push(tester, remote, _frame(_chunk(4, _delta('text-delta', 1, '好'))));
-    expect(find.text('你好▌'), findsOneWidget);
-    expect(find.text('你▌'), findsNothing);
+    expect(find.text('你好'), findsOneWidget);
+    expect(find.text('你'), findsNothing);
 
     // 服务端的 block-end 定稿比 delta 拼接更准：优先用它。
     await _push(
@@ -204,7 +208,7 @@ void main() {
         }),
       ),
     );
-    expect(find.text('你好，世界▌'), findsOneWidget);
+    expect(find.text('你好，世界'), findsOneWidget);
 
     // finish + end：草稿还在，等 durable 来收尾。
     await _push(tester, remote, _frame(_chunk(6, <String, Object?>{'type': 'finish'})));
@@ -219,7 +223,7 @@ void main() {
         'step': 1,
       }),
     );
-    expect(find.text('你好，世界▌'), findsOneWidget);
+    expect(find.text('你好，世界'), findsOneWidget);
 
     // durable 定稿到达：草稿被删，只留一条，光标消失。
     await _push(
@@ -232,12 +236,17 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 260));
 
-    expect(find.text('你好，世界'), findsOneWidget);
-    expect(find.textContaining('▌'), findsNothing, reason: '定稿不该带光标');
+    // 光标是独立的一块，所以「草稿还在不在」不能靠光标字符判断；正文只出现
+    // 一次就是「草稿已删、只剩定稿」——出现两条会 `findsNWidgets(2)`。
     expect(
-      find.text('你好，世界▌'),
-      findsNothing,
+      find.text('你好，世界'),
+      findsOneWidget,
       reason: '草稿与定稿不能同时显示两条',
+    );
+    expect(
+      find.byKey(const ValueKey<String>('md-caret')),
+      findsNothing,
+      reason: '定稿不该带光标',
     );
     expect(find.text('思考'), findsNothing, reason: '定稿只带正文，没有思考行');
 
@@ -250,21 +259,21 @@ void main() {
 
     await _push(tester, remote, _frame(_start()));
     await _push(tester, remote, _frame(_chunk(0, _delta('text-delta', 0, '你'))));
-    expect(find.text('你▌'), findsOneWidget);
+    expect(find.text('你'), findsOneWidget);
 
     // 同一帧重放（断线重连后服务端会从上一个 index 重发）。
     await _push(tester, remote, _frame(_chunk(0, _delta('text-delta', 0, '你'))));
-    expect(find.text('你▌'), findsOneWidget);
-    expect(find.text('你你▌'), findsNothing);
+    expect(find.text('你'), findsOneWidget);
+    expect(find.text('你你'), findsNothing);
 
     // 倒退到更小的 index：整帧丢弃。
     await _push(tester, remote, _frame(_chunk(0, _delta('text-delta', 0, '旧'))));
-    expect(find.text('你▌'), findsOneWidget);
+    expect(find.text('你'), findsOneWidget);
     expect(find.textContaining('旧'), findsNothing);
 
     // 接续的帧照常收。
     await _push(tester, remote, _frame(_chunk(1, _delta('text-delta', 0, '好'))));
-    expect(find.text('你好▌'), findsOneWidget);
+    expect(find.text('你好'), findsOneWidget);
 
     await _disposeChat(tester, remote);
   });

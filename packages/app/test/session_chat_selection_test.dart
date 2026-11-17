@@ -109,10 +109,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 正文走 `SelectableText`（普通 `Text` 选不了字）。
+    // 正文走 `SelectableText`（普通 `Text` 选不了字）。markdown 渲染之后
+    // 每块正文是一个 `SelectableText.rich`，正文在 `textSpan` 里而不是 `data`。
+    String plainOf(SelectableText widget) =>
+        widget.data ?? widget.textSpan?.toPlainText() ?? '';
     final selectables = tester
         .widgetList<SelectableText>(find.byType(SelectableText))
-        .map((widget) => widget.data)
+        .map(plainOf)
         .toList();
     expect(selectables, contains('这句话我想复制出来'));
     expect(selectables, contains('这段回复也想复制一部分'));
@@ -132,7 +135,7 @@ void main() {
     ]) {
       final ctx = tester.element(
         find.byWidgetPredicate(
-          (widget) => widget is SelectableText && widget.data == text,
+          (widget) => widget is SelectableText && plainOf(widget) == text,
         ),
       );
       final scheme = Theme.of(ctx).colorScheme;

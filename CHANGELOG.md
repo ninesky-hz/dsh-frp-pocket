@@ -1,3 +1,37 @@
+## 2026-11-17（会话页现在按 markdown 渲染，版式跟 PC 对齐）
+
+### app 1.10.0+50
+
+「APP 会话里面的 UI 显示效果能不能和 PC 端一样？」——渲染口径一样了，剩下的差别只是屏幕宽度。
+
+- **症状**：手机上 assistant 的回复是**一整块纯文本**：`##` 标题原样带井号、表格是一排 `| --- |`、
+  代码块和三连反引号挤在正文里、`**加粗**` 留着星号、流式光标是个 `▌` 字符。信息密度比 PC 低一大截。
+- **根因**：App 里没有 markdown 渲染，`chat_bubbles.dart` 的 `_bubbleText` 直接
+  `Text`/`SelectableText` 贴原文；项目也没有 markdown 依赖（`pubspec.yaml` 只有
+  http / image_picker / mobile_scanner / qr_flutter / shared_preferences / web_socket_channel），
+  而 §7.4 的白名单不允许为了排版引入第三方渲染包。
+- **改法**：在 `packages/app/lib/widgets/chat/markdown/` 自研一套最小渲染器（零新依赖，约 1200 行）：
+  - `md_doc.dart` 解析子集：ATX 标题、段落、围栏代码块（未闭合也算块，流式中途不炸）、
+    GFM 表格（含 `:--:` 对齐与 `\|` 转义）、引用、有序/无序列表、分隔线；
+    行内支持反斜杠转义、行内码、`**`/`__`、`*`/`_`（snake_case 不误判）、`~~`、`[文字](url)`。
+    另有 `previewMarkdown`：长消息截断点落在换行，未闭合围栏自动补齐。
+  - `md_view.dart` 渲染：标题分级、真表格（横向滚）、代码块带语言标签 + 「输出中」+ 复制按钮 +
+    行内高亮、行内码胶囊、块状光标（`MdView.caretKey`）。
+  - `md_highlight.dart` 极简高亮：注释/字符串/数字/关键字四类，dart/js/ts/py/sh 关键字表，认不出就单色。
+  - `md_style.dart` 汇总所有颜色字号，**要更贴近 PC 只改这一个文件**。
+  - `chat_bubbles.dart`：assistant 改成无底色满宽（对齐网页端），只有用户消息保留气泡与 78% 宽度；
+    工具/思考行改成竖排时间线（细线 + 圆点）。
+- **流式性能**（这是唯一真正有风险的地方）：120ms 节流（`kMdStreamThrottle`，头部立即解析 +
+  尾巴合并），超过 8000 字（`kMdStreamPlainLimit`）降级成纯文本，定稿后再走完整渲染。
+  节流**不读墙钟**——`DateTime.now()` 在 widget 测试里不跟假时钟走，会让断言读到上一帧。
+- **已知取舍**：链接只做视觉（着色 + 下划线），点不开；开链接要引入 `url_launcher`，本轮不加。
+- 测试：新增 `test/markdown_test.dart` 28 条（块级/行内解析、`previewMarkdown` 围栏补齐、
+  高亮不吞字、剪贴板复制、光标随状态出现与消失、节流窗口、超长降级、非 selectable 路径）；
+  另修正 4 条固有渲染口径的用例（`session_chat_stream_test`、`session_chat_selection_test`、
+  `chat_long_text_test`）。全量 **472 条通过**，`flutter analyze` No issues。
+
+**安装**：下载 `dsh-pocket-1.10.0-50.apk`，`adb install -r` 覆盖安装即可（签名不变）。
+
 ## 2026-11-17（手机能直接浏览 PC 目录，PC 端系统选择框一行不改）
 
 ### app 1.9.0+49
