@@ -35,10 +35,15 @@ class _HangRemote extends DshRemote {
   _HangRemote({
     this.history = const <SessionLogEvent>[],
     this.queue = const <DshQueuedItem>[],
+    this.pageDelay = Duration.zero,
   }) : super(host: _host);
 
   final List<SessionLogEvent> history;
   final List<DshQueuedItem> queue;
+
+  /// 历史那一页在路上的耗时：真实网络里它远慢于「读磁盘回填气泡」，
+  /// 「闪一下假排队」的复现就靠这个差。
+  final Duration pageDelay;
   final List<String> sent = <String>[];
   final Completer<void> gate = Completer<void>();
 
@@ -71,8 +76,10 @@ class _HangRemote extends DshRemote {
     required int throughSeq,
     int? beforeSeq,
     int maxMessages = 20,
-  }) async =>
-      SessionHistory(cursor: throughSeq, records: history, hasMore: false);
+  }) async {
+    if (pageDelay > Duration.zero) await Future<void>.delayed(pageDelay);
+    return SessionHistory(cursor: throughSeq, records: history, hasMore: false);
+  }
 
   @override
   Future<String> prompt(
@@ -135,9 +142,10 @@ Future<_HangRemote> _pump(
   WidgetTester tester, {
   List<SessionLogEvent> history = const <SessionLogEvent>[],
   List<DshQueuedItem> queue = const <DshQueuedItem>[],
+  Duration pageDelay = Duration.zero,
   Future<PromptImage?> Function()? pickImage,
 }) async {
-  final remote = _HangRemote(history: history, queue: queue);
+  final remote = _HangRemote(history: history, queue: queue, pageDelay: pageDelay);
   await tester.pumpWidget(
     MaterialApp(
       home: SessionChatScreen(
@@ -258,6 +266,65 @@ void main() {
 
     expect(find.text('已经跑完那条'), findsOneWidget);
     expect(find.text('排队中'), findsNothing);
+    await _leave(tester, remote);
+  });
+
+  testWidgets('离场期间那条早就答完了：进页面不该先闪一下「排队中」', (tester) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      PendingStore.keyFor(_host.id, _sessionId),
+      '[{"localId":"local-3","text":"早就答完那条","requestId":"req-q3",'
+      '"sentAt":${DateTime.now().millisecondsSinceEpoch},'
+      '"queued":true,"failed":false}]',
+    );
+
+    final remote = await _pump(
+      tester,
+      history: <SessionLogEvent>[_user(3, '早就答完那条', requestId: 'req-q3')],
+      pageDelay: const Duration(milliseconds: 400),
+    );
+
+    // 历史还在路上：磁盘上那条写着 queued，但它其实早就跑完了。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text('排队中'), findsNothing, reason: '历史没到之前不该冒出假排队');
+    expect(
+      find.byKey(const ValueKey<String>('wait-label')),
+      findsNothing,
+      reason: '「已送出，等待接手…」同理，一条早答完的消息不该显示它在等',
+    );
+    expect(find.text('早就答完那条'), findsNothing);
+
+    // 历史到了：它变成正常的一条历史消息，不回显重影、也不排队。
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    expect(find.text('早就答完那条'), findsOneWidget);
+    expect(find.text('排队中'), findsNothing);
+
+    await _leave(tester, remote);
+  });
+
+  testWidgets('宿主队列里已经没有它了：排队标记自己降级，不用等历史', (tester) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      PendingStore.keyFor(_host.id, _sessionId),
+      '[{"localId":"local-4","text":"早就不在队列里","requestId":"req-q4",'
+      '"sentAt":${DateTime.now().millisecondsSinceEpoch},'
+      '"queued":true,"failed":false}]',
+    );
+
+    final remote = await _pump(tester);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('早就不在队列里'), findsOneWidget);
+    expect(find.text('排队中'), findsNothing);
+    expect(find.byKey(const ValueKey<String>('wait-label')), findsNothing);
+
+    // 降级结果也落了盘：下次进来不必再纠正一遍。
+    final after = await SharedPreferences.getInstance();
+    expect(_pendingInPrefs(after), contains('"queued":false'));
+
     await _leave(tester, remote);
   });
 

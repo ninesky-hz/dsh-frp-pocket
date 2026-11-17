@@ -170,6 +170,20 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   /// 读完之前任何一次整表落盘都是「用空的表覆盖真数据」——那不叫同步，叫删库。
   bool _pendingReady = false;
 
+  /// 历史首屏是否已经落下（成功、失败、或者根本没历史都算）。
+  ///
+  /// 回填的「已发未回显」气泡必须等它：磁盘上那条只是**离场那一刻**的快照，
+  /// 上面写着的 `queued` 可能早就过期了。先上屏的话，一条几小时前就答完的消息
+  /// 会带着假的「排队中 / 撤回 / 插队」和底部「已送出，等待接手…」闪一下，
+  /// 等历史到了又凭空消失——用户看到的就是「明明早发出去了，还显示等待」。
+  bool _historySettled = false;
+
+  /// 历史迟迟不来（断线、慢网）时的兜底：别把待回显气泡无限期藏着。
+  Timer? _historySettleFallback;
+
+  /// 兜底时长：够慢网把一页历史拉回来，又不至于让离线的人对着空气等。
+  static const Duration kHistorySettleFallback = Duration(seconds: 2);
+
   // ------------------------------------------------------------ 图片附件
 
   /// 一次最多带几张图：服务端单条上限 20，但手机端 5 张已经足够，
@@ -427,6 +441,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     WidgetsBinding.instance.removeObserver(this);
     _snapshotTimer?.cancel();
     _childrenTimer?.cancel();
+    _historySettleFallback?.cancel();
     _permissionRetry?.cancel();
     _presetRetry?.cancel();
     unawaited(_sub?.cancel());
@@ -583,6 +598,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         _drafts.clear();
         final asOf = frame.asOfSeq;
         if (asOf == null) {
+          // 没有历史可对账：待回显气泡就是它事实上的全部，直接放出来。
+          _markHistorySettled();
           if (_loading) setState(() => _loading = false);
           return;
         }
@@ -1098,6 +1115,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         _insert(message);
         added = true;
       }
+      _markHistorySettled();
       setState(() {
         _loading = false;
         _loadError = null;
@@ -1114,17 +1132,31 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       if (_restoredLocalIds.isNotEmpty) unawaited(_reconcilePending());
     } on DshApiException catch (error) {
       if (!mounted) return;
+      _markHistorySettled();
       setState(() {
         _loading = false;
         _loadError = _describe(error);
       });
     } catch (error) {
       if (!mounted) return;
+      _markHistorySettled();
       setState(() {
         _loading = false;
         _loadError = '加载失败：$error';
       });
     }
+  }
+
+  /// 记下「历史已经对过账」：回填的待回显气泡从这一帧起可以上屏。
+  ///
+  /// 成功、失败、没历史都算——这三种情况下「历史里有没有这句话」都已经有结论，
+  /// 再藏着就没有意义了。
+  void _markHistorySettled() {
+    _historySettleFallback?.cancel();
+    _historySettleFallback = null;
+    if (_historySettled) return;
+    _historySettled = true;
+    if (mounted) setState(() {});
   }
 
   static String _describe(Object error) {
@@ -2188,6 +2220,14 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       apply();
     }
     _pendingReady = true;
+    // 历史还没到之前先别让它们上屏（见 [_historySettled]）；慢网/断线时兜底放行。
+    _historySettleFallback?.cancel();
+    _historySettleFallback = Timer(kHistorySettleFallback, () {
+      _historySettleFallback = null;
+      if (_disposed || _historySettled) return;
+      _historySettled = true;
+      if (mounted) setState(() {});
+    });
     unawaited(_reconcilePending());
   }
 
@@ -2226,7 +2266,14 @@ class _SessionChatScreenState extends State<SessionChatScreen>
           final waiting = items.any(
             (item) => item.rpcId != null && item.rpcId == message.requestId,
           );
-          final next = waiting ? ChatDelivery.queued : message.delivery;
+          // 队列里没有它就别再挂着「排队中」：要么已经开跑，要么早就答完了。
+          // 以前这里只在「在队列里」时才置位、从不回退，于是盘上的旧标记
+          // 一直挂到历史把它整条摘掉为止——那一段就是用户看到的假等待。
+          final next = waiting
+              ? ChatDelivery.queued
+              : (message.delivery == ChatDelivery.queued
+                    ? ChatDelivery.none
+                    : message.delivery);
           if (next != message.delivery) {
             _pending[i] = message.copyWith(delivery: next);
             changed = true;
@@ -2938,6 +2985,22 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     return thumbs;
   }
 
+  /// 可以上屏的「已发未回显」气泡。
+  ///
+  /// 从盘上回填的那些要等历史对完账（[_historySettled]）才放出来：磁盘记的是
+  /// 离场那一刻的状态，用户隔了一段时间再进来，它可能早就变成历史里的
+  /// `user/message` 了。先放出来就是一条假的重影 + 假的「排队中」。
+  /// 本次会话里自己刚发的（不在 [_restoredLocalIds] 里）不受这条限制。
+  List<ChatMessage> get _visiblePending {
+    if (_historySettled) return _pending;
+    return <ChatMessage>[
+      for (final message in _pending)
+        if (message.localId == null ||
+            !_restoredLocalIds.contains(message.localId))
+          message,
+    ];
+  }
+
   /// 上屏的行 = 定稿历史 + 本地待发 + 离线队列 + 流式草稿。
   ///
   /// 定稿的那部分先按轮折一遍：一个 turn 常被宿主拆成七八条只有过程的助手消息，
@@ -2958,7 +3021,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
               keepLastOpen: busy,
             )
           : _messages),
-      ..._pending,
+      ..._visiblePending,
       ..._hostQueueRows,
       ..._outboxMessages,
       ..._draftMessages,
@@ -3583,7 +3646,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   /// 两边相加：[_hostQueueRows] 在构造时已经把与本地重复的条目剔掉了，所以不会
   /// 同一条数两遍。
   int get _queuedCount =>
-      _pending.where((item) => item.delivery == ChatDelivery.queued).length +
+      _visiblePending
+          .where((item) => item.delivery == ChatDelivery.queued)
+          .length +
       _hostQueueRows
           .where((item) => item.delivery == ChatDelivery.queued)
           .length;
