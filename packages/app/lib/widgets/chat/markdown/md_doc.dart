@@ -340,7 +340,8 @@ List<MdInline> parseInline(String source) {
   final buffer = StringBuffer();
   void flush() {
     if (buffer.isEmpty) return;
-    out.add(MdText(buffer.toString()));
+    // 纯文字里夹着裸链接（`见 https://…`）也要能点开：在出栈处拆一次。
+    _appendText(out, buffer.toString());
     buffer.clear();
   }
 
@@ -372,7 +373,13 @@ List<MdInline> parseInline(String source) {
           flush();
           final label = source.substring(i + 1, close);
           final url = source.substring(close + 2, end).trim();
-          out.add(MdLink(url, parseInline(label)));
+          if (isOpenableUrl(url)) {
+            out.add(MdLink(url, parseInline(label)));
+          } else {
+            // `[文件](docs/x.md)`、`[锚点](#a)` 这类点了也打不开（手机上没有
+            // 相对路径这个概念），别画成链接糊弄人：只留文字。
+            out.addAll(parseInline(label));
+          }
           i = end + 1;
           continue;
         }
@@ -417,7 +424,63 @@ List<MdInline> parseInline(String source) {
   return out;
 }
 
-/// `*` 和 `_` 只有当左边不是字符（或右边不是字符）时才算标记，
+/// 只有 http/https 才算「点得动」的链接。
+///
+/// 手机上没有「相对路径」这个概念（`docs/x.md`、`#锚点`、`mailto:` 都不是浏览器能
+/// 直接打开的东西），一律不当链接渲染。判断放在这里，解析器和渲染层共用一份口径。
+bool isOpenableUrl(String url) {
+  final lower = url.trim().toLowerCase();
+  return lower.startsWith('http://') || lower.startsWith('https://');
+}
+
+/// 裸链接：`https://` / `http://` 开头，到空白或中文标点为止。
+///
+/// 不用 `\S+` 一把梭：英文句号、右括号、逗号经常紧跟链接出现（`见 https://a.com/x).`），
+/// 收进链接里点开就是 404。
+final RegExp _bareUrl = RegExp(
+  r'''https?://[^\s<>"'`，。；：！？、（）【】「」《》]+''',
+  caseSensitive: false,
+);
+
+/// 把一段纯文字拆成「文字 / 裸链接」交替的行内节点。
+void _appendText(List<MdInline> out, String text) {
+  var rest = text;
+  while (rest.isNotEmpty) {
+    final match = _bareUrl.firstMatch(rest);
+    if (match == null) {
+      out.add(MdText(rest));
+      return;
+    }
+    final url = _trimUrlTrail(match.group(0)!);
+    if (match.start > 0) out.add(MdText(rest.substring(0, match.start)));
+    out.add(MdLink(url, <MdInline>[MdText(url)]));
+    rest = rest.substring(match.start + url.length);
+  }
+}
+
+/// 去掉粘在链接尾巴上的标点，以及不配对的右括号。
+String _trimUrlTrail(String url) {
+  const trailing = '.,;:!?，。；：！？、';
+  var end = url.length;
+  while (end > 0) {
+    final char = url[end - 1];
+    if (trailing.contains(char)) {
+      end--;
+      continue;
+    }
+    if (char == ')') {
+      // 链接里本来带括号（维基那种 `Foo_(bar)`）时不动；多出来的 `)` 才剪掉。
+      final body = url.substring(0, end);
+      if (')'.allMatches(body).length > '('.allMatches(body).length) {
+        end--;
+        continue;
+      }
+    }
+    break;
+  }
+  return url.substring(0, end);
+}
+
 /// 否则 `snake_case_name` 会被当成斜体。
 bool _isDelimiter(String source, int index) {
   final char = source[index];

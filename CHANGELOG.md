@@ -1,3 +1,32 @@
+## 2026-11-17（会话正文里的链接真的能点开了）
+
+### app 1.11.0+51
+
+「链接要能打开呢？」——上一版只把链接画成蓝色下划线，点了没反应。
+
+- **症状**：会话里 assistant 回的消息带链接（`[AGENTS.md](https://…)` 或裸着的
+  `https://github.com/…`），手机上能看到蓝色下划线，点下去毫无反应，长按只能选中文字。
+- **根因**：两处。一是 v1.10.0 刻意只做了视觉（不想为「打开一个 URL」引入 `url_launcher`
+  这条带原生代码的依赖）；二是即便挂上 `TapGestureRecognizer`，挂在链接那层**外层** span
+  上也点不到——`RenderParagraph.hitTestChildren` 用 `getSpanForPosition` 拿到的是**最深**
+  那层叶子 span，识别器在父层等于没挂。
+- **改法**：
+  - `md_doc.dart`：新增 `isOpenableUrl`（只认 `http`/`https`）与裸链接自动识别
+    （`_appendText`/`_trimUrlTrail`，按空白与中文标点断开，剪掉粘在尾巴上的 `).`、`，`，
+    维基那种自带的 `Foo_(bar)` 括号不动）；`[文字](docs/x.md)` 这类相对地址不再画成链接，只留文字。
+  - `md_view.dart`：新增 `onLinkTap`，点击识别器按 URL 缓存（`_links`，`dispose` 里释放），
+    并用 `_withRecognizer` 把它摊到整棵 span 树的**每个叶子**上。
+  - `link_open.dart`（新）：`openExternalLink` 走已有的原生桥
+    `PlatformBridge.openUrl` → `Intent.ACTION_VIEW`，**零新依赖**；打不开时复制链接并提示
+    「打不开系统浏览器，链接已复制」，不留死链接。
+  - `chat_bubbles.dart`：`MdView` 两处调用都接上 `onLinkTap`（流式与长文预览都算）。
+- 测试：`test/markdown_test.dart` +9 条（裸链接、尾部标点、维基括号、行内码里不解析、
+  相对地址降级、`isOpenableUrl`、两处点击回调、没有回调时不炸）；新增
+  `test/link_open_test.dart` 3 条（桥能开 / 桥返回 false / 桥没注册，后两条断言复制到剪贴板
+  并弹提示）。全量 484 条通过。
+
+**安装**：下载 `dsh-pocket-1.11.0-51.apk`，`adb install -r` 覆盖安装即可（签名不变）。
+
 ## 2026-11-17（会话页现在按 markdown 渲染，版式跟 PC 对齐）
 
 ### app 1.10.0+50

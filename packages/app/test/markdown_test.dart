@@ -125,6 +125,49 @@ void main() {
       expect(inlines.whereType<MdCodeSpan>().single.text, '**a**');
       expect(inlines.whereType<MdStrong>(), isEmpty);
     });
+
+    test('裸链接自动变成可点的链接', () {
+      final inlines = parseInline('见 https://example.com/a 这里');
+      final link = inlines.whereType<MdLink>().single;
+      expect(link.url, 'https://example.com/a');
+      expect(_plain(link.children), 'https://example.com/a');
+      expect(_plain(inlines), '见 https://example.com/a 这里');
+    });
+
+    test('粘在链接尾巴上的标点不算进链接', () {
+      final link = parseInline('见 https://example.com/a). 完').whereType<MdLink>().single;
+      expect(link.url, 'https://example.com/a');
+      expect(parseInline('https://example.com/b, 后面').whereType<MdLink>().single.url,
+          'https://example.com/b');
+    });
+
+    test('链接自带的括号不剪（维基风格地址原样保留）', () {
+      const url = 'https://en.wikipedia.org/wiki/Foo_(bar)';
+      expect(parseInline(url).whereType<MdLink>().single.url, url);
+    });
+
+    test('行内码里的地址不当链接', () {
+      final inlines = parseInline('`https://example.com/a`');
+      expect(inlines.whereType<MdLink>(), isEmpty);
+      expect(inlines.whereType<MdCodeSpan>().single.text, 'https://example.com/a');
+    });
+
+    test('相对地址 / 锚点不当链接：只留文字', () {
+      final relative = parseInline('[文档](docs/x.md)');
+      expect(relative.whereType<MdLink>(), isEmpty);
+      expect(_plain(relative), '文档');
+      final anchor = parseInline('[#a](#a)');
+      expect(anchor.whereType<MdLink>(), isEmpty);
+      expect(_plain(anchor), '#a');
+    });
+
+    test('isOpenableUrl 只认 http/https', () {
+      expect(isOpenableUrl('https://a.com'), isTrue);
+      expect(isOpenableUrl('HTTP://a.com'), isTrue);
+      expect(isOpenableUrl('docs/x.md'), isFalse);
+      expect(isOpenableUrl('mailto:a@b.c'), isFalse);
+      expect(isOpenableUrl(''), isFalse);
+    });
   });
 
   group('previewMarkdown', () {
@@ -281,6 +324,44 @@ void main() {
       await pump(tester, MdView(text: '正文', style: _style(), selectable: false));
       expect(find.byType(SelectableText), findsNothing);
       expect(find.text('正文'), findsOneWidget);
+    });
+
+    testWidgets('点链接交给 onLinkTap（不可选中的正文）', (tester) async {
+      final tapped = <String>[];
+      await pump(
+        tester,
+        MdView(
+          text: '见 https://example.com/a 这里',
+          style: _style(),
+          selectable: false,
+          onLinkTap: tapped.add,
+        ),
+      );
+      await tester.tap(find.byType(Text).first);
+      await tester.pump();
+      expect(tapped, ['https://example.com/a']);
+    });
+
+    testWidgets('点链接交给 onLinkTap（可选中正文）', (tester) async {
+      final tapped = <String>[];
+      await pump(
+        tester,
+        MdView(
+          text: 'https://example.com/b',
+          style: _style(),
+          onLinkTap: tapped.add,
+        ),
+      );
+      await tester.tap(find.byType(SelectableText));
+      await tester.pump();
+      expect(tapped, ['https://example.com/b']);
+    });
+
+    testWidgets('没给 onLinkTap 时点链接不炸也不触发任何事', (tester) async {
+      await pump(tester, MdView(text: 'https://example.com/c', style: _style()));
+      await tester.tap(find.byType(SelectableText));
+      await tester.pump();
+      expect(tester.takeException(), isNull);
     });
   });
 }

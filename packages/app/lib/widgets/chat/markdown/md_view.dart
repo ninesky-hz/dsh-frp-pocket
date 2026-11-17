@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -37,6 +38,7 @@ class MdView extends StatefulWidget {
     this.streaming = false,
     this.selectable = true,
     this.onSelectionChanged,
+    this.onLinkTap,
   });
 
   final String text;
@@ -45,6 +47,9 @@ class MdView extends StatefulWidget {
 
   final bool selectable;
   final ValueChanged<TextSelection>? onSelectionChanged;
+
+  /// 点链接时怎么处理。为 null 时链接只做视觉（着色 + 下划线），点不动。
+  final ValueChanged<String>? onLinkTap;
 
   /// 流式光标那块的 key。测试与「光标消失了吗」的判断都靠它。
   static const Key caretKey = ValueKey<String>('md-caret');
@@ -57,6 +62,10 @@ class _MdViewState extends State<MdView> {
   List<MdBlock> _blocks = const <MdBlock>[];
   Timer? _timer;
   bool _pending = false;
+
+  /// 链接的点击识别器按 URL 缓存：每次 build 都新建一个的话，滚动几屏就漏一批。
+  final Map<String, TapGestureRecognizer> _links =
+      <String, TapGestureRecognizer>{};
 
   @override
   void initState() {
@@ -121,7 +130,40 @@ class _MdViewState extends State<MdView> {
   @override
   void dispose() {
     _timer?.cancel();
+    for (final recognizer in _links.values) {
+      recognizer.dispose();
+    }
+    _links.clear();
     super.dispose();
+  }
+
+  /// 把同一个点击识别器摊到整棵 span 树的所有叶子上。
+  TextSpan _withRecognizer(TextSpan span, GestureRecognizer recognizer) {
+    final children = span.children;
+    if (children == null || children.isEmpty) {
+      return TextSpan(
+        text: span.text,
+        style: span.style,
+        recognizer: recognizer,
+        mouseCursor: SystemMouseCursors.click,
+      );
+    }
+    return TextSpan(
+      style: span.style,
+      children: <InlineSpan>[
+        for (final child in children)
+          if (child is TextSpan)
+            _withRecognizer(child, recognizer)
+          else
+            child,
+      ],
+    );
+  }
+
+  TapGestureRecognizer _recognizerFor(String url) {
+    return _links.putIfAbsent(url, () {
+      return TapGestureRecognizer()..onTap = () => widget.onLinkTap?.call(url);
+    });
   }
 
   @override
@@ -276,15 +318,24 @@ class _MdViewState extends State<MdView> {
             decoration: TextDecoration.lineThrough,
             color: widget.style.textSecondary,
           )));
-        case MdLink(:final children):
-          // 链接只做视觉可辨：点开要引入 url_launcher 依赖，本轮不做（版本
-          // 说明里写了「链接暂不可点」）。想让它可点，就在这套 Span 外面套
-          // TapGestureRecognizer。
-          spans.add(_spanOf(children, base.copyWith(
-            color: widget.style.link,
-            decoration: TextDecoration.underline,
-            decorationColor: widget.style.link.withValues(alpha: 0.35),
-          )));
+        case MdLink(:final url, :final children):
+          // 可点靠 TextSpan 自带的 recognizer：手机上点一下就交给系统浏览器
+          // （`openExternalLink`），不引入 url_launcher。没给 onLinkTap 时
+          // 只保留视觉，避免「看着能点、点了没反应」之外的第二种误导。
+          final span = _spanOf(
+            children,
+            base.copyWith(
+              color: widget.style.link,
+              decoration: TextDecoration.underline,
+              decorationColor: widget.style.link.withValues(alpha: 0.35),
+            ),
+          );
+          // recognizer 必须挂在**叶子**上：命中测试拿到的是最深那层 span
+          // （`getSpanForPositionVisitor` 一路钻到没 children 为止），只挂外层
+          // 等于点不到。
+          spans.add(widget.onLinkTap == null
+              ? span
+              : _withRecognizer(span, _recognizerFor(url)));
       }
     }
     return TextSpan(children: spans, style: base);
@@ -476,6 +527,8 @@ class _InlineSpanBuilder {
             decoration: TextDecoration.lineThrough,
           )));
         case MdLink(:final children):
+          // 表格单元格里的链接不做点击：那一层是独立的 _InlineSpanBuilder，
+          // 拿到 recognizer 得再穿一遍参数，而表格里点链接不是主要路径。
           spans.add(build(children, base.copyWith(color: style.link)));
       }
     }

@@ -254,7 +254,7 @@ subdomain = "home"
    - 流式期间有 120ms 节流（`kMdStreamThrottle`）与 8000 字降级（`kMdStreamPlainLimit`）；光标是独立的一块（`MdView.caretKey`），不再是 `▌` 字符。
    - 定稿长消息仍按 `kLongTextChars` 截断，给的是 `previewMarkdown`（截断点落在换行、未闭合围栏会补齐），点「展开全文」看原文。
    - 工具/思考行改成竖排时间线（左侧细线 + 圆点），折叠与展开逻辑不变。
-   - **链接只做视觉**（着色 + 下划线），点不开——不引入 `url_launcher`；要开链接得在 Span 外套 `TapGestureRecognizer`。
+   - **链接可点**：`http`/`https` 的 `[文字](url)` 与裸链接都交给系统浏览器（`openExternalLink` → `PlatformBridge.openUrl` → 原生 `Intent.ACTION_VIEW`，不引入 `url_launcher`）；打不开时复制到剪贴板并提示。相对路径 / `#锚点` / `mailto:` 不画成链接（`isOpenableUrl` 只认 http/https）。点击识别器挂在**叶子** span 上——命中测试取的是最深那层，挂外层点不到。
    - 配色/字号集中在 `MdStyle.of(theme)`（`md_style.dart`），要更贴近 PC 只改这一个文件。
 
 ### 7.3 二维码内容（插件设置页生成，App 扫）

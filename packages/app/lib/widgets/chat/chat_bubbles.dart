@@ -14,6 +14,7 @@ import 'chat_note_sheet.dart';
 import 'markdown/md_doc.dart';
 import 'markdown/md_style.dart';
 import 'markdown/md_view.dart';
+import 'link_open.dart';
 import 'text_viewer.dart';
 import 'image_viewer.dart';
 
@@ -182,6 +183,7 @@ class MessageBubble extends StatelessWidget {
             text: previewMarkdown(message.text, kLongTextChars),
             style: MdStyle.of(theme),
             onSelectionChanged: onSelectionChanged,
+            onLinkTap: (url) => openExternalLink(context, url),
           ),
           TextButton(
             key: const ValueKey<String>('bubble.expand'),
@@ -209,6 +211,7 @@ class MessageBubble extends StatelessWidget {
       // 流式时关掉选字：每帧重建 `SelectableText` 的选区几何正是掉帧的主因。
       selectable: !typing,
       onSelectionChanged: onSelectionChanged,
+      onLinkTap: (url) => openExternalLink(context, url),
     );
   }
 
