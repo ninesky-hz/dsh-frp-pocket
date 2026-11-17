@@ -182,7 +182,12 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   Timer? _historySettleFallback;
 
   /// 兜底时长：够慢网把一页历史拉回来，又不至于让离线的人对着空气等。
-  static const Duration kHistorySettleFallback = Duration(seconds: 2);
+  /// 历史迟迟不来时的兜底放行时间。
+  ///
+  /// 只是最后一道阀门（真断网时 `_loadHistory` 自己会失败并放行），不该当成
+  /// 常规路径：以前是 2 秒，大会话走隧道拉一页常常超过它，于是「其实已经答完
+  /// 的那条」会先被放到底部、再在历史到达时消失——用户看到的就是那个鬼影。
+  static const Duration kHistorySettleFallback = Duration(seconds: 10);
 
   // ------------------------------------------------------------ 图片附件
 
@@ -1115,6 +1120,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         _insert(message);
         added = true;
       }
+      // 历史一到就先把已经变成历史的气泡收掉，再做别的——顺序反了用户会先看见
+      // 一条重复的旧消息挂在列表最下面，然后它自己消失（那正是「位置不对又闪一下」）。
+      final droppedEcho = _dropEchoedPending();
       _markHistorySettled();
       setState(() {
         _loading = false;
@@ -1122,6 +1130,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         _hasMoreHistory = history.hasMore;
         if (added && !quiet && !_atBottom) _hasNew = true;
       });
+      if (droppedEcho) unawaited(_persistPending());
       if (added) _scrollToBottom(animate: quiet);
       // 首屏站稳之后就把上一页悄悄取回来：用户第一次往上翻时，
       // 等的是「已经在路上的那一页」，而不是「现在才发出去的请求」。
@@ -2240,20 +2249,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   Future<void> _reconcilePending() async {
     if (_disposed || _restoredLocalIds.isEmpty) return;
     var changed = false;
-    for (final message in List<ChatMessage>.of(_pending)) {
-      final localId = message.localId;
-      if (localId == null || !_restoredLocalIds.contains(localId)) continue;
-      final echoed = _messages.any(
-        (item) =>
-            item.role == ChatRole.user &&
-            item.seq != null &&
-            item.text.trim() == message.text.trim(),
-      );
-      if (!echoed) continue;
-      _pending.removeWhere((item) => item.localId == localId);
-      _restoredLocalIds.remove(localId);
-      changed = true;
-    }
+    // 回声判定只写在一处（[_dropEchoedPending] / [_echoedInHistory]），别再抄一遍：
+    // 之前这里和上屏过滤各写一份，两份口径一歪就会出现「收了但又显示」的鬼影。
+    if (_dropEchoedPending()) changed = true;
 
     if (_linkOnline && _restoredLocalIds.isNotEmpty) {
       try {
@@ -2992,13 +2990,87 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   /// `user/message` 了。先放出来就是一条假的重影 + 假的「排队中」。
   /// 本次会话里自己刚发的（不在 [_restoredLocalIds] 里）不受这条限制。
   List<ChatMessage> get _visiblePending {
-    if (_historySettled) return _pending;
+    final pending = _historySettled
+        ? _pending
+        : <ChatMessage>[
+            for (final message in _pending)
+              // 历史还没到：只放行「确定还在等」的那些。它们不在历史里是有保证的
+              // （队列项还没被消费），所以位置也对——就在队尾。
+              // 其余（已经开跑或早就答完的）先藏着：它们大概率已经在历史里了，
+              // 提前放出来只会挂在最下面，等历史一到又消失（用户报的就是这个）。
+              if (message.localId == null ||
+                  !_restoredLocalIds.contains(message.localId) ||
+                  message.delivery == ChatDelivery.queued ||
+                  message.delivery == ChatDelivery.failed)
+                message,
+          ];
+    // 历史里已经有的（按 requestId 或同样的文字认）一律不再上屏。
+    // 上屏列表的顺序是「定稿历史 → 待回显 → 队列 → 草稿」，重复的那条只会
+    // 落在最下面：位置是错的，几秒后对账把它收掉还会再闪一下。两头都不划算。
+    final newest = _newestHistoryTime();
     return <ChatMessage>[
-      for (final message in _pending)
-        if (message.localId == null ||
-            !_restoredLocalIds.contains(message.localId))
+      for (final message in pending)
+        if (!_echoedInHistory(message) && !_olderThanHistory(message, newest))
           message,
     ];
+  }
+
+  /// 历史里最新一条的时间：判断一条待回显「还有没有可能是刚发出去的」要用。
+  DateTime? _newestHistoryTime() {
+    for (var i = _messages.length - 1; i >= 0; i--) {
+      final time = _messages[i].time;
+      if (time != null) return time;
+    }
+    return null;
+  }
+
+  /// 这条待回显比历史里最新的一条还早 —— 它不可能还在路上。
+  ///
+  /// 超过十分钟差得离谱也没关系：既然历史已经走到它后面，那它要么已经变成
+  /// 历史（只是正文跟本地记的不一样，认不出来），要么早被宿主消化掉了。
+  /// 两种情况都不该把它挂在列表最下面——用户看到的就是「位置不对，一会儿又没了」。
+  bool _olderThanHistory(ChatMessage message, DateTime? newest) {
+    if (newest == null) return false;
+    final localId = message.localId;
+    final sentAt =
+        (localId == null ? null : _pendingSentAt[localId]) ?? message.time;
+    if (sentAt == null) return false;
+    return sentAt.isBefore(newest);
+  }
+
+  /// 这条本地气泡是不是已经变成历史了。
+  ///
+  /// 先认 `requestId`（那是发出去时自己定下的，最可靠），再退一步认文字：
+  /// 老记录可能没有 `requestId`，但「同一条已定稿的用户消息」不会有两条。
+  bool _echoedInHistory(ChatMessage message) {
+    for (final item in _messages) {
+      if (item.role != ChatRole.user) continue;
+      // 只有定稿的才算：草稿是本地拼出来的，不能拿来当「已经在历史里」的证据。
+      if (item.seq == null) continue;
+      if (message.requestId != null && item.requestId == message.requestId) {
+        return true;
+      }
+      if (item.text.trim() == message.text.trim()) return true;
+    }
+    return false;
+  }
+
+  /// 把已经在历史里的待回显气泡就地收掉，顺手清掉「还没上屏」的登记。
+  ///
+  /// 必须在 [_markHistorySettled] 之前调用：那一步会立刻重建界面，晚一步就说明
+  /// 用户会先看见那条重复的气泡落在最下面，然后眼睁睁看它消失。
+  bool _dropEchoedPending() {
+    if (_pending.isEmpty) return false;
+    final before = _pending.length;
+    _pending.removeWhere((message) {
+      final echoed = _echoedInHistory(message);
+      if (echoed) {
+        final localId = message.localId;
+        if (localId != null) _restoredLocalIds.remove(localId);
+      }
+      return echoed;
+    });
+    return _pending.length != before;
   }
 
   /// 上屏的行 = 定稿历史 + 本地待发 + 离线队列 + 流式草稿。

@@ -103,6 +103,43 @@ void main() {
     probe.dispose();
   });
 
+  test('info 单独计时：整轮耗时里含登录和 health，两者不能混', () async {
+    final client = MockClient((request) async {
+      switch (request.url.path) {
+        case _infoPath:
+          return _json(_infoBody);
+        case _loginPath:
+          // 登录慢悠悠：这 120ms 不该算进「主机响应」。
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+          return _json('{"ok":true,"token":"tok_123"}');
+        case _healthPath:
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+          return _json(_healthBody);
+      }
+      return http.Response('not found', 404);
+    });
+
+    final probe = ProbeService(client: client);
+    final result = await probe.probe(_host);
+
+    final infoMs = result.infoLatencyMs;
+    final totalMs = result.latencyMs;
+    expect(infoMs, isNotNull);
+    expect(totalMs, isNotNull);
+    expect(
+      infoMs,
+      lessThan(100),
+      reason: 'info 自己没有人为延迟，不该被后面两步拖慢',
+    );
+    expect(
+      totalMs! - infoMs!,
+      greaterThanOrEqualTo(200),
+      reason: '整轮比 info 多出的应该是那两次 120ms 的慢响应',
+    );
+
+    probe.dispose();
+  });
+
   test('info 的 restart 能力位决定菜单项能不能点', () async {
     final client = MockClient((request) async {
       if (request.url.path == _infoPath) {

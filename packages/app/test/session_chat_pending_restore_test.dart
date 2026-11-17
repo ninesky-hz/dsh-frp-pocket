@@ -36,6 +36,7 @@ class _HangRemote extends DshRemote {
     this.history = const <SessionLogEvent>[],
     this.queue = const <DshQueuedItem>[],
     this.pageDelay = Duration.zero,
+    this.queueDelay = Duration.zero,
   }) : super(host: _host);
 
   final List<SessionLogEvent> history;
@@ -44,6 +45,10 @@ class _HangRemote extends DshRemote {
   /// 历史那一页在路上的耗时：真实网络里它远慢于「读磁盘回填气泡」，
   /// 「闪一下假排队」的复现就靠这个差。
   final Duration pageDelay;
+
+  /// 问宿主队列那一次的耗时：慢的时候「已经不是待回显」的气泡会多挂一会儿，
+  /// 正好用来暴露「重复气泡停在队尾」这类问题。
+  final Duration queueDelay;
   final List<String> sent = <String>[];
   final Completer<void> gate = Completer<void>();
 
@@ -94,7 +99,10 @@ class _HangRemote extends DshRemote {
   }
 
   @override
-  Future<List<DshQueuedItem>> queuedItems(String sessionId) async => queue;
+  Future<List<DshQueuedItem>> queuedItems(String sessionId) async {
+    if (queueDelay > Duration.zero) await Future<void>.delayed(queueDelay);
+    return queue;
+  }
 
   @override
   Future<void> cancel(String sessionId) async {}
@@ -112,7 +120,7 @@ class _HangRemote extends DshRemote {
 }
 
 /// 一条历史里的用户消息（durable，带 seq）。
-SessionLogEvent _user(int seq, String text, {String? requestId}) {
+SessionLogEvent _user(int seq, String text, {String? requestId, DateTime? at}) {
   final source = <String, Object?>{'kind': 'user'};
   if (requestId != null) source['rpcId'] = requestId;
   final message = <String, Object?>{
@@ -125,7 +133,25 @@ SessionLogEvent _user(int seq, String text, {String? requestId}) {
   return SessionLogEvent(
     type: 'user/message',
     seq: seq,
+    time: at,
     data: <String, Object?>{'message': message},
+  );
+}
+
+/// 一条历史里的助手回复（durable，带 seq）：用来钉「这条消息排在哪」。
+SessionLogEvent _assistant(int seq, String text, {DateTime? at}) {
+  return SessionLogEvent(
+    type: 'assistant/message',
+    seq: seq,
+    time: at,
+    data: <String, Object?>{
+      'message': <String, Object?>{
+        'role': 'assistant',
+        'content': <Object?>[
+          <String, Object?>{'type': 'text', 'text': text},
+        ],
+      },
+    },
   );
 }
 
@@ -143,9 +169,15 @@ Future<_HangRemote> _pump(
   List<SessionLogEvent> history = const <SessionLogEvent>[],
   List<DshQueuedItem> queue = const <DshQueuedItem>[],
   Duration pageDelay = Duration.zero,
+  Duration queueDelay = Duration.zero,
   Future<PromptImage?> Function()? pickImage,
 }) async {
-  final remote = _HangRemote(history: history, queue: queue, pageDelay: pageDelay);
+  final remote = _HangRemote(
+    history: history,
+    queue: queue,
+    pageDelay: pageDelay,
+    queueDelay: queueDelay,
+  );
   await tester.pumpWidget(
     MaterialApp(
       home: SessionChatScreen(
@@ -300,6 +332,67 @@ void main() {
     await tester.pump();
     expect(find.text('早就答完那条'), findsOneWidget);
     expect(find.text('排队中'), findsNothing);
+
+    await _leave(tester, remote);
+  });
+
+  testWidgets('早就发出去的那条，不该在历史末尾再挂一次（位置不对，还会消失）', (tester) async {
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    final sentAt = now.subtract(const Duration(hours: 2));
+    // 盘上留着一条两小时前发出去的气泡（宿主早就处理完了），
+    // 历史里最新的一轮是十分钟前的——它不可能还在路上。
+    await prefs.setString(
+      PendingStore.keyFor(_host.id, _sessionId),
+      '[{"localId":"local-5","text":"按口播方案重出一版","requestId":"req-q5",'
+      '"sentAt":${sentAt.millisecondsSinceEpoch},'
+      '"queued":false,"failed":false},'
+      '{"localId":"local-6","text":"这条刚发出去","requestId":"req-q6",'
+      '"sentAt":${now.millisecondsSinceEpoch},'
+      '"queued":true,"failed":false}]',
+    );
+
+    final remote = await _pump(
+      tester,
+      history: <SessionLogEvent>[
+        // 宿主把这条改写过（带图的消息正文会被补上附件说明），
+        // 于是本地记的正文跟历史里那条对不上——正是这种「认不出来」制造鬼影。
+        _user(
+          3,
+          '按口播方案重出一版\n\n[附件 封面.png]',
+          requestId: 'req-q5',
+          at: now.subtract(const Duration(minutes: 12)),
+        ),
+        _assistant(
+          4,
+          '收到，我按口播方案重出一版',
+          at: now.subtract(const Duration(minutes: 10)),
+        ),
+      ],
+      queue: const <DshQueuedItem>[
+        DshQueuedItem(id: 'item-2', placement: 'queued', rpcId: 'req-q6'),
+      ],
+    );
+
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // 本地那份（正文恰好是这一句）不该出现在界面上：它只会在末尾当鬼影。
+    expect(find.text('按口播方案重出一版'), findsNothing, reason: '不该再挂一条到列表末尾');
+    // 历史里那条在自己该在的位置：助手回复上面。
+    final historyText = find.textContaining('[附件 封面.png]');
+    expect(historyText, findsOneWidget);
+    final userY = tester.getTopLeft(historyText).dy;
+    final replyY = tester.getTopLeft(find.textContaining('我按口播方案重出一版')).dy;
+    expect(userY, lessThan(replyY));
+
+    // 真的刚发出去、还在排队的那条照常在底部等。
+    expect(find.text('这条刚发出去'), findsOneWidget);
+
+    // 再等一会儿也不该「一会儿就消失」。
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('按口播方案重出一版'), findsNothing);
+    expect(find.textContaining('[附件 封面.png]'), findsOneWidget);
 
     await _leave(tester, remote);
   });

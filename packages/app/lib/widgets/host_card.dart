@@ -16,11 +16,17 @@ class HostCard extends StatelessWidget {
     required this.onTap,
     required this.onMenu,
     required this.onLongPress,
+    this.runningSessions,
   });
 
   final Host host;
   final ProbeResult? result;
   final bool probing;
+
+  /// 这台主机上正在跑的会话数；`null` 表示这次没读到（未配置 PIN、DSH 没响应等），
+  /// 卡片就不显示这一项，而不是硬写一个 0 骗人。
+  final int? runningSessions;
+
   final VoidCallback onTap;
   final VoidCallback onMenu;
   final VoidCallback onLongPress;
@@ -30,6 +36,7 @@ class HostCard extends StatelessWidget {
     final theme = Theme.of(context);
     final status = result?.status;
     final dshVersion = result?.dshVersion;
+    final online = result?.isOnline ?? false;
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -155,6 +162,13 @@ class HostCard extends StatelessWidget {
                         ),
                       ],
                     ),
+                    if (online || runningSessions != null) ...[
+                      const SizedBox(height: 6),
+                      _StatsLine(
+                        latencyMs: online ? result?.infoLatencyMs : null,
+                        runningSessions: runningSessions,
+                      ),
+                    ],
                     if (host.pin.isEmpty)
                       Padding(
                         padding: const EdgeInsets.only(top: 6),
@@ -177,6 +191,66 @@ class HostCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// 状态行下面那行小字：响应时间 · 正在跑的会话数。
+///
+/// 两件事都是「用起来才关心」的信息，所以字号比状态行还小一档、颜色走
+/// onSurfaceVariant，不跟「在线 / 隧道运行中」抢注意力；有会话在跑时
+/// 才给那一小段上主色，扫一眼就知道这台机器在干活。
+class _StatsLine extends StatelessWidget {
+  const _StatsLine({this.latencyMs, this.runningSessions});
+
+  final int? latencyMs;
+  final int? runningSessions;
+
+  /// 1000ms 以内按毫秒，超过就换成秒——5000ms 这种读起来没有 5.0s 直观。
+  static String formatLatency(int ms) {
+    if (ms < 1000) return '$ms ms';
+    return '${(ms / 1000).toStringAsFixed(1)} s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = theme.textTheme.bodySmall?.copyWith(
+      fontSize: 11,
+      height: 1.35,
+      color: theme.colorScheme.onSurfaceVariant,
+      fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+    );
+    final running = runningSessions;
+    final busy = running != null && running > 0;
+    final parts = <Widget>[
+      if (latencyMs != null)
+        Text(
+          '响应 ${formatLatency(latencyMs!)}',
+          key: const ValueKey<String>('host-latency'),
+          style: muted,
+        ),
+      if (latencyMs != null && running != null) Text(' · ', style: muted),
+      if (running != null)
+        Text(
+          '$running 个会话在跑',
+          key: const ValueKey<String>('host-running'),
+          style: busy
+              ? muted?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w600,
+                )
+              : muted,
+        ),
+    ];
+    if (parts.isEmpty) return const SizedBox.shrink();
+    // 用 Wrap 而不是 Row：窄屏（320dp）配三位数会话数时，两段挤不下就折行，
+    // 不要把卡片撑破。真机上这点字（十几字）从来不会折。
+    return Wrap(
+      key: const ValueKey<String>('host-stats'),
+      spacing: 2,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: parts,
     );
   }
 }

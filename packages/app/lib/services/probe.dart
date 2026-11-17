@@ -39,6 +39,7 @@ class ProbeResult {
     this.restartTunnel = false,
     this.restartDsh,
     this.latencyMs,
+    this.infoLatencyMs,
     this.errorKey,
     this.errorMessage,
   });
@@ -80,7 +81,14 @@ class ProbeResult {
   /// `/api/info` 的 `restart.dsh`：`app`（桌面版）| `process`（终端部署）| `off`。
   final String? restartDsh;
 
+  /// 整轮探测（info → login → health）的耗时，编辑页里当「耗时」显示。
   final int? latencyMs;
+
+  /// 只属于 `info` 那一次请求的往返耗时。
+  ///
+  /// 主机卡片上要显示「响应 xx ms」，用的必须是这一个：整轮探测还夹着 PIN
+  /// 登录和 health，主机好好的也能算出两三百毫秒，拿来当响应时间会冤枉它。
+  final int? infoLatencyMs;
 
   /// 这台主机能不能接受「重启 DSH」。
   bool get canRestartDsh => restartDsh == 'app' || restartDsh == 'process';
@@ -161,11 +169,13 @@ class ProbeService {
     final stopwatch = Stopwatch()..start();
 
     final info = await _get(_apiUri(host, 'info'));
+    final infoMs = stopwatch.elapsedMilliseconds;
     final infoResponse = info.response;
     if (infoResponse == null) {
       return ProbeResult(
         status: ProbeStatus.offline,
         latencyMs: stopwatch.elapsedMilliseconds,
+        infoLatencyMs: infoMs,
         errorKey: info.errorKey,
         errorMessage: info.errorMessage,
       );
@@ -179,6 +189,7 @@ class ProbeService {
         status: ProbeStatus.tunnelOnly,
         httpStatus: infoResponse.statusCode,
         latencyMs: stopwatch.elapsedMilliseconds,
+        infoLatencyMs: infoMs,
         errorKey: 'not_dsh_gateway',
         errorMessage: _tunnelOnlyMessage(infoResponse.statusCode),
       );
@@ -268,6 +279,7 @@ class ProbeService {
       restartTunnel: restartTunnel,
       restartDsh: restartDsh,
       latencyMs: stopwatch.elapsedMilliseconds,
+      infoLatencyMs: infoMs,
     );
   }
 

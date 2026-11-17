@@ -5,6 +5,7 @@ import 'app_scope.dart';
 import 'data/host_store.dart';
 import 'data/settings_store.dart';
 import 'screens/hosts_screen.dart';
+import 'services/dsh_api.dart';
 import 'services/probe.dart';
 import 'services/turn_watch.dart';
 import 'theme/app_theme.dart';
@@ -30,6 +31,7 @@ class DshFrpApp extends StatelessWidget {
     required this.hostStore,
     required this.settingsStore,
     this.probe,
+    this.api,
   });
 
   final HostStore hostStore;
@@ -38,6 +40,10 @@ class DshFrpApp extends StatelessWidget {
   /// 测试注入用：widget test 传入假探测实现以避免真实网络请求。
   @visibleForTesting
   final ProbeService? probe;
+
+  /// 测试注入用：主机卡片要数「正在跑的会话」，widget test 里换成假的 [DshApi]。
+  @visibleForTesting
+  final DshApi? api;
 
   @override
   Widget build(BuildContext context) {
@@ -69,7 +75,7 @@ class DshFrpApp extends StatelessWidget {
             // 自己的 AppBar 与弹窗。
             builder: (context, child) =>
                 DynamicIslandHost(child: child ?? const SizedBox.shrink()),
-            home: HostsScreen(probe: probe),
+            home: HostsScreen(probe: probe, api: api),
           ),
         );
       },

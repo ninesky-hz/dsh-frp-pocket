@@ -15,12 +15,16 @@ import '../theme/app_icons.dart';
 
 /// 首页：主机列表（CONTRACT §7.2.1）。
 class HostsScreen extends StatefulWidget {
-  const HostsScreen({super.key, this.probe});
+  const HostsScreen({super.key, this.probe, this.api});
 
   /// 测试注入用：传入假探测实现后可避免 widget test 触发真实网络。
   /// 生产环境不传，仍然创建真实 [ProbeService]。
   @visibleForTesting
   final ProbeService? probe;
+
+  /// 测试注入用：会话计数要走 DSH 的 `session/list`，测试里换成假的。
+  @visibleForTesting
+  final DshApi? api;
 
   @override
   State<HostsScreen> createState() => _HostsScreenState();
@@ -28,9 +32,13 @@ class HostsScreen extends StatefulWidget {
 
 class _HostsScreenState extends State<HostsScreen> {
   late final ProbeService _probe = widget.probe ?? ProbeService();
-  final DshApi _api = DshApi();
+  late final DshApi _api = widget.api ?? DshApi();
   final Map<String, ProbeResult> _results = <String, ProbeResult>{};
   final Set<String> _probing = <String>{};
+
+  /// 每台主机上正在跑的会话数。key 是本地主机 id，`null` 值不会存进来——
+  /// 读不到就保留上一次的数字，第一次读不到就当未知（卡片不显示这一项）。
+  final Map<String, int> _runningSessions = <String, int>{};
 
   @override
   void initState() {
@@ -57,15 +65,37 @@ class _HostsScreenState extends State<HostsScreen> {
     setState(() => _probing.add(host.id));
     final result = await _probe.probe(host);
     if (!mounted) return;
+    // 会话数要另外走一次 DSH 的 session/list（探测器只管网关那几个端点），
+    // 所以放在探测之后；拿不到就不动上一次的数字。
+    final running = result.isOnline ? await _runningCount(host) : null;
+    if (!mounted) return;
     setState(() {
       _probing.remove(host.id);
       _results[host.id] = result;
+      if (running != null) {
+        _runningSessions[host.id] = running;
+      } else if (!result.isOnline) {
+        // 主机都不在线了，上一次的数字已经没有意义，别继续挂着骗人。
+        _runningSessions.remove(host.id);
+      }
     });
     final store = AppScope.of(context).hosts;
     await store.applyProbe(host.id, online: result.isOnline);
     final serverHostId = result.serverHostId;
     if (serverHostId != null) {
       await store.applyServerIdentity(host.id, serverHostId);
+    }
+  }
+
+  /// 数一下这台主机上正在跑的会话；读不到就返回 `null`（未配置 PIN、DSH 没响应、
+  /// 会话列表里没有 `running` 字段的老版本，都算读不到）。
+  Future<int?> _runningCount(Host host) async {
+    if (host.pin.isEmpty) return null;
+    try {
+      final sessions = await _api.listSessions(host);
+      return sessions.where((session) => session.running).length;
+    } on Object {
+      return null;
     }
   }
 
@@ -309,6 +339,7 @@ class _HostsScreenState extends State<HostsScreen> {
                     host: host,
                     result: _results[host.id],
                     probing: _probing.contains(host.id),
+                    runningSessions: _runningSessions[host.id],
                     onTap: () => _openHost(host),
                     onMenu: () => _showActions(host),
                     onLongPress: () => _showActions(host),

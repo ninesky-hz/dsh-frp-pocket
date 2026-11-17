@@ -245,6 +245,11 @@ subdomain = "home"
 ### 7.2 页面
 
 1. **主机列表**（首页）：卡片显示名称、域名、状态点（探测 `/api/info` + `/api/health`，15s 超时，支持下拉刷新）、最近在线时间；点击进入 WebView；长按/菜单：编辑、重启隧道、重启 DSH、删除（不再提供「复制链接」「在浏览器打开」——WebView 需要 PIN 握手，跳外部浏览器落不了地）。
+   - 状态行下面还有一行小字：**响应时间**与**正在跑的会话数**。
+     响应时间取 `ProbeResult.infoLatencyMs`（只算 `/api/info` 那一次往返；`latencyMs` 是整轮
+     info→login→health，夹着 PIN 登录，拿来当响应时间会冤枉主机），≥1000ms 换成秒显示。
+     会话数走 DSH 的 `session/list`，数 `running == true` 的条数；未配置 PIN、DSH 没响应、
+     或掉线时都不显示（不硬写 0）。数字来自列表页的探测流程，下拉刷新或从会话页返回时更新。
 2. **添加/编辑**：名称、URL、PIN；"扫码添加"（扫 `dshf rp://` 或纯 URL+pin 的二维码）；"测试连接"按钮（info + login 校验）。
 3. **WebView**：首屏 `url/?pin=PIN`；Cookie 持久化；支持文件上传/下载、深链、返回键=历史后退、长按选择、下拉刷新、断线重连提示；底部/顶部显示主机名与连接状态。
 4. **设置**：深色/浅色、保持屏幕常亮、桌面 UA 切换（排查用）、清除某主机 Cookie、关于。
@@ -263,6 +268,10 @@ subdomain = "home"
      `{type:'image', attachment:{attachmentId:'sha256:…'}}`，它们被并进**上一条助手消息**（同一条
      结果重复投递按 `attachmentId` 去重）；前面没有助手消息时单独成一条只含图的气泡。
      渲染与取字节复用用户图片那条路径（`ChatImageTile` + `DshRemote.cachedAttachment`）。
+7. **待回显气泡的可见性**（`session_chat_screen.dart`）：从磁盘缓存（`PendingStore`）回填的「已发未回显」气泡默认**不上屏**——`_displayItems` 的顺序是「历史 → 待回显 → 宿主队列 → 草稿」，它一上屏就只能挂在最末尾，历史里其实早有这条时会变成「位置不对、几秒后又消失」的鬼影。规则：
+   - 历史没对完账时只放行本次会话自己刚发的、以及 `queued`/`failed` 的（这两种确实还没开跑，位置在底部是对的）；`kHistorySettleFallback`（10s）只是断线慢网的最后一道阀门。
+   - 两道统一过滤：`_echoedInHistory`（历史 `user/message` 的 `requestId` 相同，或正文 `trim()` 相同）与 `_olderThanHistory`（本地记录时间早于历史最新一条 ⇒ 不可能还在路上，不显示但**不删盘**）。宿主会把带图消息正文改写成 `原文\n\n[附件 xxx.png]`，所以正文比对之外还要靠时间兜底。
+   - 回声清理收口到 `_dropEchoedPending()`，`_loadHistory`（放在 `_markHistorySettled()` 之前）与 `_reconcilePending` 共用同一套口径，避免两处判断漂移。
 
 ### 7.3 二维码内容（插件设置页生成，App 扫）
 
