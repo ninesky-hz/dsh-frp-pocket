@@ -36,6 +36,24 @@ SessionLogEvent _userEvent(
       },
     );
 
+/// 工具结果的线上形状：`data.message` 里是 role=tool 的 content parts。
+SessionLogEvent _toolResult(List<Object?> content, {int seq = 11}) =>
+    SessionLogEvent(
+      type: 'tool/result',
+      seq: seq,
+      time: DateTime.fromMillisecondsSinceEpoch(1794483452600),
+      data: <String, Object?>{
+        'turn': 1,
+        'step': 2,
+        'message': <String, Object?>{
+          'role': 'tool',
+          'toolCallId': 'call_1',
+          'content': content,
+          'isError': false,
+        },
+      },
+    );
+
 void main() {
   group('user/message 的图片 part', () {
     test('纯图消息不再被当成空消息丢掉', () {
@@ -109,6 +127,121 @@ void main() {
       expect(bubble, isNotNull);
       expect(bubble!.role, ChatRole.assistant);
       expect(bubble.images.single.attachmentId, 'sha256:beef');
+    });
+  });
+
+  group('tool/result 里的图片', () {
+    test('挂到发起这次调用的助手消息上，不单独造气泡', () {
+      final history = SessionHistory(
+        cursor: 12,
+        records: <SessionLogEvent>[
+          SessionLogEvent(
+            type: 'assistant/message',
+            seq: 10,
+            data: <String, Object?>{
+              'message': <String, Object?>{
+                'content': <Object?>[
+                  <String, Object?>{
+                    'type': 'tool-call',
+                    'id': 'call_1',
+                    'name': 'read_image',
+                    'arguments': '{"path":"a.png"}',
+                  },
+                ],
+              },
+            },
+          ),
+          _toolResult(<Object?>[_imagePart(attachmentId: 'sha256:shot')]),
+        ],
+        hasMore: false,
+      );
+
+      final messages = history.messages;
+      expect(messages, hasLength(1), reason: '工具结果不单独占一条气泡');
+      expect(messages.single.role, ChatRole.assistant);
+      expect(messages.single.images, hasLength(1));
+      expect(messages.single.images.single.attachmentId, 'sha256:shot');
+      expect(messages.single.notes, hasLength(1));
+    });
+
+    test('工具结果只有文本时什么都不加', () {
+      final history = SessionHistory(
+        cursor: 12,
+        records: <SessionLogEvent>[
+          SessionLogEvent(
+            type: 'assistant/message',
+            seq: 10,
+            data: <String, Object?>{
+              'message': <String, Object?>{
+                'content': <Object?>[
+                  <String, Object?>{'type': 'text', 'text': '好了'},
+                ],
+              },
+            },
+          ),
+          _toolResult(<Object?>[
+            <String, Object?>{'type': 'text', 'text': '<path>a.txt</path>'},
+          ]),
+        ],
+        hasMore: false,
+      );
+
+      expect(history.messages, hasLength(1));
+      expect(history.messages.single.images, isEmpty);
+    });
+
+    test('同一条结果重复投递不会把图片加两遍', () {
+      const bubble = ChatMessage(
+        key: 'seq:10',
+        role: ChatRole.assistant,
+        text: '好了',
+      );
+      final once = withImages(bubble, <ChatImageRef>[
+        ChatImageRef(attachmentId: 'sha256:shot', mediaType: 'image/png'),
+      ]);
+      final twice = withImages(once, <ChatImageRef>[
+        ChatImageRef(attachmentId: 'sha256:shot', mediaType: 'image/png'),
+      ]);
+
+      expect(once.images, hasLength(1));
+      expect(twice.images, hasLength(1));
+      expect(identical(twice, once), isTrue, reason: '没新图时返回原对象，调用方就不用重绘');
+    });
+
+    test('toolResultImages 只认 tool/result 事件', () {
+      expect(
+        toolResultImages(
+          SessionLogEvent(
+            type: 'assistant/message',
+            seq: 1,
+            data: <String, Object?>{
+              'message': <String, Object?>{
+                'content': <Object?>[_imagePart()],
+              },
+            },
+          ),
+        ),
+        isEmpty,
+      );
+      expect(
+        toolResultImages(_toolResult(<Object?>[_imagePart()])).single.attachmentId,
+        'sha256:c414',
+      );
+    });
+
+    test('前面还没有助手消息时，工具图片单独成一条而不是消失', () {
+      final history = SessionHistory(
+        cursor: 3,
+        records: <SessionLogEvent>[
+          _toolResult(<Object?>[_imagePart()]),
+        ],
+        hasMore: false,
+      );
+
+      expect(history.messages, hasLength(1));
+      expect(history.messages.single.role, ChatRole.assistant);
+      expect(history.messages.single.images, hasLength(1));
+      expect(history.messages.single.key, 'tool:11');
     });
   });
 

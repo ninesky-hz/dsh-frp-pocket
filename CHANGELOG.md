@@ -1,3 +1,33 @@
+## 2026-11-17（PC 端生成的图片，手机端也看得见了）
+
+### app 1.11.2+53
+
+「pc端生成的图片，app上看不到」——PC 上工具跑出来的图（截图、生成的图、读进来的图），
+手机端一条都不显示，文字却一切正常。
+
+- **症状**：同一段会话，PC 端在工具那一行下面能看到图片缩略图，手机端翻到底也只有文字说明
+  （`<path>…</path> <type>image</type>`），历史与实时流都缺图。
+- **根因**：图片挂在 `tool/result` 事件的 `data.message.content` 里（`{type:'image',
+  attachment:{attachmentId:'sha256:…', …}}`），而 app 解析历史只认 `user/message` 与
+  `assistant/message`——`chatMessageOf` 遇到 `tool/result` 直接返回 null，图在这一步就丢了。
+  取图链路本身是通的：`session/attachment` 认 `sha256:` 开头的 id，返回 base64 与原始字节一致。
+- **改法**：
+  - `models/session_event.dart`：`SessionHistory.messages` 改两趟——第一趟照旧解析消息，
+    第二趟把每条 `tool/result` 里的图并进**上一条助手消息**（工具输出本来就属于那一轮）；
+    新增 `toolResultImages` / `lastAssistantIndex` / `withImages`（按 `attachmentId` 去重，
+    没有新增时返回同一对象，界面不必重绘）/ `toolResultMessage`（前面没有助手消息时的退路，
+    单独成一条只含图的气泡，而不是把图丢掉）。
+  - `screens/session_chat_screen.dart`：`_handleEvent` 接住 `tool/result`，并进当前消息气泡后
+    触发一次刷新。
+  - 界面零改动复用：气泡里的 `ChatImageTile` 与大图查看器、`DshRemote.cachedAttachment` 的
+    磁盘缓存都给 `message.images` 用，所以工具图和用户自己发的图走同一条取字节路径。
+- 测试：`test/session_event_image_test.dart` +5 条（并到助手消息、只有文本不加、重复投递去重、
+  只认 `tool/result`、无助手消息时单独成条），`test/session_chat_image_test.dart` +2 条
+  （流式 `tool/result` 后真出现 `ChatImageTile`、同一条补投两次只显示一张）。
+  全量 492 条通过，`flutter analyze` 无问题。
+
+**安装**：下载 `dsh-pocket-1.11.2-53.apk`，`adb install -r` 覆盖安装即可（签名不变）。
+
 ## 2026-11-17（展开全文的阅读页改用同一套渲染）
 
 ### app 1.11.1+52

@@ -87,13 +87,29 @@ class SessionHistory {
   }
 
   /// 只保留能渲染成气泡的事件（user/assistant 的 text part）。
+  ///
+  /// `tool/result` 里的图片不单独造气泡，而是挂到**发起这次调用的那条助手消息**
+  /// 上：PC 端就是这样——工具跑了什么、产出了什么图，都在同一段里。
   List<ChatMessage> get messages {
     final result = <ChatMessage>[];
     for (final event in records) {
       final message = chatMessageOf(event);
-      if (message != null) result.add(message);
+      if (message != null) {
+        result.add(message);
+        continue;
+      }
+      final images = toolResultImages(event);
+      if (images.isEmpty) continue;
+      final index = lastAssistantIndex(result);
+      if (index < 0) {
+        // 前面没有可挂的消息（老数据、或者这一轮只留了 `tool/call` 事件）：
+        // 退成一条只有图的助手消息，总比让用户看不见强。
+        result.add(toolResultMessage(event, images));
+        continue;
+      }
+      result[index] = withImages(result[index], images);
     }
-    return result;
+    return List<ChatMessage>.unmodifiable(result);
   }
 }
 
@@ -429,6 +445,61 @@ List<ChatImageRef> contentImages(Object? content) {
     if (ref != null) images.add(ref);
   }
   return images.isEmpty ? const <ChatImageRef>[] : List.unmodifiable(images);
+}
+
+/// `tool/result` 事件里带的图片（截图、渲染图、`read_image` 读回来的图）。
+///
+/// 事件形状：`{type:'tool/result', data:{message:{role:'tool', content:[…]}}}`，
+/// 图片是 content 里 `{type:'image', attachment:{attachmentId:'sha256:…'}}`
+/// 这个 part。文本 part 里是 `path/type/content` 的伪描述，不上屏。
+List<ChatImageRef> toolResultImages(SessionLogEvent event) {
+  if (event.type != 'tool/result') return const <ChatImageRef>[];
+  final message = asObjectMap(event.data['message']);
+  final content = message.isNotEmpty ? message['content'] : event.data['content'];
+  return contentImages(content);
+}
+
+/// 列表里最后一条助手消息的下标；没有就返回 -1。
+int lastAssistantIndex(List<ChatMessage> messages) {
+  for (var i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role == ChatRole.assistant) return i;
+  }
+  return -1;
+}
+
+/// 没有可挂靠的助手消息时，把工具图片单独做成一条气泡。
+ChatMessage toolResultMessage(
+  SessionLogEvent event,
+  List<ChatImageRef> images,
+) {
+  return ChatMessage(
+    key: 'tool:${event.seq ?? event.hashCode}',
+    role: ChatRole.assistant,
+    text: '',
+    seq: event.seq,
+    time: event.time,
+    images: List<ChatImageRef>.unmodifiable(images),
+  );
+}
+
+/// 把 [extra] 里的图片并进一条消息，按 `attachmentId` 去重。
+///
+/// 没有任何新增时返回**同一个对象**：调用方拿 `identical` 就能判断「这次不用
+/// 重绘」，流式里每条工具结果都会走一遍这里。
+ChatMessage withImages(ChatMessage message, List<ChatImageRef> extra) {
+  if (extra.isEmpty) return message;
+  final seen = <String>{for (final image in message.images) image.attachmentId};
+  final added = <ChatImageRef>[
+    for (final image in extra)
+      if (seen.add(image.attachmentId)) image,
+  ];
+  if (added.isEmpty) return message;
+  return message.copyWith(
+    images: List<ChatImageRef>.unmodifiable(<ChatImageRef>[
+      ...message.images,
+      ...added,
+    ]),
+  );
 }
 
 /// 把任意 JSON 解码结果收敛成 `Map<String, Object?>`（键不是字符串就丢掉）。

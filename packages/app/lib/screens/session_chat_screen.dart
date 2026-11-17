@@ -830,6 +830,10 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         if (_resolveOutboxEcho(event)) changed = true;
         // 回显之后宿主队列里就少一条，同步一次让合成行跟着消失。
         unawaited(_refreshQueue());
+      case 'tool/result':
+        // 工具跑出来的图（截图、渲染图、read_image 读回的图）挂在发起调用的
+        // 那条助手消息上，和 PC 端一样能直接看见，不用点开。
+        if (_attachToolImages(event)) changed = true;
     }
 
     final message = chatMessageOf(event);
@@ -888,6 +892,27 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       return drafts[i].text;
     }
     return null;
+  }
+
+  /// 把 `tool/result` 里的图片并进最后一条助手消息。
+  ///
+  /// 返回是否真的改了数据：同一条结果重复投递（重连补帧）时 [withImages]
+  /// 会返回原对象，这里就不触发重绘。
+  bool _attachToolImages(SessionLogEvent event) {
+    final images = toolResultImages(event);
+    if (images.isEmpty) return false;
+    final index = lastAssistantIndex(_messages);
+    if (index < 0) {
+      // 没有可挂的消息（老数据）：单独成一条，别让图消失。
+      final message = toolResultMessage(event, images);
+      if (_messages.any((item) => item.key == message.key)) return false;
+      _insert(message);
+      return true;
+    }
+    final merged = withImages(_messages[index], images);
+    if (identical(merged, _messages[index])) return false;
+    _messages[index] = merged;
+    return true;
   }
 
   bool _resolvePending(SessionLogEvent event) {

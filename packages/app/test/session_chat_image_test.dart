@@ -12,6 +12,7 @@ import 'package:dsh_frp_app/services/dsh_remote.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:dsh_frp_app/theme/app_icons.dart';
+import 'package:dsh_frp_app/widgets/chat/chat_bubbles.dart';
 
 const Host _host = Host(
   id: 'host-img',
@@ -244,6 +245,120 @@ void main() {
     await tester.pump();
 
     expect(remote.attachments, <String>['sha256:c414']);
+
+    await _disposeChat(tester, remote);
+  });
+
+  /// 工具结果的线上形状：`data.message` 里 role=tool，图片是 content 里的
+  /// `{type:'image', attachment:{…}}` part（PC 端就是在工具这一行下面显示的）。
+  SessionLogEvent toolResult(String attachmentId, {int seq = 7}) =>
+      SessionLogEvent(
+        type: 'tool/result',
+        seq: seq,
+        time: DateTime.fromMillisecondsSinceEpoch(1794483452600),
+        data: <String, Object?>{
+          'turn': 1,
+          'step': 1,
+          'message': <String, Object?>{
+            'role': 'tool',
+            'toolCallId': 'call_1',
+            'content': <Object?>[
+              <String, Object?>{
+                'type': 'text',
+                'text': '<path>D:\\out\\shot.png</path>\n<type>image</type>',
+              },
+              <String, Object?>{
+                'type': 'image',
+                'attachment': <String, Object?>{
+                  'attachmentId': attachmentId,
+                  'mediaType': 'image/png',
+                  'width': 1200,
+                  'height': 700,
+                  'bytes': 70,
+                  'name': 'shot.png',
+                },
+              },
+            ],
+            'isError': false,
+          },
+        },
+      );
+
+  testWidgets('e5 PC 端工具生成的图，手机端也能看见（挂在那条助手消息上）', (tester) async {
+    final remote = await _pumpChat(tester);
+
+    // 先来一条只调了工具、没写正文的助手消息。
+    remote.frames.add(
+      DshStreamFrame(
+        kind: DshFrameKind.event,
+        event: SessionLogEvent(
+          type: 'assistant/message',
+          seq: 6,
+          data: <String, Object?>{
+            'turn': 1,
+            'step': 1,
+            'message': <String, Object?>{
+              'content': <Object?>[
+                <String, Object?>{
+                  'type': 'tool-call',
+                  'id': 'call_1',
+                  'name': 'read_image',
+                  'arguments': '{"path":"D:\\\\out\\\\shot.png"}',
+                },
+              ],
+            },
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    expect(find.byType(ChatImageTile), findsNothing, reason: '工具还没跑完，先没有图');
+
+    remote.frames.add(
+      DshStreamFrame(
+        kind: DshFrameKind.event,
+        event: toolResult('sha256:shot'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump();
+
+    expect(find.byType(ChatImageTile), findsOneWidget);
+    expect(remote.attachments, contains('sha256:shot'));
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('e6 同一条工具结果补投两次，只显示一张图', (tester) async {
+    final remote = await _pumpChat(tester);
+
+    remote.frames.add(
+      DshStreamFrame(
+        kind: DshFrameKind.event,
+        event: SessionLogEvent(
+          type: 'assistant/message',
+          seq: 6,
+          data: <String, Object?>{
+            'message': <String, Object?>{'content': <Object?>[]},
+          },
+        ),
+      ),
+    );
+    for (var i = 0; i < 2; i++) {
+      remote.frames.add(
+        DshStreamFrame(
+          kind: DshFrameKind.event,
+          event: toolResult('sha256:shot', seq: 7 + i),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    expect(find.byType(ChatImageTile), findsOneWidget);
 
     await _disposeChat(tester, remote);
   });

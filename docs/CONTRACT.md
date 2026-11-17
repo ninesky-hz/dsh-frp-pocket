@@ -259,6 +259,10 @@ subdomain = "home"
    - 「展开全文」的阅读页（`widgets/chat/text_viewer.dart`）对 assistant 走同一套 `MdView`
      （`showTextSheet(..., markdown: true)`），所以标题/表格/代码块/可点链接与气泡一致；
      用户自己发的消息仍按纯文本渲染。
+   - **工具产出的图片**：`tool/result` 事件的 `data.message.content` 里可能有
+     `{type:'image', attachment:{attachmentId:'sha256:…'}}`，它们被并进**上一条助手消息**（同一条
+     结果重复投递按 `attachmentId` 去重）；前面没有助手消息时单独成一条只含图的气泡。
+     渲染与取字节复用用户图片那条路径（`ChatImageTile` + `DshRemote.cachedAttachment`）。
 
 ### 7.3 二维码内容（插件设置页生成，App 扫）
 
