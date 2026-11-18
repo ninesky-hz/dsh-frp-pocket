@@ -268,6 +268,9 @@ subdomain = "home"
      `{type:'image', attachment:{attachmentId:'sha256:…'}}`，它们被并进**上一条助手消息**（同一条
      结果重复投递按 `attachmentId` 去重）；前面没有助手消息时单独成一条只含图的气泡。
      渲染与取字节复用用户图片那条路径（`ChatImageTile` + `DshRemote.cachedAttachment`）。
+   - **不许按 UTF-16 码元切 span**：`md_highlight.dart` 的兜底分支必须「吃到下一个 token 起点」整段切片（`code.substring(index, next)`）。写成 `TextSpan(text: code[index])` 会把 emoji 的代理对拆成两个孤立半码元，屏幕上就是两个豆腐块（`🔹` → `♦♦`）。同理，任何逐字符遍历都要区分码元与 rune。
+   - 等宽字体里没有 emoji 字形：`MdStyle.mono` 的 `fontFamilyFallback` 末尾必须留着 `Noto Color Emoji` / `Apple Color Emoji`，缺字时才落得到系统 emoji 字体。
+
 7. **待回显气泡的可见性**（`session_chat_screen.dart`）：从磁盘缓存（`PendingStore`）回填的「已发未回显」气泡默认**不上屏**——`_displayItems` 的顺序是「历史 → 待回显 → 宿主队列 → 草稿」，它一上屏就只能挂在最末尾，历史里其实早有这条时会变成「位置不对、几秒后又消失」的鬼影。规则：
    - 历史没对完账时只放行本次会话自己刚发的、以及 `queued`/`failed` 的（这两种确实还没开跑，位置在底部是对的）；`kHistorySettleFallback`（10s）只是断线慢网的最后一道阀门。
    - 两道统一过滤：`_echoedInHistory`（历史 `user/message` 的 `requestId` 相同，或正文 `trim()` 相同）与 `_olderThanHistory`（本地记录时间早于历史最新一条 ⇒ 不可能还在路上，不显示但**不删盘**）。宿主会把带图消息正文改写成 `原文\n\n[附件 xxx.png]`，所以正文比对之外还要靠时间兜底。

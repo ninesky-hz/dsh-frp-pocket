@@ -90,8 +90,22 @@ List<TextSpan> highlightCode(String code, String? lang, MdStyle style) {
       }
     }
     if (best == null || bestAt < 0) {
-      spans.add(TextSpan(text: code[index], style: base));
-      index++;
+      // 到这里说明「从 index 起没有 token 开头」：一直吃到下一个 token 的起点，
+      // 整段当一个普通片段。
+      //
+      // 不能一个字符一个 TextSpan：`code[index]` 取的是**一个 UTF-16 码元**，
+      // emoji 这种代理对会被拆成两个孤立的半个码元，每个都渲染成一个豆腐块——
+      // 屏幕上就是「🔹」变成两个菱形。整段切片才不会切开代理对。
+      // （顺带也少生成一大堆碎 span。）
+      var next = code.length;
+      for (final rule in rules) {
+        for (final match in rule.pattern.allMatches(code, index + 1)) {
+          if (match.start < next) next = match.start;
+          break;
+        }
+      }
+      spans.add(TextSpan(text: code.substring(index, next), style: base));
+      index = next;
       continue;
     }
     final token = code.substring(bestAt, bestAt + bestLen);

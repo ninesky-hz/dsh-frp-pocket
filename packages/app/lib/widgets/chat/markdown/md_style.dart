@@ -37,7 +37,16 @@ class MdStyle {
       ),
       mono: TextStyle(
         fontFamily: 'monospace',
-        fontFamilyFallback: const <String>['Menlo', 'Consolas', 'Roboto Mono'],
+        // 等宽字体里没有 emoji，末尾补上系统的 emoji 字体：代码块里写 🔹 ✅
+        // 这类字符才不会掉成豆腐块（顺序＝优先用等宽，缺字再逐个往后找）。
+        fontFamilyFallback: const <String>[
+          'Menlo',
+          'Consolas',
+          'Roboto Mono',
+          'Noto Sans Mono',
+          'Noto Color Emoji',
+          'Apple Color Emoji',
+        ],
         fontSize: 12.6,
         height: 1.55,
         color: dark ? const Color(0xFFE8E8E3) : const Color(0xFF26261F),

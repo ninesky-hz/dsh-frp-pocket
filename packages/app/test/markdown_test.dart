@@ -224,6 +224,79 @@ void main() {
       expect(words.length, 2, reason: 'var / foo 两个词各切一片');
       expect(words.every((s) => s.style?.color == plain), isTrue);
     });
+
+    test('代码块里的 emoji 不被拆成两个豆腐块（代理对不许切开）', () {
+      const code = '🔹 加机器：扫电脑上的二维码\n🔹 看状态：三台机器在不在线';
+      final spans = highlightCode(code, 'text', _style());
+      expect(spans.map((s) => s.text).join(), code, reason: '拼回去必须等于原文');
+      // 关键：不许出现「孤立代理」。一个 emoji 被拆成两个半个码元时，
+      // 每半个都会被渲染成一个豆腐块，屏幕上就是两个菱形。
+      for (final span in spans) {
+        final text = span.text ?? '';
+        for (var i = 0; i < text.length; i++) {
+          final unit = text.codeUnitAt(i);
+          final isHigh = unit >= 0xD800 && unit <= 0xDBFF;
+          final isLow = unit >= 0xDC00 && unit <= 0xDFFF;
+          if (isHigh) {
+            final lowNext = i + 1 < text.length &&
+                text.codeUnitAt(i + 1) >= 0xDC00 &&
+                text.codeUnitAt(i + 1) <= 0xDFFF;
+            expect(lowNext, isTrue, reason: '高位代理后面必须紧跟低位代理（片段：$text）');
+            i++;
+          } else {
+            expect(isLow, isFalse, reason: '出现孤立低位代理（片段：$text）');
+          }
+        }
+      }
+      expect(
+        spans.any((s) => (s.text ?? '').contains('🔹')),
+        isTrue,
+        reason: '整个 emoji 要落在某一片里',
+      );
+    });
+  });
+
+  group('emoji 保真', () {
+    test('正文里的 emoji 原样保留，不留孤立代理', () {
+      const text = '🔹 加机器：扫码\n✅ 干完会告诉你';
+      final items = parseInline(text);
+      expect(plainTextOf(items), text);
+      for (final item in items) {
+        if (item is MdText) {
+          final value = item.text;
+          for (var i = 0; i < value.length; i++) {
+            final unit = value.codeUnitAt(i);
+            if (unit >= 0xD800 && unit <= 0xDBFF) {
+              expect(
+                i + 1 < value.length &&
+                    value.codeUnitAt(i + 1) >= 0xDC00 &&
+                    value.codeUnitAt(i + 1) <= 0xDFFF,
+                isTrue,
+                reason: '高位代理后面必须紧跟低位代理',
+              );
+              i++;
+            } else {
+              expect(unit >= 0xDC00 && unit <= 0xDFFF, isFalse, reason: '孤立低位代理');
+            }
+          }
+        }
+      }
+    });
+
+    test('围栏代码块里的 emoji 到渲染层还是完整一个', () {
+      const source = '```text\n🔹 加机器\n```';
+      final blocks = parseMarkdown(source);
+      final block = blocks.whereType<MdCodeBlock>().single;
+      expect(block.code.contains('🔹'), isTrue);
+      final code = block.code.trimRight();
+      final spans = highlightCode(code, block.lang, _style());
+      expect(spans.map((s) => s.text).join(), code);
+      expect(
+        spans.where((s) => (s.text ?? '').contains('🔹')).length,
+        1,
+        reason: 'emoji 只出现一次，且整个落在同一片里（被拆开就会变成两个豆腐块）',
+      );
+    });
   });
 
   group('MdView 渲染', () {

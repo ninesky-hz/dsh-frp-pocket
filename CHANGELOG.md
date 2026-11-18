@@ -1,3 +1,12 @@
+## 2026-11-18（代码块里的 emoji 不再是两个菱形）
+
+### app 1.13.1+60
+
+- **症状**：会话里那一段「小红书 / B 站文案」的代码块，每行开头的 🔹 显示成两个菱形（豆腐块），正文里的中文都正常。
+- **根因**：高亮器 `md_highlight.dart` 在「这个位置没有 token」时，把一个 **UTF-16 码元**单独做成一个 `TextSpan`（`code[index]`）。emoji 是代理对（🔹 = `D83D DD39`），被切成两片孤立的半个码元，每一片都渲染成一个豆腐块——所以一个 🔹 变成两个菱形。中文在 BMP 内，一个码元就是一个字，所以看不出来。
+- **改法**：`md_highlight.dart` 的兜底分支改成「一直吃到下一个 token 起点，整段切片」，代理对不会被切开（顺带少生成一大堆碎 span）。另外给等宽字体补了 emoji 兜底链（`fontFamilyFallback` 里加 `Noto Color Emoji` / `Apple Color Emoji`）——等宽字体本身没有 emoji 字形，缺字时要能落到系统 emoji 字体。
+- 测试：`test/markdown_test.dart` 新增 2 条——代码块里的 emoji 拼回去等于原文且不出现孤立代理、正文行内的 emoji 原样保留。两条在没修时都红（`Expected: <1> / Actual: <0>`）。全量 539 条通过，`flutter analyze` 无问题。
+
 ## 2026-11-18（灵动岛和系统通知分成两个开关，前台后台各管各的）
 
 ### app 1.13.0+59
