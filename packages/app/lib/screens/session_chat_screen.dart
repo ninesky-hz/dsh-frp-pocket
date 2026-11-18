@@ -492,11 +492,41 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       if (_appActive) {
         // 回来了：通知栏那条已经没意义，撤掉，别等它自然过期。
         unawaited(const PlatformBridge().cancelRoundDone());
+        _resumeFromBackground();
+      } else {
+        _handOffToWatchIfRunning();
       }
     }
     if (state != AppLifecycleState.resumed || _disposed) return;
     // 后台期间 WS 基本一定断了，回前台重连一次（服务端会再推 snapshot）。
     _start();
+  }
+
+  /// 这一轮是不是已经交给全局的 [TurnWatch] 盯着（进后台时交出去的）。
+  bool _handedOffBg = false;
+
+  /// 切到后台时这一轮还在跑：让 [TurnWatch] 接过去。
+  ///
+  /// 为什么必须接：后台期间这条 WS 基本一定断（见 [didChangeAppLifecycleState] 里
+  /// 那句注释），`turn/end` 没人收 —— 通知就永远不会响，用户看到的就是「前台有、
+  /// 后台没有」。接手之后它自己开一条 follow，答完照样走 [TurnWatch.finish]。
+  void _handOffToWatchIfRunning() {
+    if (_disposed || _handedOffBg) return;
+    if (!_running && !_streaming) return;
+    _handedOffBg = true;
+    TurnWatch.instance.adopt(
+      remote: _remote,
+      sessionId: widget.session.sessionId,
+      title: _title,
+      text: _latestAnswerText(),
+    );
+  }
+
+  /// 回到前台：把这个会话从 [TurnWatch] 手里收回来，界面自己接着盯。
+  void _resumeFromBackground() {
+    if (!_handedOffBg) return;
+    _handedOffBg = false;
+    TurnWatch.instance.dropAdopted(sessionId: widget.session.sessionId);
   }
 
   // ------------------------------------------------------------ 数据流
@@ -856,6 +886,13 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         // 工具跑出来的图（截图、渲染图、read_image 读回的图）挂在发起调用的
         // 那条助手消息上，和 PC 端一样能直接看见，不用点开。
         if (_attachToolImages(event)) changed = true;
+      case 'agent/inbox/spliced':
+        // 队列变了：别的客户端（PC）往这一轮里塞了消息、或者宿主把队首提上来开跑。
+        // 不跟着刷一次，这个队列项在 App 上永远不出现——「PC 上有在等的消息，
+        // App 上没有」就是这么来的。只认 next-turn（next-step 是工具任务通知）。
+        if (asText(event.data['target']) == 'next-turn') {
+          unawaited(_refreshQueue());
+        }
     }
 
     final message = chatMessageOf(event);
@@ -877,6 +914,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   /// 传过去的 [onOpen]。
   void _announceTurnDone({String? orphanText}) {
     if (_disposed || !mounted) return;
+    // 这一轮已经交给 TurnWatch：它手里那条 follow 会发提醒。两边都发就是两条。
+    if (_handedOffBg) return;
     final durable = _latestAnswerText();
     final raw = durable.isNotEmpty ? durable : (orphanText ?? '');
     TurnWatch.instance.finish(
@@ -1566,13 +1605,17 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     try {
       final items = await _remote.queuedItems(widget.session.sessionId);
       if (_disposed) return;
-      if (!_sameQueue(items, _hostQueue)) {
+      // 队列一变，待回显气泡的「排队中」也跟着走：PC 那边插的话、提队首、
+      // 撤掉队列项，这边都得立刻反映，不能等下一次 turn 事件。
+      final marked = _applyQueueToPending(items, downgrade: false);
+      if (!_sameQueue(items, _hostQueue) || marked) {
         if (mounted) {
           setState(() => _hostQueue = items);
         } else {
           _hostQueue = items;
         }
       }
+      if (marked) unawaited(_persistPending());
     } catch (error) {
       debugPrint('SessionChat: 取宿主队列失败 $error');
     } finally {
@@ -1617,7 +1660,11 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         continue;
       }
       final body = item.text?.trim() ?? '';
+      // 正文比对只在「没有 rpcId 可认」时兜底：同一句话可能发两次（比如反复发
+      // 「发布」），拿文字当身份会把还在排队的那条误判成已有的回声，直接从列表里
+      // 抹掉——用户看到的就是「PC 上有在等的消息，App 上没有」。
       final echoedByText =
+          requestId == null &&
           body.isNotEmpty &&
           _messages.any(
             (message) =>
@@ -2247,36 +2294,19 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   /// 队列在两次轮次之间本来就会短暂空一下，宁可留一个气泡，也不要凭空吞掉
   /// 用户发过的话。
   Future<void> _reconcilePending() async {
-    if (_disposed || _restoredLocalIds.isEmpty) return;
+    // 本次会话里刚发的也要对账：它可能正排在宿主队列里等这一轮跑完。
+    // 只管「升级成排队中」和「从排队中降级」，不会动还没确认发送的气泡。
+    if (_disposed || _pending.isEmpty) return;
     var changed = false;
     // 回声判定只写在一处（[_dropEchoedPending] / [_echoedInHistory]），别再抄一遍：
     // 之前这里和上屏过滤各写一份，两份口径一歪就会出现「收了但又显示」的鬼影。
     if (_dropEchoedPending()) changed = true;
 
-    if (_linkOnline && _restoredLocalIds.isNotEmpty) {
+    if (_linkOnline) {
       try {
         final items = await _remote.queuedItems(widget.session.sessionId);
         if (_disposed) return;
-        for (var i = 0; i < _pending.length; i++) {
-          final message = _pending[i];
-          final localId = message.localId;
-          if (localId == null || !_restoredLocalIds.contains(localId)) continue;
-          final waiting = items.any(
-            (item) => item.rpcId != null && item.rpcId == message.requestId,
-          );
-          // 队列里没有它就别再挂着「排队中」：要么已经开跑，要么早就答完了。
-          // 以前这里只在「在队列里」时才置位、从不回退，于是盘上的旧标记
-          // 一直挂到历史把它整条摘掉为止——那一段就是用户看到的假等待。
-          final next = waiting
-              ? ChatDelivery.queued
-              : (message.delivery == ChatDelivery.queued
-                    ? ChatDelivery.none
-                    : message.delivery);
-          if (next != message.delivery) {
-            _pending[i] = message.copyWith(delivery: next);
-            changed = true;
-          }
-        }
+        if (_applyQueueToPending(items)) changed = true;
       } catch (error) {
         debugPrint('SessionChat: 待回显对账失败 $error');
       }
@@ -2285,6 +2315,34 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     if (!changed) return;
     if (mounted) setState(() {});
     unawaited(_persistPending());
+  }
+
+  /// 按宿主队列给待回显气泡打「排队中」标记。
+  ///
+  /// 队列里没有它就别再挂着「排队中」：要么已经开跑，要么早就答完了。
+  /// 以前这里只在「在队列里」时才置位、从不回退，于是盘上的旧标记一直挂到
+  /// 历史把它整条摘掉为止——那一段就是用户看到的假等待。
+  /// [downgrade] 为 false 时只往「排队中」升级、不降级：刚发出去的那一下，
+  /// 宿主队列快照里可能还没出现它，这时候降级会让标记闪一下就没。
+  bool _applyQueueToPending(List<DshQueuedItem> items, {bool downgrade = true}) {
+    var changed = false;
+    for (var i = 0; i < _pending.length; i++) {
+      final message = _pending[i];
+      final waiting = items.any(
+        (item) => item.rpcId != null && item.rpcId == message.requestId,
+      );
+      if (!waiting && !downgrade) continue;
+      final next = waiting
+          ? ChatDelivery.queued
+          : (message.delivery == ChatDelivery.queued
+                ? ChatDelivery.none
+                : message.delivery);
+      if (next != message.delivery) {
+        _pending[i] = message.copyWith(delivery: next);
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   /// 把当前 `_pending` 整表写盘（只写有文字的那些，纯图消息存了也点不开）。
@@ -3026,11 +3084,13 @@ class _SessionChatScreenState extends State<SessionChatScreen>
 
   /// 这条待回显比历史里最新的一条还早 —— 它不可能还在路上。
   ///
-  /// 超过十分钟差得离谱也没关系：既然历史已经走到它后面，那它要么已经变成
-  /// 历史（只是正文跟本地记的不一样，认不出来），要么早被宿主消化掉了。
-  /// 两种情况都不该把它挂在列表最下面——用户看到的就是「位置不对，一会儿又没了」。
+  /// 只管**盘上回填**的老条目：本次会话里自己刚发的那条，哪怕这一轮还在往外吐
+  /// 新消息（历史里不断出现更晚的时间戳），它也依然可能正排在队尾等开跑。
+  /// 另外宿主队列明确列着它时一律不算过时——队列是权威。
   bool _olderThanHistory(ChatMessage message, DateTime? newest) {
     if (newest == null) return false;
+    if (!_isRestored(message)) return false;
+    if (_inHostQueue(message)) return false;
     final localId = message.localId;
     final sentAt =
         (localId == null ? null : _pendingSentAt[localId]) ?? message.time;
@@ -3038,11 +3098,29 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     return sentAt.isBefore(newest);
   }
 
+  /// 盘上回填的老条目（离场前留下的）；本次会话里刚发的不算。
+  bool _isRestored(ChatMessage message) {
+    final localId = message.localId;
+    return localId != null && _restoredLocalIds.contains(localId);
+  }
+
+  /// 宿主队列里还列着这条（按 requestId 认）。
+  bool _inHostQueue(ChatMessage message) {
+    final requestId = message.requestId;
+    if (requestId == null) return false;
+    return _hostQueue.any((item) => item.rpcId == requestId);
+  }
+
   /// 这条本地气泡是不是已经变成历史了。
   ///
-  /// 先认 `requestId`（那是发出去时自己定下的，最可靠），再退一步认文字：
-  /// 老记录可能没有 `requestId`，但「同一条已定稿的用户消息」不会有两条。
+  /// 认 `requestId`（发出去时自己定下的，最可靠），文字只当**兜底**：
+  /// 老记录没有 `rpcId`、是盘上回填的、宿主队列里也已经查不到它——三者同时成立
+  /// 才拿正文比。否则「同一句话发两次」（反复发「发布」）会互相误判，把还在排队
+  /// 的那条当成回声藏起来，用户看到的就是「PC 上有在等的消息，App 上没了」。
   bool _echoedInHistory(ChatMessage message) {
+    final inQueue = _inHostQueue(message);
+    final byText =
+        message.requestId == null && !inQueue && _isRestored(message);
     for (final item in _messages) {
       if (item.role != ChatRole.user) continue;
       // 只有定稿的才算：草稿是本地拼出来的，不能拿来当「已经在历史里」的证据。
@@ -3050,7 +3128,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       if (message.requestId != null && item.requestId == message.requestId) {
         return true;
       }
-      if (item.text.trim() == message.text.trim()) return true;
+      if (byText && item.text.trim() == message.text.trim()) return true;
     }
     return false;
   }
@@ -3063,6 +3141,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     if (_pending.isEmpty) return false;
     final before = _pending.length;
     _pending.removeWhere((message) {
+      // 宿主队列还列着它 = 确实还在等，谁都别想把它收掉。
+      if (_inHostQueue(message)) return false;
       final echoed = _echoedInHistory(message);
       if (echoed) {
         final localId = message.localId;

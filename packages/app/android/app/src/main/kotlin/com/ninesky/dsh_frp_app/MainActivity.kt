@@ -206,7 +206,14 @@ class MainActivity : FlutterActivity() {
     private fun notifyRoundDone(title: String, body: String, focus: Boolean): Boolean {
         val manager =
             getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (!ensureNotificationPermission()) return false
+        if (!ensureNotificationPermission()) {
+            // 这一次没发出去：记下来，等授权框点完再补一条。
+            // 之前是直接 return false —— 而这条路径几乎总在后台触发，
+            // 后台根本弹不出授权框，于是「每一轮都丢」，用户看到的就是
+            // 「权限也给了，后台就是不提醒」。
+            pendingRoundDone = title to body
+            return false
+        }
         return try {
             ensureTurnChannel(manager)
             val notification = buildTurnNotification(title, body, focus)
@@ -218,6 +225,9 @@ class MainActivity : FlutterActivity() {
             false
         }
     }
+
+    /** 因为没权限没发出去的那一条：授权成功后补发，别让人白等一轮。 */
+    private var pendingRoundDone: Pair<String, String>? = null
 
     /** 每次换一个 id：同 id 更新不会重新弹横幅（见字段注释）。 */
     private fun nextTurnNotificationId(): Int {
@@ -289,6 +299,13 @@ class MainActivity : FlutterActivity() {
             pending?.success(granted)
         } catch (e: Exception) {
             // 发起申请的那个页面已经没了，没人等这个结果。
+        }
+        // 刚才因为没权限被丢掉的那条提醒：现在能发了就补上，
+        // 不然用户点完「允许」还得再等一整轮才知道通知是通的。
+        val waiting = pendingRoundDone
+        pendingRoundDone = null
+        if (granted && waiting != null) {
+            notifyRoundDone(waiting.first, waiting.second, true)
         }
     }
 

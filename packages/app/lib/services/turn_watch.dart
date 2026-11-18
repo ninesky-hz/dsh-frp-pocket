@@ -56,7 +56,40 @@ class TurnWatch {
     final text = title == null || title.trim().isEmpty
         ? '这一轮对话'
         : squashAlertText(title);
-    unawaited(_bridge.startTurnWatch(text: text));
+    unawaited(_startWatch(text));
+  }
+
+  Future<void> _startWatch(String text) async {
+    final started = await _bridge.startTurnWatch(text: text);
+    if (!started) {
+      // 起不来多半是 Android 12+ 的「后台不许起前台服务」：这一轮切到后台
+      // 有可能被冻住、收不到 turn/end。不打断流程，但留个印子好排查。
+      debugPrint('TurnWatch: 保活服务没起来，后台可能收不到 turn/end');
+    }
+    unawaited(_ensurePermission());
+  }
+
+  /// 这个进程里问过权限没有（问过一次就别再骚扰）。
+  bool _permissionChecked = false;
+
+  /// 趁人还在前台，把系统通知权限要到手。
+  ///
+  /// 后台那一条通知发不出去，最常见的原因不是「没权限」，而是**从来没人申请过**：
+  /// 授权框只有前台弹得出来，而真正的触发点（[finish]）常常落在人已经切走之后。
+  /// 那一刻再去申请，系统不给后台弹框，回调回来就是「没给」，这一条当场丢掉——
+  /// 下一轮同样。所以在这里（`turn/start`，人几乎一定还看着屏幕）先把权限解决，
+  /// 等真的在后台答完时，通知才发得出去。
+  Future<void> _ensurePermission() async {
+    if (_permissionChecked) return;
+    _permissionChecked = true;
+    try {
+      final status = await _bridge.notificationPermission();
+      if (status.granted || !status.canAsk) return;
+      await _bridge.requestNotificationPermission();
+    } catch (error) {
+      // 桥没起来 / 返回值形状不对：都不该影响这一轮，记一笔就够。
+      debugPrint('TurnWatch: 查/要通知权限失败 $error');
+    }
   }
 
   // ------------------------------------------------------------ 提醒投递
@@ -185,6 +218,8 @@ class TurnWatch {
   /// 收干净：接手停掉、保活服务收掉。测试与退出登录时用。
   Future<void> release() async {
     dropAdopted();
+    // 下一轮重新问一次权限：用户可能刚在系统设置里改过。
+    _permissionChecked = false;
     if (!_held) return;
     _held = false;
     await _bridge.stopTurnWatch();

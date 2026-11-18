@@ -308,6 +308,11 @@ ChatMessage? chatMessageOf(SessionLogEvent event) {
         seq: event.seq,
         time: event.time,
         images: images,
+        // 发出去的那次 `session/prompt` 的 requestId（`message.source.rpcId`）。
+        // 必须留着：界面上的本地气泡、宿主队列项、历史这三方都靠它对齐。
+        // 以前这里不读，于是「这条是不是已经有历史了」只能靠正文比对——同一句话
+        // 发两次（比如反复发「发布」）就会互相误判，还在排队的那条被当成回声藏掉。
+        requestId: _userRequestId(message) ?? _userRequestId(event.data),
       );
 
     case 'assistant/message':
@@ -392,6 +397,20 @@ String _keyOf(SessionLogEvent event, String body) {
   if (seq != null) return 'seq:$seq';
   final stamp = event.time?.millisecondsSinceEpoch ?? 0;
   return 'evt:$stamp:${body.hashCode}';
+}
+
+/// 一条用户消息「是谁发的」：`source.rpcId` 就是发它那次 `session/prompt` 的
+/// requestId，和宿主队列项里的 `rpcId` 是同一个值。三处（本地气泡 / 队列项 /
+/// 历史）靠它对上号，比比对正文可靠得多。
+String? _userRequestId(Map<String, Object?> holder) {
+  final source = asObjectMap(holder['source']);
+  final rpcId = asText(source['rpcId']);
+  if (rpcId != null && rpcId.isNotEmpty) return rpcId;
+  final nested = asObjectMap(holder['message']);
+  if (nested.isEmpty) return null;
+  final innerSource = asObjectMap(nested['source']);
+  final inner = asText(innerSource['rpcId']);
+  return inner != null && inner.isNotEmpty ? inner : null;
 }
 
 /// 助手消息的行身份：`row:m<turn>.<step>`，与流式草稿的 key 一致。

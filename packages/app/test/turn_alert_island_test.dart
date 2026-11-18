@@ -105,10 +105,49 @@ List<String> _mockNative() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   messenger.setMockMethodCallHandler(channel, (call) async {
     calls.add(call.method);
+    // 权限查询要回一张表（其余方法一个 true 就够）：否则 TurnWatch 那边会当成
+    // 「桥返回形状不对」记一条日志，看起来像是代码坏了。
+    if (call.method == 'notificationStatus') {
+      return <String, Object?>{
+        'platform': 33,
+        'granted': true,
+        'canAsk': true,
+        'appNotificationsEnabled': true,
+        'channelReady': true,
+        'channelImportance': 4,
+      };
+    }
     return true;
   });
   addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
   return calls;
+}
+
+/// 走一遍完整的状态迁移：resumed → inactive → hidden → paused。
+///
+/// 直接跳 `paused` 会触发 Flutter 的 `_debugVerifyLifecycleState` 断言
+/// （真实系统也不会这么切）。
+Future<void> _goBackground(WidgetTester tester) async {
+  for (final state in <AppLifecycleState>[
+    AppLifecycleState.inactive,
+    AppLifecycleState.hidden,
+    AppLifecycleState.paused,
+  ]) {
+    tester.binding.handleAppLifecycleStateChanged(state);
+  }
+  await tester.pump();
+}
+
+/// 反过来：paused → hidden → inactive → resumed。
+Future<void> _goForeground(WidgetTester tester) async {
+  for (final state in <AppLifecycleState>[
+    AppLifecycleState.hidden,
+    AppLifecycleState.inactive,
+    AppLifecycleState.resumed,
+  ]) {
+    tester.binding.handleAppLifecycleStateChanged(state);
+  }
+  await tester.pump();
 }
 
 DshStreamFrame _event(String type, int seq, Map<String, Object?> data) {  return DshStreamFrame(
@@ -426,6 +465,78 @@ void main() {
       _event('turn/end', 61, <String, Object?>{'turn': 6}),
     );
     expect(calls, contains('stopTurnWatch'));
+  });
+
+  testWidgets('页面还开着、人切到后台：这一轮交给 TurnWatch，答完只发一条通知', (tester) async {
+    final calls = _mockNative();
+    final remote = _StreamRemote();
+    await _pumpChat(tester, remote);
+
+    await _push(
+      tester,
+      remote,
+      _event('turn/start', 70, <String, Object?>{'turn': 7}),
+    );
+    calls.clear();
+
+    // 人切走了但页面还在：后台这条 WS 基本一定断，页面自己收不到 turn/end，
+    // 不接手就等于「前台有提醒、后台没有」。
+    await _goBackground(tester);
+    expect(TurnWatch.instance.adopted, isTrue, reason: '得有人接着听 turn/end');
+
+    await _push(
+      tester,
+      remote,
+      _event('turn/end', 71, <String, Object?>{'turn': 7}),
+    );
+    expect(
+      calls.where((m) => m == 'notifyRoundDone').length,
+      1,
+      reason: '页面和 TurnWatch 都收到这一帧，但提醒只能发一条',
+    );
+    expect(calls, contains('stopTurnWatch'), reason: '答完了保活服务照样收');
+
+    await _goForeground(tester);
+    await tester.pumpWidget(const SizedBox());
+    await remote.frames.close();
+  });
+
+  testWidgets('回到前台就把接手断掉，界面自己接着盯', (tester) async {
+    final calls = _mockNative();
+    final remote = _StreamRemote();
+    await _pumpChat(tester, remote);
+
+    await _push(
+      tester,
+      remote,
+      _event('turn/start', 80, <String, Object?>{'turn': 8}),
+    );
+
+    await _goBackground(tester);
+    expect(TurnWatch.instance.adopted, isTrue);
+
+    await _goForeground(tester);
+    expect(
+      TurnWatch.instance.adopted,
+      isFalse,
+      reason: '页面回来了，两条连接听同一轮纯属浪费',
+    );
+    calls.clear();
+
+    await _push(
+      tester,
+      remote,
+      _event('turn/end', 81, <String, Object?>{'turn': 8}),
+    );
+    expect(calls, contains('stopTurnWatch'));
+    expect(
+      TurnAlertCenter.instance.isShowing,
+      isTrue,
+      reason: '人在前台，走胶囊',
+    );
+
+    await tester.pumpWidget(const SizedBox());
+    await remote.frames.close();
   });
 
   test('答完提醒默认开，关掉会落盘', () async {    SharedPreferences.setMockInitialValues(<String, Object>{});

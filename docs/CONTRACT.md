@@ -257,7 +257,7 @@ subdomain = "home"
 6. **会话页正文渲染**（`packages/app/lib/widgets/chat/markdown/`，自研、零依赖）：assistant 正文按 markdown 子集渲染——ATX 标题、段落、加粗/斜体/删除线、行内码胶囊、围栏代码块（语言标签 + 复制 + 行内高亮 + 横向滚动）、GFM 表格（横向滚动）、引用、有序/无序列表、分隔线。用户消息仍是纯文本气泡（自己打的字不该被解析）。要点：
    - 版式对齐网页端：assistant 无底色、满宽；只有用户消息保留气泡与 78% 宽度上限。
    - 流式期间有 120ms 节流（`kMdStreamThrottle`）与 8000 字降级（`kMdStreamPlainLimit`）；光标是独立的一块（`MdView.caretKey`），不再是 `▌` 字符。
-   - 定稿长消息仍按 `kLongTextChars` 截断，给的是 `previewMarkdown`（截断点落在换行、未闭合围栏会补齐），点「展开全文」看原文。
+   - 定稿长消息按 `kLongTextChars`（**600 字**）截断，给的是 `previewMarkdown`（截断点落在换行、未闭合围栏会补齐），点「展开全文」看原文。门槛按手机行宽定：一行约 20–22 个汉字或 45 个西文字符，600 字已经是十来屏的一半；定太高时英文/代码那种「字数不多、行数很多」的消息会漏在门槛下面，整条铺满几屏。
    - 工具/思考行改成竖排时间线（左侧细线 + 圆点），折叠与展开逻辑不变。
    - **链接可点**：`http`/`https` 的 `[文字](url)` 与裸链接都交给系统浏览器（`openExternalLink` → `PlatformBridge.openUrl` → 原生 `Intent.ACTION_VIEW`，不引入 `url_launcher`）；打不开时复制到剪贴板并提示。相对路径 / `#锚点` / `mailto:` 不画成链接（`isOpenableUrl` 只认 http/https）。点击识别器挂在**叶子** span 上——命中测试取的是最深那层，挂外层点不到。
    - 配色/字号集中在 `MdStyle.of(theme)`（`md_style.dart`），要更贴近 PC 只改这一个文件。
@@ -272,6 +272,14 @@ subdomain = "home"
    - 历史没对完账时只放行本次会话自己刚发的、以及 `queued`/`failed` 的（这两种确实还没开跑，位置在底部是对的）；`kHistorySettleFallback`（10s）只是断线慢网的最后一道阀门。
    - 两道统一过滤：`_echoedInHistory`（历史 `user/message` 的 `requestId` 相同，或正文 `trim()` 相同）与 `_olderThanHistory`（本地记录时间早于历史最新一条 ⇒ 不可能还在路上，不显示但**不删盘**）。宿主会把带图消息正文改写成 `原文\n\n[附件 xxx.png]`，所以正文比对之外还要靠时间兜底。
    - 回声清理收口到 `_dropEchoedPending()`，`_loadHistory`（放在 `_markHistorySettled()` 之前）与 `_reconcilePending` 共用同一套口径，避免两处判断漂移。
+   - **「还在路上」的判据只有 id**：`user/message` 的 `source.rpcId` 必须读进 `ChatMessage.requestId`（来自 `agent/inbox/spliced` 的队列项也用它），
+     没 `requestId` 时才退回正文比较，且必须同时满足「不在宿主队列里」「是盘上回填的」。本条消息是本轮刚发、还排在队列里时，
+     历史时间再新也不能判它过时——否则 PC 上看得见的排队消息在 App 里会整条消失。
+   - 队列标记收口到 `_applyQueueToPending(items, {downgrade})`：`_refreshQueue` 传 `downgrade: false`（只升级），`_reconcilePending` 才允许降级。
+8. **答完提醒的时机与权限**（`services/turn_watch.dart` + 原生 `MainActivity.kt`）：
+   - 通知权限（`POST_NOTIFICATIONS`）在**一轮开跑时**就要（`hold()` → `_ensurePermission()`）：授权框只有前台弹得出来，而提醒的触发点（`turn/end`）几乎总落在人已经切走之后，后台那次申请拿不到框，回调就是「没给」。一个进程只问一次，`release()` 后复位。
+   - 原生侧 `notifyRoundDone` 因没权限发不出去时把内容存进 `pendingRoundDone`，用户点完「允许」在 `onRequestPermissionsResult` 里立刻补发。
+   - 会话页还活着时切到后台：这一轮交给 `TurnWatch.adopt`（用页面手上那条连接接着听——后台 WS 基本一定断），回前台 `dropAdopted` 收回；交接期间页面自己的 `_announceTurnDone` 跳过，避免两条提醒。
 
 ### 7.3 二维码内容（插件设置页生成，App 扫）
 

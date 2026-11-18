@@ -105,4 +105,33 @@ void main() {
     expect(find.byType(SelectableText), findsOneWidget);
     expect(find.text('展开全文'), findsNothing);
   });
+
+  test('折叠门槛钉在 600 上下，不许再往上调', () {
+    // 定 1200 时英文长文刚好卡在门槛下面，一条消息铺满三四屏。
+    expect(kLongTextChars, lessThanOrEqualTo(700));
+  });
+
+  testWidgets('一千出头的英文长文也要折——门槛不是 1200', (tester) async {
+    // 用户实际撞见的那一条：ACP 压缩回执，全是西文，一行能挤四十多个字符，
+    // 字数刚好卡在 1200 以下，于是整段（二十多行）全铺在屏幕上。
+    final receipt = <String>[
+      '📦 [ACP] Compressed m00001 – m00166, m00168 – m00288, m00290 – m00458,',
+      ' m00460 – m00628, m00631 – m00671, m00673 – m00900, m00902 – m01110,',
+      ' m01112 – m01330, m01340 – m01579, m01585 – m01808, m01812 – m02036,',
+      ' m02038 – m02179, m02181 – m02235 → 13 block(s), ~582956 tokens saved.',
+      ' Excluded 1 message(s) carrying unrecoverable media (no stored bytes and',
+      ' no re-access handle in the message) from compression range — folding',
+      ' would destroy them permanently (billion-context#1188/#2609).',
+    ].join();
+    final body = '$receipt${' filler' * 60} 尾巴标记XYZ';
+    expect(body.length, lessThan(1200), reason: '这就是「刚好没折」的那一段');
+    expect(body.length, greaterThan(kLongTextChars));
+
+    await tester.pumpWidget(_wrap(_message(body)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('展开全文'), findsOneWidget);
+    // 尾部那截不在气泡里：预览截在 kLongTextChars 附近。
+    expect(find.textContaining('尾巴标记XYZ'), findsNothing);
+  });
 }

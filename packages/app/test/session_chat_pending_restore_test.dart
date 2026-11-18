@@ -40,7 +40,9 @@ class _HangRemote extends DshRemote {
   }) : super(host: _host);
 
   final List<SessionLogEvent> history;
-  final List<DshQueuedItem> queue;
+
+  /// 可变：测试里要在「已经发出去之后」才让宿主报出这条队列项。
+  List<DshQueuedItem> queue;
 
   /// 历史那一页在路上的耗时：真实网络里它远慢于「读磁盘回填气泡」，
   /// 「闪一下假排队」的复现就靠这个差。
@@ -418,6 +420,108 @@ void main() {
     final after = await SharedPreferences.getInstance();
     expect(_pendingInPrefs(after), contains('"queued":false'));
 
+    await _leave(tester, remote);
+  });
+
+  testWidgets('本轮刚发、宿主还在排队：历史往前走了，它也必须显示（PC 有、App 没有）', (tester) async {
+    final remote = await _pump(tester);
+    await _type(tester, '排在后面的那条');
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pump();
+
+    // 发出去之后宿主才把这条报进队列（正在跑的那一轮排着它）。
+    final prefs = await SharedPreferences.getInstance();
+    final raw = jsonDecode(_pendingInPrefs(prefs)!) as List<Object?>;
+    final requestId = (raw.first as Map<Object?, Object?>)['requestId'] as String;
+    remote.queue = <DshQueuedItem>[
+      DshQueuedItem(id: 'item-9', placement: 'queued', rpcId: requestId),
+    ];
+    // 队列变化的那条事件（PC 上塞了消息、或宿主提队首）驱动一次刷新。
+    remote.frames.add(
+      DshStreamFrame(
+        kind: DshFrameKind.event,
+        event: SessionLogEvent(
+          type: 'agent/inbox/spliced',
+          seq: 6,
+          data: <String, Object?>{'target': 'next-turn'},
+        ),
+      ),
+    );
+    // 这一轮还在往外吐，历史里出现了比这条更晚的时间戳——
+    // 以前「比历史最新一条还早」的判据会把排队中的它直接藏掉。
+    remote.frames.add(
+      DshStreamFrame(
+        kind: DshFrameKind.event,
+        event: _assistant(7, '正在处理，别急', at: DateTime.now()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('排在后面的那条'), findsOneWidget, reason: '排队中的气泡不该消失');
+    expect(find.text('排队中'), findsOneWidget);
+    await _leave(tester, remote);
+  });
+
+  testWidgets('盘上回填的那条还在宿主队列里：历史更新了也不能当它过时', (tester) async {
+    final now = DateTime.now();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      PendingStore.keyFor(_host.id, _sessionId),
+      '[{"localId":"local-7","text":"还在等的那条","requestId":"req-q7",'
+      '"sentAt":${now.subtract(const Duration(minutes: 5)).millisecondsSinceEpoch},'
+      '"queued":true,"failed":false}]',
+    );
+
+    final remote = await _pump(
+      tester,
+      history: <SessionLogEvent>[
+        _user(3, '更早的一条', at: now.subtract(const Duration(minutes: 30))),
+        // 历史最新一条比这条「待回显」还晚：旧判据据此认定它过时。
+        _assistant(4, '上一轮的回复', at: now.subtract(const Duration(minutes: 1))),
+      ],
+      queue: <DshQueuedItem>[
+        DshQueuedItem(id: 'item-7', placement: 'queued', rpcId: 'req-q7'),
+      ],
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('还在等的那条'), findsOneWidget);
+    expect(find.text('排队中'), findsOneWidget);
+    await _leave(tester, remote);
+  });
+
+  testWidgets('同一句话发第二次：还在队列里的那条不能被当成回声藏掉', (tester) async {
+    final now = DateTime.now();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      PendingStore.keyFor(_host.id, _sessionId),
+      '[{"localId":"local-8","text":"发布","requestId":"req-q8",'
+      '"sentAt":${now.millisecondsSinceEpoch},'
+      '"queued":true,"failed":false}]',
+    );
+
+    final remote = await _pump(
+      tester,
+      history: <SessionLogEvent>[
+        // 上一次发的「发布」已经定稿；requestId 不同，就是两条不同的消息。
+        _user(
+          3,
+          '发布',
+          requestId: 'req-old',
+          at: now.subtract(const Duration(minutes: 20)),
+        ),
+      ],
+      queue: <DshQueuedItem>[
+        DshQueuedItem(id: 'item-8', placement: 'queued', rpcId: 'req-q8'),
+      ],
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('发布'), findsNWidgets(2), reason: '历史一条 + 排队一条');
+    expect(find.text('排队中'), findsOneWidget);
     await _leave(tester, remote);
   });
 
