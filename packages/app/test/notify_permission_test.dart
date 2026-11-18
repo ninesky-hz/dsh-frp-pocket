@@ -391,4 +391,55 @@ void main() {
 
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('设置页：灵动岛与系统通知是两个开关，权限那行只跟系统通知走', (tester) async {
+    const channel = MethodChannel('com.ninesky.dsh_frp_app/native');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method != 'notificationStatus') return null;
+      return <String, Object?>{
+        'platform': _sdk,
+        'granted': true,
+        'canAsk': false,
+        'appNotificationsEnabled': true,
+        'channelReady': true,
+        'channelImportance': 4,
+      };
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final settings = await _settings();
+    final hosts = HostStore();
+    await tester.pumpWidget(
+      AppScope(
+        hosts: hosts,
+        settings: settings,
+        child: const MaterialApp(home: SettingsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('答完提醒 · 灵动岛'), findsOneWidget);
+    expect(find.text('答完提醒 · 系统通知'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('notify-perm-tile')), findsOneWidget);
+
+    // 只关灵动岛：权限那行还在，因为它只服务系统通知。
+    await settings.setTurnAlertIsland(false);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('notify-perm-tile')),
+      findsOneWidget,
+      reason: '系统通知还开着，权限与电池那行必须留着',
+    );
+
+    // 再关系统通知：这才该消失。
+    await settings.setTurnAlertSystem(false);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey<String>('notify-perm-tile')), findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
+  });
 }

@@ -539,7 +539,8 @@ void main() {
     await remote.frames.close();
   });
 
-  test('答完提醒默认开，关掉会落盘', () async {    SharedPreferences.setMockInitialValues(<String, Object>{});
+  test('答完提醒默认开，关掉会落盘', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
     final settings = SettingsStore();
     await settings.load();
     expect(settings.turnAlertEnabled, isTrue);
@@ -548,7 +549,8 @@ void main() {
     expect(settings.turnAlertEnabled, isFalse);
 
     final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getBool('dsh_frp.turnAlert'), isFalse);
+    expect(prefs.getBool('dsh_frp.turnAlertIsland'), isFalse);
+    expect(prefs.getBool('dsh_frp.turnAlertSystem'), isFalse);
 
     final reloaded = SettingsStore();
     await reloaded.load();

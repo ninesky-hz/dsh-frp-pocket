@@ -18,9 +18,11 @@ Future<void> main() async {
   final hosts = HostStore();
   await Future.wait<void>(<Future<void>>[settings.load(), hosts.load()]);
 
-  // 「答完提醒」的开关来源：提醒由全局的 TurnWatch 投递，它不挂在任何页面上，
+  // 「答完提醒」的两条开关来源：提醒由全局的 TurnWatch 投递，它不挂在任何页面上，
   // 拿不到 AppScope，所以在这里把设置项接过去（读的是活值，改了立刻生效）。
-  TurnWatch.instance.enabled = () => settings.turnAlertEnabled;
+  // 灵动岛只管 App 前台，系统通知只管后台/锁屏，两条互不替代。
+  TurnWatch.instance.islandEnabled = () => settings.turnAlertIsland;
+  TurnWatch.instance.systemEnabled = () => settings.turnAlertSystem;
 
   runApp(DshFrpApp(hostStore: hosts, settingsStore: settings));
 }

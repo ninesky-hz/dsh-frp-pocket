@@ -1,3 +1,18 @@
+## 2026-11-18（灵动岛和系统通知分成两个开关，前台后台各管各的）
+
+### app 1.13.0+59
+
+以前是一个「答完提醒（灵动岛）」开关管全部：前台弹胶囊、后台发系统通知，想只留一种做不到。
+
+- **改法**：设置 → 会话里拆成两条——
+  - **答完提醒 · 灵动岛**：App 正开着时，屏幕顶部弹一条摘要（默认开）。
+  - **答完提醒 · 系统通知**：切到后台或锁屏时，答完了发一条通知栏提醒（默认开）。
+- **组合语义**：两条都开＝前台胶囊、后台通知（和以前一样）；只开系统通知＝前台也走通知栏（至少不漏，只是没有胶囊可点）；只开灵动岛＝后台什么都不弹；两条都关＝连保活服务都不挂，也不再申请通知权限（不会出现「明明关了还在提醒」）。
+- **权限那行只跟系统通知走**：灵动岛是 App 自己画的，不需要任何授权，所以关掉系统通知时，那行「系统通知权限 / 允许后台运行」跟着消失。
+- **迁移**：老版本只有一个 `dsh_frp.turnAlert`，新键没写过就按它的值初始化——以前关掉过提醒的人升级后不会突然又被吵到。
+- 代码：`data/settings_store.dart`（`turnAlertIsland` / `turnAlertSystem` / `turnAlertsEnabled`、`setTurnAlertEnabled` 保留为「两条一起改」）、`services/turn_watch.dart`（`islandEnabled` / `systemEnabled` 两条来源，`finish` 按「前台+灵动岛开 → 胶囊」「否则系统通知开 → 通知」分流，`hold` 与权限申请都看 `alertsEnabled`）、`main.dart` 绑定两处、`screens/settings_screen.dart` 两个开关（键 `settings.turnAlertIsland` / `settings.turnAlertSystem`）。
+- 测试：新增 `test/turn_alert_split_test.dart` 6 条（前台关灵动岛改发通知 / 两条都开只发胶囊 / 后台关系统通知不弹 / 两条都关不挂保活服务 / 两条各自落盘 / 老键迁移）；`notify_permission_test.dart` 加 1 条（权限那行只跟系统通知走）；`chat_notes_setting_test.dart` 两处用例补滚动（多了一行开关，详细/简洁与收起过程被顶到视口外）。全量 536 条通过，`flutter analyze` 无问题。
+
 ## 2026-11-18（`/` 补全不再只管句首：正文后面接技能名也弹，点选只换那一段）
 
 ### app 1.12.3+58

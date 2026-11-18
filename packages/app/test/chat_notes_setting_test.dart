@@ -208,10 +208,18 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // 会话分组里现在有「灵动岛 / 系统通知 / 通知权限 / 收起过程」几行，
+    // 工具调用那两项在视口外，先滚过去再断言。
+    await tester.dragUntilVisible(
+      find.text('工具调用显示'),
+      find.byType(ListView),
+      const Offset(0, -120),
+    );
+    await tester.pumpAndSettle();
+
     expect(find.text('工具调用显示'), findsOneWidget);
     expect(find.text('逐项列出，带工具参数摘要'), findsOneWidget);
 
-    // 会话分组里多了「答完提醒 + 通知权限」两行，详细/简洁被顶到视口外了。
     await tester.dragUntilVisible(
       find.text('简洁'),
       find.byType(ListView),
@@ -242,6 +250,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(settings.foldNotesWhenDone, isTrue, reason: '默认跟网页端一样：答完就折');
+
+    await tester.dragUntilVisible(
+      find.text('完成后收起过程'),
+      find.byType(ListView),
+      const Offset(0, -120),
+    );
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('完成后收起过程'));
     await tester.pumpAndSettle();

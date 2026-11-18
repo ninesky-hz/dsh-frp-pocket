@@ -34,10 +34,26 @@ class TurnWatch {
   @visibleForTesting
   set bridge(PlatformBridge value) => _bridge = value;
 
-  /// 「答完提醒」开关的来源，`main()` 里绑到设置项；没绑就是一直开着。
-  bool Function() enabled = _enabledByDefault;
+  /// 前台那条「灵动岛」开关的来源，`main()` 里绑到设置项；没绑就是一直开着。
+  bool Function() islandEnabled = _enabledByDefault;
+
+  /// 后台那条「系统通知」开关的来源。
+  bool Function() systemEnabled = _enabledByDefault;
 
   static bool _enabledByDefault() => true;
+
+  /// 两条提醒里有没有一条开着。
+  ///
+  /// 保活服务与通知权限都跟着它走：两条都关了就没必要把进程顶住、也没必要弹
+  /// 授权框——那只会让人觉得「明明关了还在提醒」。
+  bool get alertsEnabled => islandEnabled() || systemEnabled();
+
+  /// 老接口：一条开关管两条（测试里常用）。
+  @visibleForTesting
+  set enabled(bool Function() value) {
+    islandEnabled = value;
+    systemEnabled = value;
+  }
 
   // ------------------------------------------------------------ 保活服务
 
@@ -52,6 +68,7 @@ class TurnWatch {
   /// false，那就只剩「人回来才看得到」这一条路——不是错误，是系统限制。
   void hold({String? title}) {
     if (_held) return;
+    if (!alertsEnabled) return;
     _held = true;
     final text = title == null || title.trim().isEmpty
         ? '这一轮对话'
@@ -66,7 +83,8 @@ class TurnWatch {
       // 有可能被冻住、收不到 turn/end。不打断流程，但留个印子好排查。
       debugPrint('TurnWatch: 保活服务没起来，后台可能收不到 turn/end');
     }
-    unawaited(_ensurePermission());
+    // 只有后台那条要权限：灵动岛是 App 自己画的，不需要任何授权。
+    if (systemEnabled()) unawaited(_ensurePermission());
   }
 
   /// 这个进程里问过权限没有（问过一次就别再骚扰）。
@@ -108,10 +126,10 @@ class TurnWatch {
       _held = false;
       unawaited(_bridge.stopTurnWatch());
     }
-    if (!enabled()) return;
+    if (!alertsEnabled) return;
     final cleanTitle = squashAlertText(title.trim().isEmpty ? '新会话' : title);
     final cleanBody = squashAlertText(body ?? '');
-    if (_foreground) {
+    if (_foreground && islandEnabled()) {
       TurnAlertCenter.instance.show(
         TurnAlert(
           sessionId: sessionId ?? '',
@@ -123,21 +141,25 @@ class TurnWatch {
       );
       return;
     }
-    // 后台：系统通知栏那条。发不出去（没权限/没桥）就算了，不打断任何流程。
+    // 剩下两条路都走系统通知：人在后台（本来就要发），或者人在前台但把灵动岛
+    // 关了（系统通知还开着，那就别让他白等——只是这次没有胶囊可点）。
+    //
     // `focus: true` 是让原生带上小米焦点通知的 JSON 参数——系统支持且有权限时
     // 它才会上岛；没有权限时按官方语义退化成普通通知，不影响这条提醒本身。
-    unawaited(_sendBackgroundNotice(cleanTitle, cleanBody, sessionId));
+    if (!systemEnabled()) return;
+    unawaited(_sendNotice(cleanTitle, cleanBody, sessionId));
   }
 
-  /// 发后台那条系统通知，并把结果记进 [lastEvent]。
+  /// 发那条系统通知，并把结果记进 [lastEvent]。
   ///
   /// 为什么要记：用户在设置页只能看到「已允许」，但「给了权限还是收不到」和
   /// 「通知根本没进系统」是两件事，只有把原生侧那个 bool 留下来才分得清。
-  Future<void> _sendBackgroundNotice(
+  Future<void> _sendNotice(
     String title,
     String body,
     String? sessionId,
   ) async {
+    final inBackground = !_foreground;
     try {
       final ok = await _bridge.notifyRoundDone(
         title: title,
@@ -145,9 +167,13 @@ class TurnWatch {
         sessionId: sessionId,
         focus: true,
       );
-      _note(ok ? '后台通知已送进通知栏' : '后台通知被拒：权限或通道那层不通');
+      if (ok) {
+        _note(inBackground ? '系统通知已送进通知栏' : '前台没开灵动岛，改发了系统通知');
+      } else {
+        _note(inBackground ? '系统通知被拒：权限或通道那层不通' : '前台改发的系统通知也被拒了');
+      }
     } catch (error) {
-      _note('后台通知出错：$error');
+      _note('系统通知出错：$error');
     }
   }
 

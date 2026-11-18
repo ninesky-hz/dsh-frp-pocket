@@ -73,6 +73,9 @@ abstract final class AppIcons {
   /// 后台运行资格（电池优化名单）。
   static const IconData battery = CupertinoIcons.battery_25;
 
+  /// 系统通知那条开关：铃铛带角标，和「灵动岛」的普通铃铛区分开。
+  static const IconData notification = CupertinoIcons.bell_fill;
+
   // -------------------------------------------------------------- 主机/连接
   static const IconData qrScan = CupertinoIcons.qrcode_viewfinder;
   static const IconData qrCode = CupertinoIcons.qrcode;

@@ -276,8 +276,11 @@ subdomain = "home"
      没 `requestId` 时才退回正文比较，且必须同时满足「不在宿主队列里」「是盘上回填的」。本条消息是本轮刚发、还排在队列里时，
      历史时间再新也不能判它过时——否则 PC 上看得见的排队消息在 App 里会整条消失。
    - 队列标记收口到 `_applyQueueToPending(items, {downgrade})`：`_refreshQueue` 传 `downgrade: false`（只升级），`_reconcilePending` 才允许降级。
-8. **答完提醒的时机与权限**（`services/turn_watch.dart` + 原生 `MainActivity.kt`）：
-   - 通知权限（`POST_NOTIFICATIONS`）在**一轮开跑时**就要（`hold()` → `_ensurePermission()`）：授权框只有前台弹得出来，而提醒的触发点（`turn/end`）几乎总落在人已经切走之后，后台那次申请拿不到框，回调就是「没给」。一个进程只问一次，`release()` 后复位。
+8. **答完提醒的时机与权限**（`services/turn_watch.dart`）：两条开关各自独立——`turnAlertIsland`（App 前台、顶部胶囊，默认开）与 `turnAlertSystem`（后台/锁屏的系统通知，默认开），键分别是 `dsh_frp.turnAlertIsland` / `dsh_frp.turnAlertSystem`，老键 `dsh_frp.turnAlert` 只作迁移兜底。
+   - 分流口径（`finish`）：前台且灵动岛开 → 胶囊；否则系统通知开 → 通知（前台也发，宁可重一条也别一声不吭）；两条都不开 → 什么都不做。
+   - 保活服务（`hold`）与通知权限申请都看 `alertsEnabled`（任一开）：两条都关时不许挂前台服务、不许弹授权框。
+   - 设置页那行「系统通知权限 / 允许后台运行」只在 `turnAlertSystem` 为真时出现——灵动岛是 App 自己画的，不需要系统授权。
+   - 原生侧（`MainActivity.kt`）：通知权限（`POST_NOTIFICATIONS`）在**一轮开跑时**就要（`hold()` → `_ensurePermission()`）：授权框只有前台弹得出来，而提醒的触发点（`turn/end`）几乎总落在人已经切走之后，后台那次申请拿不到框，回调就是「没给」。一个进程只问一次，`release()` 后复位。
    - 原生侧 `notifyRoundDone` 因没权限发不出去时把内容存进 `pendingRoundDone`，用户点完「允许」在 `onRequestPermissionsResult` 里立刻补发。
    - 会话页还活着时切到后台：这一轮交给 `TurnWatch.adopt`（用页面手上那条连接接着听——后台 WS 基本一定断），回前台 `dropAdopted` 收回；交接期间页面自己的 `_announceTurnDone` 跳过，避免两条提醒。
    - **接手必须有兜底轮询**（`kAdoptedPollInterval = 10s`、`kAdoptedPollLimit = 30min`）：后台那条 WS 断了就没人送 `turn/end`，只靠流的实现等于「后台永远不提醒」。轮询每拍读 `listSessions()` 里这条会话的 `running`，**连续两次**为假才判答完（一次可能只是两轮之间的空档）；`turn/end` 与轮询共用一个 `_finishAdopted()`，不许各写一套。
