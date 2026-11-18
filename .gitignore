@@ -22,3 +22,9 @@ Thumbs.db
 
 # 图标生成器的中间产物（design source 是 generate_icon.py，预览图本地看就行）
 packages/app/tool/icon/preview/
+
+# 正式签名材料：钥匙和口令只在本机（换机器就覆盖不了升级，务必离线备份）
+packages/app/android/keys/
+packages/app/android/key.properties
+*.jks
+*.keystore

@@ -70,6 +70,9 @@ abstract final class AppIcons {
   /// 答完提醒（灵动岛 / 系统通知）。
   static const IconData spark = CupertinoIcons.bell;
 
+  /// 后台运行资格（电池优化名单）。
+  static const IconData battery = CupertinoIcons.battery_25;
+
   // -------------------------------------------------------------- 主机/连接
   static const IconData qrScan = CupertinoIcons.qrcode_viewfinder;
   static const IconData qrCode = CupertinoIcons.qrcode;

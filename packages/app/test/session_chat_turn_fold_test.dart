@@ -9,6 +9,7 @@ import 'package:dsh_frp_app/models/session_event.dart';
 import 'package:dsh_frp_app/models/session_summary.dart';
 import 'package:dsh_frp_app/screens/session_chat_screen.dart';
 import 'package:dsh_frp_app/services/dsh_remote.dart';
+import 'package:dsh_frp_app/services/turn_watch.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -216,6 +217,9 @@ void main() {
     expect(find.text('工具调用 · grep'), findsNWidgets(2));
 
     await tester.pumpWidget(const SizedBox());
+    // 页面销毁时会把这一轮交给 TurnWatch（它现在带一个 10 秒的兜底轮询）。
+    // 测试里没有真宿主可问，收尾时把它停掉，别把定时器留给下一个用例。
+    TurnWatch.instance.dropAdopted();
     await remote.close();
   });
 

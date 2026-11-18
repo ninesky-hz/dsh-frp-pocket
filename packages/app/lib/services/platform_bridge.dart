@@ -216,14 +216,48 @@ class PlatformBridge {
   /// 桥不可用时返回 null，调用方据此什么都不显示。
   Future<FocusStatus?> focusStatus() async {
     try {
-      final result = await _channel
-          .invokeMethod<Map<Object?, Object?>>('focusStatus');
+      final result = await _channel.invokeMethod<Map<Object?, Object?>>(
+        'focusStatus',
+      );
       if (result == null) return null;
       return FocusStatus.fromMap(result);
     } on MissingPluginException {
       return null;
     } on PlatformException {
       return null;
+    }
+  }
+
+  /// 本应用有没有被放进「不受电池优化限制」名单。
+  ///
+  /// 返回 null 表示问不到（非 Android / 旧原生），调用方据此不显示这一行，
+  /// 而不是显示一个永远「未开启」的按钮。
+  Future<bool?> batteryOptimizationIgnored() async {
+    try {
+      final result = await _channel
+          .invokeMethod<Map<Object?, Object?>>('batteryStatus')
+          .timeout(_timeout, onTimeout: () => null);
+      if (result == null) return null;
+      final value = result['ignoring'];
+      return value is bool ? value : null;
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
+
+  /// 弹系统的「允许后台运行」框；用户点完才回来，所以给 90 秒。
+  Future<bool> requestIgnoreBatteryOptimizations() async {
+    try {
+      final result = await _channel
+          .invokeMethod<bool>('requestIgnoreBatteryOptimizations')
+          .timeout(_slowTimeout, onTimeout: () => null);
+      return result ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
     }
   }
 }

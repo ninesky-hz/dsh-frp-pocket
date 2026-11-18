@@ -61,6 +61,20 @@ class _FakeBridge extends PlatformBridge {
   @override
   Future<FocusStatus?> focusStatus() async => focus;
 
+  /// 电池优化名单：默认「已放开」，只有专门测这一行的用例才置 false。
+  bool ignoringBattery = true;
+  int batteryCalls = 0;
+
+  @override
+  Future<bool?> batteryOptimizationIgnored() async => ignoringBattery;
+
+  @override
+  Future<bool> requestIgnoreBatteryOptimizations() async {
+    batteryCalls++;
+    ignoringBattery = true;
+    return true;
+  }
+
   @override
   Future<bool> notifyRoundDone({
     required String title,
@@ -296,6 +310,43 @@ void main() {
 
     expect(find.textContaining('拿不到通知状态'), findsOneWidget);
     expect(find.byKey(const ValueKey<String>('notify-perm-action')), findsNothing);
+  });
+
+  testWidgets('没放开电池优化时，多一行「允许后台运行」', (tester) async {
+    final bridge = _FakeBridge(_status(granted: true, canAsk: false))
+      ..ignoringBattery = false;
+    await _pumpTile(tester, bridge);
+
+    expect(find.byKey(const ValueKey<String>('notify-battery-row')), findsOneWidget);
+    expect(find.textContaining('容易被系统冻结'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey<String>('notify-battery-action')));
+    await tester.pumpAndSettle();
+    expect(bridge.batteryCalls, 1);
+    // 放开之后那一行自己退场，不用手动刷新页面。
+    expect(find.byKey(const ValueKey<String>('notify-battery-row')), findsNothing);
+  });
+
+  testWidgets('已经放开电池优化时，不显示那一行', (tester) async {
+    final bridge = _FakeBridge(_status(granted: true, canAsk: false));
+    await _pumpTile(tester, bridge);
+
+    expect(find.byKey(const ValueKey<String>('notify-battery-row')), findsNothing);
+  });
+
+  testWidgets('三个按钮排成一行时标题不会被挤成竖排', (tester) async {
+    final bridge = _FakeBridge(_status(granted: true, canAsk: false))
+      ..ignoringBattery = false;
+    await _pumpTile(tester, bridge);
+
+    // 标题只有一个 Text，且拿得到横向宽度（不是被 trailing 挤成两三个字一行）。
+    final title = tester.widget<Text>(find.text('系统通知权限'));
+    expect(title.data, '系统通知权限');
+    final box = tester.getSize(find.text('系统通知权限'));
+    expect(box.width, greaterThan(60), reason: '标题宽度被挤到一行只能放两三个字');
+    expect(find.byKey(const ValueKey<String>('notify-test-action')), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('notify-test-later')), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('notify-perm-action')), findsOneWidget);
   });
 
   testWidgets('设置页：开关关掉时那行权限检查跟着消失', (tester) async {

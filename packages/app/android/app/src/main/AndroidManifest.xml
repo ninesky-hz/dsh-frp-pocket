@@ -9,6 +9,11 @@
     <!-- 一轮在跑时挂前台服务：系统不会把进程冻住，WS 才收得到 turn/end -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <!-- 锁屏之后 CPU 会睡下去，Timer 就不再跑了：这一轮还在跑时拿一个 partial wakelock
+         把 CPU 顶住，轮询判据才等到「答完了」那条结论。答完立刻释放。 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- 让用户把本应用从电池优化名单里放出来：不放，MIUI/HyperOS 会在后台直接冻进程。 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <!-- 小米/HyperOS 焦点通知（顶部灵动岛）走的是系统内部字段，认不认由 ROM 决定 -->
     <uses-permission android:name="miui.permission.USE_INTERNAL_GENERAL_API"/>
 

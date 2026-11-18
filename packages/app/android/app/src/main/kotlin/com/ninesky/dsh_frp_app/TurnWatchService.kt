@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 
 /**
  * 一轮对话在跑的时候挂一个前台服务。
@@ -25,6 +26,13 @@ class TurnWatchService : Service() {
     private val channelId = "turn_watch"
     private val notificationId = 0x4455
 
+    /**
+     * 锁屏 + 前台服务还不够：屏幕一灭，CPU 进 suspend，Dart 侧那个 `Timer.periodic`
+     * 根本不会醒，于是「答完了」永远没人判。拿一个 partial wakelock 把 CPU 顶住，
+     * 只在这一轮的时间里持有，[onDestroy] 立刻放。
+     */
+    private var wakeLock: PowerManager.WakeLock? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -37,9 +45,40 @@ class TurnWatchService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        acquireWakeLock()
         // 不用 STICKY：进程真被杀之后重拉起来也接不回那条连接，只会留下一条
         // 撤不掉的「正在等」。下次打开 App 会重新挂。
         return START_NOT_STICKY
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        try {
+            val manager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = manager
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "dsh-frp:turn-watch")
+                .apply {
+                    setReferenceCounted(false)
+                    // 兜底超时：万一 onDestroy 没被调（进程被强杀），别让锁一直挂着。
+                    acquire(60 * 60 * 1000L)
+                }
+        } catch (e: Exception) {
+            // 拿不到就算了：最多少一次后台提醒，不影响前台。
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+        } catch (e: Exception) {
+            // ignore
+        }
+        wakeLock = null
+    }
+
+    override fun onDestroy() {
+        releaseWakeLock()
+        super.onDestroy()
     }
 
     private fun build(text: String): Notification {

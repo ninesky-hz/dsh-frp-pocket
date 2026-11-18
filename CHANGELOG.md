@@ -1,3 +1,52 @@
+## 2026-11-18（后台提醒补全：轮询兜底、唤醒锁、电池白名单，设置页那行重排）
+
+### app 1.12.2+57
+
+1.12.1 把权限要在开跑时、把这一轮交给 `TurnWatch`，但**「后台还是没有通知」**。
+
+- **症状**：给了通知权限，切到后台/锁屏，一轮答完照样什么都没发生；回到 App 一看，那一轮早就答完了。
+- **根因**：`TurnWatch.adopt()` 唯一的判据是页面那条连接的 `session/follow` 流。切到后台之后那条
+  WS 基本一定断（Android 会掐掉后台长连接，页面自己的注释里也写着这句），断了就再没有人送
+  `turn/end`——保活服务把进程顶住也没用，**链路上根本没有事件可收**。
+- **改法**：
+  - `lib/services/turn_watch.dart`：接手时同时开一个**兜底轮询**，每 10 秒问一次 `listSessions()`，
+    看这条会话的 `running`；**连续两次**看到没在跑才判定答完（一次可能只是两轮之间的空档），
+    最多盯 30 分钟。`turn/end` 和轮询共用一个收尾（`_finishAdopted`），不会重复提醒。
+  - `lib/widgets/turn_alert_permission_tile.dart`：那行「系统通知权限」多了「15 秒后」——点完就能锁屏
+    或切走，验的正是后台这条路径（「试一下」是当场发，验的是通知层）；副标题还会显示
+    `· 上次：接手 …/轮询确认这一轮已经结束 → 补发提醒`，到底是没收到事件还是通知发不出去，一眼能分。
+- 测试：新增 `test/turn_watch_poll_test.dart` 2 条——接手后 WS 一声不吭也能靠轮询补发提醒、
+  不再接手就不再轮询。全量 522 条通过，`flutter analyze` 无问题。
+
+### 系统通知权限那行重排（截图里标题被挤成竖排）
+
+- **症状**：设置页「系统通知权限」五个字被挤成一列，「已允许 · 切到后台答完也会提醒」也被压成一条窄缝。
+- **根因**：`TurnAlertPermissionTile` 是 `ListTile`，三个按钮全塞在 `trailing` 里；标题栏的可用宽度被
+  `trailing` 吃掉，`Text` 只能一个词一个词地换行。
+- **改法**：`lib/widgets/turn_alert_permission_tile.dart` 整块改成上下结构——图标 + 标题一行、
+  说明一行、按钮用 `Wrap` 换行排在下面（`试一下` / `15 秒后` / `系统设置`），忙时在按钮右侧转一个
+  小圈。副标题下面还会显示 `上次：…`（`TurnWatch.instance.lastEvent`），到底没收到事件还是通知发不出去，
+  一眼能分。
+- 测试：`test/notify_permission_test.dart` 新增「三个按钮排成一行时标题不会被挤成竖排」（量标题宽度
+  `> 60`，并确认三个按钮的 key 都在），该文件 19 条全绿。
+
+### 锁屏/后台还是收不到：CPU 睡了，定时器也不跑了
+
+- **症状**：给了权限、装了新版，锁屏放着等一会儿，答完依旧什么都不响，只有打开 App 才会提醒。
+- **根因**：`TurnWatch` 那条兜底轮询是 Dart 定时器，锁屏后 Doze 会把 CPU 挂起，定时器跟着停；保活服务
+  只把进程**优先级**抬高了，没有拿唤醒锁，也不在电池优化白名单里。
+- **改法**：
+  - `android/app/src/main/AndroidManifest.xml`：加 `WAKE_LOCK` 与 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`。
+  - `android/.../TurnWatchService.kt`：`startForeground` 成功后拿一把 `PARTIAL_WAKE_LOCK`
+    （tag `dsh-frp:turn-watch`，1 小时兜底，`onDestroy` 里释放），让这一轮里 CPU 不睡。
+  - `MainActivity.kt` + `lib/services/platform_bridge.dart`：新增 `batteryStatus` /
+    `requestIgnoreBatteryOptimizations` 两个桥方法，设置页据此多一行「允许后台运行」，点了直接弹系统的
+    电池优化白名单框（小米上等于「无限制」）。
+  - `lib/widgets/turn_alert_permission_tile.dart`：没放开时显示那行提示（key `notify-battery-row`），
+    放开后自己退场。
+- 测试：`test/notify_permission_test.dart` 新增「没放开电池优化时，多一行『允许后台运行』」与
+  「已经放开时不显示那一行」。全量 525 条通过，`flutter analyze` 无问题。
+
 ## 2026-11-18（后台也能收到「答完了」——权限在开跑时就要，切后台也有人接着听）
 
 ### app 1.12.1+56

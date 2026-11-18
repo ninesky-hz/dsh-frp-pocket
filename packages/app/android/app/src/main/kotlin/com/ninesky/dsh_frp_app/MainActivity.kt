@@ -12,6 +12,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
@@ -135,6 +136,11 @@ class MainActivity : FlutterActivity() {
                     "openNotificationSettings" -> result.success(openNotificationSettings())
 
                     "focusStatus" -> result.success(focusStatus())
+
+                    "batteryStatus" -> result.success(batteryStatus())
+
+                    "requestIgnoreBatteryOptimizations" ->
+                        result.success(requestIgnoreBatteryOptimizations())
 
                     else -> result.notImplemented()
                 }
@@ -574,6 +580,59 @@ class MainActivity : FlutterActivity() {
                 extras
             )
             bundle?.getBoolean("canShowFocus", false) ?: false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * 后台跑的资格：本应用有没有被放进「不受电池优化限制」名单。
+     *
+     * 为什么这一步是必须的：MIUI / HyperOS 会把后台进程直接冻住，冻住之后 Dart 侧
+     * 的定时器不跑、WS 也断——前台服务只是「有资格活着」，真正决定它能不能醒着的是
+     * 这个名单。`canAsk` 为假表示系统连这个对话框都不给（企业策略 / 旧版本），
+     * 那就只能引导用户自己去设置里找。
+     */
+    private fun batteryStatus(): Map<String, Any> {
+        val ignoring = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                val manager = getSystemService(Context.POWER_SERVICE) as PowerManager
+                manager.isIgnoringBatteryOptimizations(packageName)
+            } catch (e: Exception) {
+                false
+            }
+        } else {
+            true
+        }
+        return mapOf(
+            "ignoring" to ignoring,
+            "canAsk" to (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M),
+        )
+    }
+
+    /**
+     * 弹系统的「允许后台运行」框。
+     *
+     * 先试带包名的精确请求（一步到位）；这条 Intent 被 ROM 改掉时退回电池优化列表页，
+     * 让用户自己点。两条都打不开就返回 false，Flutter 侧改说「去设置里手动找」。
+     */
+    private fun requestIgnoreBatteryOptimizations(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
+        try {
+            val direct = Intent(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:$packageName")
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(direct)
+            return true
+        } catch (e: Exception) {
+            // 落到下面那条更保守的入口。
+        }
+        return try {
+            val list = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(list)
+            true
         } catch (e: Exception) {
             false
         }

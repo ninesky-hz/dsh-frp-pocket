@@ -280,6 +280,11 @@ subdomain = "home"
    - 通知权限（`POST_NOTIFICATIONS`）在**一轮开跑时**就要（`hold()` → `_ensurePermission()`）：授权框只有前台弹得出来，而提醒的触发点（`turn/end`）几乎总落在人已经切走之后，后台那次申请拿不到框，回调就是「没给」。一个进程只问一次，`release()` 后复位。
    - 原生侧 `notifyRoundDone` 因没权限发不出去时把内容存进 `pendingRoundDone`，用户点完「允许」在 `onRequestPermissionsResult` 里立刻补发。
    - 会话页还活着时切到后台：这一轮交给 `TurnWatch.adopt`（用页面手上那条连接接着听——后台 WS 基本一定断），回前台 `dropAdopted` 收回；交接期间页面自己的 `_announceTurnDone` 跳过，避免两条提醒。
+   - **接手必须有兜底轮询**（`kAdoptedPollInterval = 10s`、`kAdoptedPollLimit = 30min`）：后台那条 WS 断了就没人送 `turn/end`，只靠流的实现等于「后台永远不提醒」。轮询每拍读 `listSessions()` 里这条会话的 `running`，**连续两次**为假才判答完（一次可能只是两轮之间的空档）；`turn/end` 与轮询共用一个 `_finishAdopted()`，不许各写一套。
+   - **锁屏也不许睡**：`TurnWatchService` 在 `startForeground` 成功后拿一把 `PARTIAL_WAKE_LOCK`（tag `dsh-frp:turn-watch`，1 小时兜底，`onDestroy` 释放）。只抬进程优先级挡不住 Doze，Dart 定时器在 CPU 挂起时跟着停——那正是「只有打开 App 才提醒」的第二个原因。
+   - **电池优化白名单**：桥方法 `batteryStatus` / `requestIgnoreBatteryOptimizations`（`MainActivity.kt`）。设置页那行权限检查在没放开时显示「允许后台运行」（key `notify-battery-row`），点了弹系统白名单框；放开后自己退场。国内 ROM 的「自启动 / 省电策略」仍需用户在系统设置里手动放行，App 只负责把入口摆出来。
+   - **那行的版式**：不能再用 `ListTile` + `trailing` 塞三个按钮（标题会被挤成竖排）。现在是 `Column`：标题一行、说明一行、按钮 `Wrap` 一行，`上次：…` 单独一行。
+   - 诊断口径：`TurnWatch.lastEvent` 记最近一次「接手 … / 轮询确认这一轮已经结束 → 补发提醒 / follow 出错 …」，设置页那行「系统通知权限」把它显示在副标题里——要区分「事件没收到」和「通知发不出去」，只能靠这条。
 
 ### 7.3 二维码内容（插件设置页生成，App 扫）
 

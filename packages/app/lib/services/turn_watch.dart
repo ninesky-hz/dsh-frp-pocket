@@ -126,14 +126,29 @@ class TurnWatch {
     // 后台：系统通知栏那条。发不出去（没权限/没桥）就算了，不打断任何流程。
     // `focus: true` 是让原生带上小米焦点通知的 JSON 参数——系统支持且有权限时
     // 它才会上岛；没有权限时按官方语义退化成普通通知，不影响这条提醒本身。
-    unawaited(
-      _bridge.notifyRoundDone(
-        title: cleanTitle,
-        body: cleanBody.isEmpty ? '这一轮已答完' : cleanBody,
+    unawaited(_sendBackgroundNotice(cleanTitle, cleanBody, sessionId));
+  }
+
+  /// 发后台那条系统通知，并把结果记进 [lastEvent]。
+  ///
+  /// 为什么要记：用户在设置页只能看到「已允许」，但「给了权限还是收不到」和
+  /// 「通知根本没进系统」是两件事，只有把原生侧那个 bool 留下来才分得清。
+  Future<void> _sendBackgroundNotice(
+    String title,
+    String body,
+    String? sessionId,
+  ) async {
+    try {
+      final ok = await _bridge.notifyRoundDone(
+        title: title,
+        body: body.isEmpty ? '这一轮已答完' : body,
         sessionId: sessionId,
         focus: true,
-      ),
-    );
+      );
+      _note(ok ? '后台通知已送进通知栏' : '后台通知被拒：权限或通道那层不通');
+    } catch (error) {
+      _note('后台通知出错：$error');
+    }
   }
 
   /// 现在算不算「人在看 App」。
@@ -160,8 +175,80 @@ class TurnWatch {
   /// 接手的那条连接上「已经数到哪儿」：快照之前的都是历史，不能拿来当这一轮的结束。
   int? _baseline;
 
+  /// 后台兜底轮询的节奏。
+  ///
+  /// 为什么要有它：切到后台之后那条 WS 基本一定断（页面自己的注释写着这句），
+  /// 断了就再没人送 `turn/end` —— 保活服务把进程顶住也没用，因为链路上根本
+  /// 没有事件可收。轮询是唯一不依赖长连接的判据。
+  static const Duration kAdoptedPollInterval = Duration(seconds: 10);
+
+  /// 轮询最多盯这么久：异常情况（会话卡死、宿主重启）别一直耗着。
+  static const Duration kAdoptedPollLimit = Duration(minutes: 30);
+
+  Timer? _poll;
+  DateTime? _adoptedAt;
+
+  /// 连续观察到「没在跑」的次数：一次可能是两轮之间的空档，连着两次才算答完。
+  int _idlePolls = 0;
+
+  /// 最近一次发生了什么，给设置页那行「系统通知权限」当诊断用。
+  String? lastEvent;
+
+  void _note(String what) {
+    lastEvent = what;
+    debugPrint('TurnWatch: $what');
+  }
+
   /// 现在是不是在替某个已经关掉的页面盯着这一轮。
   bool get adopted => _sub != null;
+
+  /// 接手并开始兜底轮询。
+  void _startPolling() {
+    _poll?.cancel();
+    _adoptedAt = DateTime.now();
+    _idlePolls = 0;
+    _poll = Timer.periodic(kAdoptedPollInterval, (_) => unawaited(_pollOnce()));
+  }
+
+  void _stopPolling() {
+    _poll?.cancel();
+    _poll = null;
+    _adoptedAt = null;
+    _idlePolls = 0;
+  }
+
+  /// 问一次宿主：这一轮还在跑吗。
+  Future<void> _pollOnce() async {
+    final id = _adoptedId;
+    final remote = _remote;
+    if (id == null || remote == null) {
+      _stopPolling();
+      return;
+    }
+    final since = _adoptedAt;
+    if (since != null && DateTime.now().difference(since) > kAdoptedPollLimit) {
+      _note('轮询超时收工（这一轮迟迟没有结束）');
+      _stopPolling();
+      return;
+    }
+    try {
+      final items = await remote.listSessions();
+      if (_adoptedId != id || !_adoptedRunning) return;
+      final mine = items.where((item) => item.sessionId == id).toList();
+      final running = mine.any((item) => item.running);
+      if (running) {
+        _idlePolls = 0;
+        return;
+      }
+      _idlePolls += 1;
+      if (_idlePolls < 2) return;
+      _note('轮询确认这一轮已经结束 → 补发提醒');
+      _finishAdopted();
+    } catch (error) {
+      // 后台网络不稳很常见：这一拍问不到不算「答完了」，下一拍再问。
+      debugPrint('TurnWatch: 轮询失败 $error');
+    }
+  }
 
   /// 会话页要销毁了，而这一轮还在跑：把耳朵接过来。
   ///
@@ -190,17 +277,20 @@ class TurnWatch {
     _baseline = null;
     _remote = remote;
     _ownsRemote = ownsRemote;
+    _note('接手 ${sessionId.substring(0, sessionId.length.clamp(0, 8))}');
     _sub = remote.followSession(sessionId).listen(
       _onFrame,
       onError: (Object error) {
-        debugPrint('TurnWatch: follow 出错 $error');
+        _note('follow 出错：$error');
       },
     );
+    _startPolling();
   }
 
   /// 停掉接手（会话页又打开了，或者这一轮已经收尾）。[sessionId] 给了就只停这一条。
   void dropAdopted({String? sessionId}) {
     if (sessionId != null && sessionId != _adoptedId) return;
+    _stopPolling();
     final sub = _sub;
     _sub = null;
     _adoptedId = null;
@@ -263,12 +353,17 @@ class TurnWatch {
         }
       case 'turn/end':
         if (!_adoptedRunning) return;
-        final title = _adoptedTitle;
-        final body = _adoptedText;
-        final id = _adoptedId;
-        _adoptedRunning = false;
-        dropAdopted();
-        finish(title: title, body: body, sessionId: id);
+        _finishAdopted();
     }
+  }
+
+  /// 这一轮结束：摘掉耳朵、发提醒。turn/end 与兜底轮询共用这一处。
+  void _finishAdopted() {
+    final title = _adoptedTitle;
+    final body = _adoptedText;
+    final id = _adoptedId;
+    _adoptedRunning = false;
+    dropAdopted();
+    finish(title: title, body: body, sessionId: id);
   }
 }
