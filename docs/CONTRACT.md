@@ -286,6 +286,12 @@ subdomain = "home"
    - **那行的版式**：不能再用 `ListTile` + `trailing` 塞三个按钮（标题会被挤成竖排）。现在是 `Column`：标题一行、说明一行、按钮 `Wrap` 一行，`上次：…` 单独一行。
    - 诊断口径：`TurnWatch.lastEvent` 记最近一次「接手 … / 轮询确认这一轮已经结束 → 补发提醒 / follow 出错 …」，设置页那行「系统通知权限」把它显示在副标题里——要区分「事件没收到」和「通知发不出去」，只能靠这条。
 
+9. **`/` 技能补全的触发口径**（`screens/session_chat_screen.dart` 的 `_slashToken`）：
+   - 判定抄宿主 `@deepseek-ai/dsh-client-ui-input-trigger` 的 `detectTrigger` + `boundaryOk`：从**光标**往回扫，先遇到空白就作废（`/` 必须在光标所在的那个词里）；遇到的第一个 `/` 还要过边界——行首、空白之后，或前面是标点。紧贴字母/数字/下划线（`http://a/b`）、`//`、`a:/b` 都不算手势。
+   - 点选只替换 token 那一段（`replaceRange(start, caret, '/名字 ')`），前后的正文必须留着——宿主 `ui-skill` 的 `onPick` 也只回 `{text: '/名字 '}`，由管线按 span 替换。
+   - 光标挪动（不是打字）也要重算：`_onDraftChanged` 里比较 `起点:查询` 的签名，变了才 `setState`。
+   - 表还没回来时显示「正在加载技能…」（key `skill-loading`），不要静默。
+
 ### 7.3 二维码内容（插件设置页生成，App 扫）
 
 ```

@@ -39,6 +39,9 @@ class _SkillRemote extends DshRemote {
   int listCalls = 0;
   final List<String> prompts = <String>[];
 
+  /// 让技能表晚一点回来，测「正在加载」那一行。
+  Duration skillDelay = Duration.zero;
+
   @override
   DshLinkState get linkState => DshLinkState.online;
 
@@ -70,6 +73,7 @@ class _SkillRemote extends DshRemote {
   @override
   Future<List<DshSkill>> listSkills(String sessionId) async {
     listCalls += 1;
+    if (skillDelay > Duration.zero) await Future<void>.delayed(skillDelay);
     return const <DshSkill>[
       DshSkill(name: 'unslop', description: '把随手糊的界面收拾成设计过的'),
       DshSkill(name: 'apk-reverse', description: 'APK 解包与 smali 修改'),
@@ -214,6 +218,111 @@ void main() {
     await _disposeChat(tester, remote);
   });
 
+
+  testWidgets('正文后面接着打 /un 也弹面板，点选只换那一段', (tester) async {
+    final remote = await _pumpChat(tester);
+
+    // 用户真实场景：先写正文，句号后面接着打斜杠（截图里就是这样）。
+    await tester.enterText(
+      find.byKey(const Key('chat-input')),
+      '面板 UI 优化一下。/un',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(
+      find.byKey(const Key('skill-panel')),
+      findsOneWidget,
+      reason: '宿主的 trigger 只管光标前这个词，不要求 / 在句首',
+    );
+    expect(find.byKey(const ValueKey<String>('skill.unslop')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey<String>('skill.unslop')));
+    await tester.pump();
+
+    final TextField field = tester.widget<TextField>(
+      find.byKey(const Key('chat-input')),
+    );
+    expect(field.controller?.text, '面板 UI 优化一下。/unslop ');
+    expect(find.byKey(const Key('skill-panel')), findsNothing);
+    // 发出去的原文也得带着前面那句，不能被补全吞掉。
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(remote.prompts.single, '面板 UI 优化一下。/unslop');
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('URL 里的斜杠不弹面板', (tester) async {
+    final remote = await _pumpChat(tester);
+
+    await tester.enterText(
+      find.byKey(const Key('chat-input')),
+      '看下 http://a/un',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(
+      find.byKey(const Key('skill-panel')),
+      findsNothing,
+      reason: '前面紧贴字母/冒号的斜杠不是技能手势',
+    );
+    expect(remote.listCalls, 0, reason: '不该为一个 URL 去拉技能表');
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('把光标点回已经打好的 /un 里，面板重新出现', (tester) async {
+    final remote = await _pumpChat(tester);
+
+    await tester.enterText(
+      find.byKey(const Key('chat-input')),
+      '/un 已经写完参数了',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(find.byKey(const Key('skill-panel')), findsNothing);
+
+    final TextField field = tester.widget<TextField>(
+      find.byKey(const Key('chat-input')),
+    );
+    // 光标挪到 `/un` 后面——只是选区变化，没有打字。
+    field.controller?.selection = const TextSelection.collapsed(offset: 3);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(find.byKey(const Key('skill-panel')), findsOneWidget);
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('技能表还没回来时先显示「正在加载技能…」', (tester) async {
+    final remote = _SkillRemote()..skillDelay = const Duration(milliseconds: 300);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SessionChatScreen(
+          host: _host,
+          session: _session,
+          remote: remote,
+          snapshotTimeout: Duration.zero,
+        ),
+      ),
+    );
+    remote.frames.add(
+      const DshStreamFrame(kind: DshFrameKind.snapshot, asOfSeq: 1),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    await tester.enterText(find.byKey(const Key('chat-input')), '/un');
+    await tester.pump();
+    expect(find.byKey(const Key('skill-loading')), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byKey(const Key('skill-loading')), findsNothing);
+    expect(find.byKey(const ValueKey<String>('skill.unslop')), findsOneWidget);
+
+    await _disposeChat(tester, remote);
+  });
   testWidgets('带空格后不再补全，消息原样带 /名字 发出去', (tester) async {
     final remote = await _pumpChat(tester);
 

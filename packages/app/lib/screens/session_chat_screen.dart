@@ -1232,16 +1232,51 @@ class _SessionChatScreenState extends State<SessionChatScreen>
 
   // ------------------------------------------------------------ 技能补全
 
-  /// 当前输入是不是一个「正要打技能名」的手势。
+  static final RegExp _slashWord = RegExp(r'[\p{L}\p{N}_]', unicode: true);
+  static final RegExp _slashSpace = RegExp(r'\s');
+
+  /// 上一次算出的补全手势（`起点:查询`），用来判断「只是挪了光标」要不要重建。
+  String? _slashSignature;
+
+  /// 光标前面那个 `/` 是不是「词的边界」——行首、空白之后，或前面是标点。
   ///
-  /// 判定跟宿主一致：第一个字符是 `/`，后面这段还没有空白（有了空白就是在写
-  /// 参数了，技能名已定型，不该再弹补全）。返回 `/` 之后那段；不是手势返回 null。
-  String? get _slashQuery {
+  /// 口径抄宿主 `@deepseek-ai/dsh-client-ui-input-trigger` 的 `boundaryOk`：
+  /// 紧贴字母/数字/下划线不算（`http://` 里的 `/` 不能弹菜单），`//` 不算，
+  /// `a:/b` 这种冒号紧跟的也不算。
+  bool _slashBoundary(String text, int index) {
+    if (index == 0) return true;
+    final String prev = text[index - 1];
+    if (_slashSpace.hasMatch(prev)) return true;
+    if (_slashWord.hasMatch(prev)) return false;
+    if (prev == '/') return false;
+    if (prev == ':' && index >= 2 && !_slashSpace.hasMatch(text[index - 2])) {
+      return false;
+    }
+    return true;
+  }
+
+  /// 光标所在的那个「还没打完的 `/技能名`」。
+  ///
+  /// 判定跟宿主一致（`detectTrigger`）：从光标往回扫，**先遇到空白就作废**——
+  /// 说明光标在一个新词里，`/` 必须在这个词里；遇到的第一个 `/` 还得过
+  /// [_slashBoundary]。所以 `/un` 在句首能弹，`面板 UI 优化一下。/un` 这种
+  /// 紧接着标点的也能弹，而 `看 http://a/b` 不会。
+  ///
+  /// 返回 token 的起点（`/` 的下标）和 `/` 之后到光标那段；不是手势返回 null。
+  ({int start, String query})? get _slashToken {
     final String text = _input.text;
-    if (!text.startsWith('/')) return null;
-    final String rest = text.substring(1);
-    if (rest.contains(RegExp(r'\s'))) return null;
-    return rest;
+    if (text.isEmpty) return null;
+    final TextSelection selection = _input.selection;
+    final int caret = selection.isValid ? selection.end : text.length;
+    if (caret <= 0 || caret > text.length) return null;
+    for (int i = caret - 1; i >= 0; i--) {
+      final String ch = text[i];
+      if (_slashSpace.hasMatch(ch)) return null;
+      if (ch != '/') continue;
+      if (!_slashBoundary(text, i)) continue;
+      return (start: i, query: text.substring(i + 1, caret));
+    }
+    return null;
   }
 
   /// 拉一次技能表。整个页面生命周期只拉一次：这表跟会话绑定、不会变。
@@ -1258,12 +1293,24 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     });
   }
 
-  /// 把 `/名字 ` 填回输入框，光标落在末尾（后面可以直接打空格再写要求）。
+  /// 把光标前那段 `/查询` 换成 `/名字 `，光标落在末尾（后面可以直接打空格再写要求）。
+  ///
+  /// 只替换 token 那一段，前面的正文和后面的字都留着——宿主就是这么做的
+  /// （`ui-skill` 的 `onPick` 只回 `{text: '/名字 '}`，由管线按 span 替换）。
   void _applySkill(DshSkill skill) {
+    final String text = _input.text;
+    final String insert = '/${skill.name} ';
+    final ({int start, String query})? token = _slashToken;
+    final int caret = _input.selection.isValid
+        ? _input.selection.end
+        : text.length;
+    final int start = token?.start ?? caret;
+    final String next = text.replaceRange(start, caret, insert);
     _input.value = TextEditingValue(
-      text: '/${skill.name} ',
-      selection: TextSelection.collapsed(offset: skill.name.length + 2),
+      text: next,
+      selection: TextSelection.collapsed(offset: start + insert.length),
     );
+    _slashSignature = null;
     setState(() {});
     _focus.requestFocus();
   }
@@ -1271,6 +1318,26 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   /// 输入框上方的技能补全面板。命中为前缀优先、再按包含；最多列 6 条。
   Widget _buildSkillPanel(ThemeData theme, String query) {
     final List<DshSkill> all = _skills ?? const <DshSkill>[];
+    if (all.isEmpty) {
+      // 表还没回来（刚打出 `/` 的那一下）：给一行「正在加载」，别让面板看着像坏了。
+      if (!_skillsLoading) return const SizedBox.shrink();
+      return Container(
+        key: const Key('skill-loading'),
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainer,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+        ),
+        child: Text(
+          '正在加载技能…',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      );
+    }
     final List<DshSkill> hits =
         all.where((DshSkill s) => s.matches(query)).toList()
           ..sort((DshSkill a, DshSkill b) {
@@ -2189,6 +2256,17 @@ class _SessionChatScreenState extends State<SessionChatScreen>
 
   /// 输入框内容变了：攒 400ms 再写盘，别每敲一个字落一次。
   void _onDraftChanged() {
+    // 光标挪动（不是打字）也要重算补全手势：把光标点进已经打好的 `/un` 里，
+    // 或者从里面点走，面板都该跟着开/关。只在手势真的变了时才重建。
+    final ({int start, String query})? token = _slashToken;
+    final String? signature = token == null
+        ? null
+        : '${token.start}:${token.query}';
+    if (signature != _slashSignature) {
+      _slashSignature = signature;
+      if (!_disposed && mounted) setState(() {});
+      if (signature != null && _skills == null) unawaited(_loadSkills());
+    }
     _draftTimer?.cancel();
     _draftTimer = Timer(const Duration(milliseconds: 400), () {
       if (_disposed) return;
@@ -3873,8 +3951,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           if (_attached.isNotEmpty) _buildAttachedRow(theme),
-          if (_slashQuery case final String query)
-            _buildSkillPanel(theme, query),
+          if (_slashToken case final ({int start, String query}) token)
+            _buildSkillPanel(theme, token.query),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: <Widget>[
@@ -3897,7 +3975,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
                     setState(() {});
                     // 第一次打出 `/` 才去拉技能表——大多数人一条消息都不会用技能，
                     // 不该为了补全在进页面时多发一个请求。
-                    if (_slashQuery != null && _skills == null) {
+                    if (_slashToken != null && _skills == null) {
                       unawaited(_loadSkills());
                     }
                   },
