@@ -223,7 +223,7 @@ class _MdViewState extends State<MdView> {
           padding: EdgeInsets.only(top: level <= 2 ? 6 : 4, bottom: 8),
           child: _rich(inlines, style.heading(level)),
         ),
-      MdList(:final ordered, :final items) => Padding(
+      MdList(:final ordered, :final items, :final start) => Padding(
           padding: const EdgeInsets.only(bottom: 10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -236,9 +236,10 @@ class _MdViewState extends State<MdView> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       SizedBox(
-                        width: ordered ? 20 : 14,
+                        width: ordered ? 22 : 14,
                         child: Text(
-                          ordered ? '${i + 1}.' : '•',
+                          // 编号从 start 起算：`3. c` 开头的列表就该是 3、4、5。
+                          ordered ? '${start + i}.' : '•',
                           style: style.body.copyWith(
                             color: style.textTertiary,
                             fontWeight: ordered ? FontWeight.w600 : FontWeight.w400,

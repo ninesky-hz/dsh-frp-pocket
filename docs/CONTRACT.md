@@ -269,6 +269,7 @@ subdomain = "home"
      结果重复投递按 `attachmentId` 去重）；前面没有助手消息时单独成一条只含图的气泡。
      渲染与取字节复用用户图片那条路径（`ChatImageTile` + `DshRemote.cachedAttachment`）。
    - **不许按 UTF-16 码元切 span**：`md_highlight.dart` 的兜底分支必须「吃到下一个 token 起点」整段切片（`code.substring(index, next)`）。写成 `TextSpan(text: code[index])` 会把 emoji 的代理对拆成两个孤立半码元，屏幕上就是两个豆腐块（`🔹` → `♦♦`）。同理，任何逐字符遍历都要区分码元与 rune。
+   - **列表要认「松列表」**：项之间空一行在 PC 端（CommonMark）还是同一张列表，解析器必须跳过空行看下一行是不是同类列表项；否则每项都成为单元素列表，编号全从头开始（PC 是 1/2/3/4/5，手机是一串 1.）。有序列表的起始号取第一项写的数字（`MdList.start`），渲染用 `start + i`。
    - 等宽字体里没有 emoji 字形：`MdStyle.mono` 的 `fontFamilyFallback` 末尾必须留着 `Noto Color Emoji` / `Apple Color Emoji`，缺字时才落得到系统 emoji 字体。
 
 7. **待回显气泡的可见性**（`session_chat_screen.dart`）：从磁盘缓存（`PendingStore`）回填的「已发未回显」气泡默认**不上屏**——`_displayItems` 的顺序是「历史 → 待回显 → 宿主队列 → 草稿」，它一上屏就只能挂在最末尾，历史里其实早有这条时会变成「位置不对、几秒后又消失」的鬼影。规则：

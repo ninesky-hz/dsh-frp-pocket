@@ -79,6 +79,44 @@ void main() {
       expect(lists[1].items.map(_plain).toList(), ['一', '二']);
     });
 
+    test('松列表：项之间空一行还是同一张列表，编号要往下排', () {
+      // PC 端渲染出来是 1/2/3/4/5；曾经每项都变成只有一项的列表，全显示 1.
+      final blocks = parseMarkdown(
+        '1. 让我自己收账。\n\n'
+        '2. 保留 main-agent 但少吵。\n\n'
+        '3. 想要真正的一键收尾。\n\n'
+        '4. 可选的长线改造。\n\n'
+        '5. 第五条。',
+      );
+      final list = blocks.whereType<MdList>().single;
+      expect(list.ordered, isTrue);
+      expect(list.items.length, 5, reason: '空行不许把列表截成五张');
+      expect(list.start, 1);
+      expect(_plain(list.items.first), '让我自己收账。');
+    });
+
+    test('松列表后紧跟的段落不许被并进列表', () {
+      final blocks = parseMarkdown('1. 甲\n\n2. 乙\n\n这是一段普通正文。');
+      final list = blocks.whereType<MdList>().single;
+      expect(list.items.length, 2);
+      final para = blocks.whereType<MdParagraph>().single;
+      expect(_plain(para.inlines), '这是一段普通正文。');
+    });
+
+    test('有序列表的起始编号照第一项写（3. / 4. 不许重排成 1. / 2.）', () {
+      final blocks = parseMarkdown('3. 丙\n4. 丁');
+      final list = blocks.whereType<MdList>().single;
+      expect(list.start, 3);
+      expect(list.items.map(_plain).toList(), ['丙', '丁']);
+    });
+
+    test('松散的无序列表同样合并', () {
+      final blocks = parseMarkdown('- 甲\n\n- 乙\n\n- 丙');
+      final list = blocks.whereType<MdList>().single;
+      expect(list.ordered, isFalse);
+      expect(list.items.length, 3);
+    });
+
     test('引用合并连续 > 行', () {
       final blocks = parseMarkdown('> 第一行\n> 第二行');
       final quote = blocks.whereType<MdQuote>().single;
@@ -323,6 +361,25 @@ void main() {
       // 加粗走 Span，纯文本仍能找到整句。
       expect(find.textContaining('还有'), findsOneWidget);
       expect(find.byKey(MdView.caretKey), findsNothing, reason: '定稿不该带光标');
+    });
+
+    testWidgets('松散有序列表在屏幕上就是 1. / 2. / 3.（不许全变成 1.）', (tester) async {
+      await pump(
+        tester,
+        MdView(
+          text: '1. 让我自己收账。\n\n2. 保留 main-agent 但少吵。\n\n3. 想要真正的一键收尾。',
+          style: _style(),
+        ),
+      );
+
+      expect(find.text('1.'), findsOneWidget);
+      expect(find.text('2.'), findsOneWidget);
+      expect(find.text('3.'), findsOneWidget);
+      expect(find.text('1.'), findsOneWidget, reason: '不许出现三个 1.');
+      expect(
+        tester.widgetList<Text>(find.byType(Text)).where((t) => t.data == '1.').length,
+        1,
+      );
     });
 
     testWidgets('代码块带语言标签与「输出中」，复制按钮写入剪贴板', (tester) async {

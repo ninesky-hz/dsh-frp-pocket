@@ -74,8 +74,12 @@ class MdHeading extends MdBlock {
 }
 
 class MdList extends MdBlock {
-  const MdList({required this.ordered, required this.items});
+  const MdList({required this.ordered, required this.items, this.start = 1});
   final bool ordered;
+
+  /// 有序列表的起始编号（markdown 从第一个项的数字算起，`3. c` 就该从 3 开始）。
+  /// 无序列表恒为 1，用不上。
+  final int start;
 
   /// 每项已经是解析好的行内内容；嵌套列表压平进同一项（手机宽度下多一级缩进
   /// 就吃掉两三个字的位置，不划算）。
@@ -190,18 +194,47 @@ List<MdBlock> parseMarkdown(String source) {
     }
 
     final bullet = RegExp(r'^\s{0,3}[-*+]\s+(.*)$');
-    final ordered = RegExp(r'^\s{0,3}\d{1,9}[.)]\s+(.*)$');
+    final ordered = RegExp(r'^\s{0,3}(\d{1,9})[.)]\s+(.*)$');
     if (bullet.hasMatch(line) || ordered.hasMatch(line)) {
       final isOrdered = ordered.hasMatch(line);
       final pattern = isOrdered ? ordered : bullet;
       final items = <List<MdInline>>[];
+      var start = 1;
+      var first = true;
       while (i < lines.length) {
         final current = lines[i];
         final m = pattern.firstMatch(current);
         if (m != null) {
-          items.add(parseInline(m.group(1)!.trim()));
+          if (first && isOrdered) {
+            // markdown 的起始编号看第一项写的是几（`3. c` 从 3 开始）。
+            start = int.tryParse(m.group(1) ?? '') ?? 1;
+          }
+          first = false;
+          items.add(parseInline((m.group(isOrdered ? 2 : 1) ?? '').trim()));
           i++;
           continue;
+        }
+        // 空行：可能是「松列表」——项之间空一行在 PC 端照样接着编号，
+        // 这里往后跳过空行，只要下一行还是同一类列表项就继续同一张列表。
+        // 不这么做的话，每项都会变成只有一项的列表，编号全从 1 开始
+        // （PC 上是 1/2/3/4/5，手机上是 1/1/1/1/1）。
+        if (current.trim().isEmpty) {
+          var j = i;
+          while (j < lines.length && lines[j].trim().isEmpty) {
+            j++;
+          }
+          if (j < lines.length && pattern.hasMatch(lines[j])) {
+            i = j;
+            continue;
+          }
+          // 空行后面是缩进的续行，也算同一项。
+          if (j < lines.length &&
+              RegExp(r'^\s{2,}\S').hasMatch(lines[j]) &&
+              items.isNotEmpty) {
+            i = j;
+            continue;
+          }
+          break;
         }
         // 续行：列表项里折了行，缩进对齐的那种，接到上一项后面。
         if (current.trim().isNotEmpty &&
@@ -218,7 +251,7 @@ List<MdBlock> parseMarkdown(String source) {
         }
         break;
       }
-      blocks.add(MdList(ordered: isOrdered, items: items));
+      blocks.add(MdList(ordered: isOrdered, items: items, start: start));
       continue;
     }
 
