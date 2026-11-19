@@ -6,6 +6,7 @@ import '../constants.dart';
 import '../models/app_settings.dart';
 import '../services/platform_bridge.dart';
 import '../theme/app_icons.dart';
+import '../widgets/image_cache_tile.dart';
 import '../widgets/turn_alert_permission_tile.dart';
 
 /// 设置页（CONTRACT §7.2.4）。
@@ -146,6 +147,8 @@ class SettingsScreen extends StatelessWidget {
                   },
                 ),
               ),
+              _SectionHeader(title: '存储'),
+              const ImageCacheTile(),
               _SectionHeader(title: '关于'),
               ListTile(
                 leading: const Icon(AppIcons.info),

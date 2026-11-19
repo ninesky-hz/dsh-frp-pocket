@@ -21,6 +21,7 @@ import '../models/session_summary.dart';
 import '../models/workspace_view_state.dart';
 import '../utils/ids.dart';
 import 'dsh_api.dart';
+import 'image_cache.dart';
 
 /// 流式通道端点：所有 follow 都走这一条 WebSocket 多路复用连接。
 const String kRemoteMuxPath = '/api/remote.mux';
@@ -268,15 +269,23 @@ class DshRemote {
     DshApi? api,
     http.Client? client,
     DshWebSocketConnector? connector,
+    ImageCacheStore? imageCache,
     this.timeout = const Duration(seconds: 20),
     this.staleRetryDelay = const Duration(milliseconds: 300),
-  }) : _api = api ?? DshApi(),
+  }) : imageCache = imageCache ?? DiskImageCache.instance,
+       _api = api ?? DshApi(),
        _ownsApi = api == null,
        _client = client ?? http.Client(),
        _ownsClient = client == null,
        _connector = connector ?? _connectWebSocket;
 
   final Host host;
+
+  /// 图片磁盘缓存。默认 [DiskImageCache.instance]；测试注入 [NoopImageCache]。
+  ///
+  /// 内存里那 40 张是「同一帧里反复要图」的挡板，磁盘这份才是跨进程/跨次
+  /// 进入会话的。先查磁盘再打 RPC：命中一次就省一次网络往返。
+  final ImageCacheStore imageCache;
 
   /// 请求超时（连接 + 读完响应体各一次）。
   final Duration timeout;
@@ -337,6 +346,9 @@ class DshRemote {
 
   /// 进程内图片缓存条数上限。
   static const int kImageCacheLimit = 40;
+
+  /// 这份内存缓存对应的世代号，见 [imageCacheEpoch]。
+  int _imageEpoch = 0;
 
   // ------------------------------------------------------------ 链路状态
 
@@ -754,12 +766,17 @@ class DshRemote {
     int? height,
     String? name,
   }) {
+    if (_imageEpoch != imageCacheEpoch) {
+      // 用户刚在设置里清了缓存：内存这几张也一起作废，否则屏幕上还在。
+      _imageCache.clear();
+      _imageEpoch = imageCacheEpoch;
+    }
     final cached = _imageCache[attachmentId];
     if (cached != null) return Future<Uint8List>.value(cached);
     final pending = _imagePending[attachmentId];
     if (pending != null) return pending;
 
-    final future = attachment(
+    final future = _loadImage(
       sessionId,
       attachmentId: attachmentId,
       mediaType: mediaType,
@@ -779,6 +796,33 @@ class DshRemote {
       _imagePending.remove(attachmentId);
     }));
     return future;
+  }
+
+  /// 先问磁盘、再打 RPC；拿到的字节顺手落到磁盘里。
+  ///
+  /// 磁盘读写都不外抛：缓存坏掉最多是「每次都要重新拉」，不该让图片报错。
+  Future<Uint8List> _loadImage(
+    String sessionId, {
+    required String attachmentId,
+    String? mediaType,
+    int? bytes,
+    int? width,
+    int? height,
+    String? name,
+  }) async {
+    final hit = await imageCache.read(attachmentId);
+    if (hit != null && hit.isNotEmpty) return hit;
+    final data = await attachment(
+      sessionId,
+      attachmentId: attachmentId,
+      mediaType: mediaType,
+      bytes: bytes,
+      width: width,
+      height: height,
+      name: name,
+    );
+    unawaited(imageCache.write(attachmentId, data));
+    return data;
   }
 
   /// 按插入顺序淘汰：`Map` 的 `keys.first` 就是最久没被写入的那张。

@@ -23,6 +23,7 @@ import '../models/turn_fold.dart';
 import '../services/dsh_api.dart';
 import '../services/dsh_remote.dart';
 import '../services/draft_store.dart';
+import '../services/image_cache.dart';
 import '../services/outbox_store.dart';
 import '../services/pending_store.dart';
 import '../services/platform_bridge.dart';
@@ -219,6 +220,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   /// 会回到 waiting，流式增量每帧都在 setState，图片就会一直闪。
   final Map<String, Future<Uint8List>> _imageFutures =
       <String, Future<Uint8List>>{};
+
+  /// 上面那张表对应的缓存世代，见 [imageCacheEpoch]。
+  int _imageEpoch = 0;
 
   /// 离线队列条目的缩略图（解码一次，按条目 id 记住）。
   final Map<String, List<Uint8List>> _outboxThumbs =
@@ -3082,6 +3086,11 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       final bytes = _localImages[image.attachmentId];
       if (bytes != null) return Future<Uint8List>.value(bytes);
       return Future<Uint8List>.error(StateError('本地图片已不在内存里'));
+    }
+    if (_imageEpoch != imageCacheEpoch) {
+      // 用户刚清了缓存：这张表里指着的已是不该再拿出来的旧 Future。
+      _imageFutures.clear();
+      _imageEpoch = imageCacheEpoch;
     }
     // 记住 Future 复用：流式增量每帧 build 都会来要同一张，不能每次都新建。
     return _imageFutures.putIfAbsent(

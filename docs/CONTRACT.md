@@ -299,6 +299,15 @@ subdomain = "home"
    - 光标挪动（不是打字）也要重算：`_onDraftChanged` 里比较 `起点:查询` 的签名，变了才 `setState`。
    - 表还没回来时显示「正在加载技能…」（key `skill-loading`），不要静默。
 
+10. **图片磁盘缓存与「存储」那一行**（`services/image_cache.dart`、`widgets/image_cache_tile.dart`）：
+   - 历史图片的本体在宿主（`~/.dsh/attachments/v1/objects/…`，`attachmentId = sha256:…`）。App 侧三层：进程内 40 张（`DshRemote.kImageCacheLimit`）→ 磁盘缓存 → RPC `session/attachment`。
+   - 磁盘缓存在 `getTemporaryDirectory()/attachments`，一层平面文件（`DiskImageCache.fileNameFor` 把 `sha256:` 这类非法字符换成 `_`）+ `index.json`。**LRU 记账必须自己写**：Windows 上 Dart 读到 mtime 只有秒级精度，同一秒写的几张时间戳一样，靠 mtime 排序会随机删。
+   - 上限：总 200 MB / 500 张 / 单张超过 50 MB 不进缓存（`kImageDiskBudgetBytes`、`kImageDiskMaxFiles`、`kImageDiskEntryLimitBytes`）。超了按 `used` 升序删到装得下。
+   - 缓存读写都不外抛：目录不可用（测试环境没有 path_provider 插件）时退化成「每次都拉」。
+   - 清缓存时 `bumpImageCacheEpoch()`：`DshRemote` 与聊天页各自比较 `imageCacheEpoch`，落后就丢掉内存那份——否则点完「清除」屏幕上还挂着旧图。
+   - 设置页「存储 → 图片缓存」必须同时给三样：占用（`formatCacheSize(bytes)` + 张数）、清除按钮（空缓存时置灰）、确认框（说清「历史与电脑上的原件不动，未发出的图不清」）。key：`image-cache` / `image-cache.size` / `image-cache.clear` / `image-cache.confirm` / `image-cache.cancel`。
+   - **不要**把离线队列里的图（SharedPreferences 里的 base64，见 `models/outbox.dart`）算进这块缓存，那是还没发出去的用户数据，清了等于吞掉用户的东西。
+
 ### 7.3 二维码内容（插件设置页生成，App 扫）
 
 ```
@@ -307,7 +316,7 @@ dshfrp://add?url=https%3A%2F%2Fhome.dsh.example.com&pin=A1b2C3d4&name=%E5%AE%B6%
 
 ### 7.4 依赖白名单（Flutter）
 
-`flutter_inappwebview`、`shared_preferences`、`mobile_scanner`、`http`、`qr_flutter`（可选）。不引入需要原生改动的包。
+`flutter_inappwebview`、`shared_preferences`、`mobile_scanner`、`http`、`qr_flutter`（可选）、`path_provider`（图片磁盘缓存，2026-11-19 起）。不引入需要原生改动的包。
 
 ## 8. 验收（M6）
 
