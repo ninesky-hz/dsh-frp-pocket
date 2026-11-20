@@ -126,24 +126,18 @@ class SettingsScreen extends StatelessWidget {
                     value: settings.foldNotesWhenDone,
                     onChanged: settings.setFoldNotesWhenDone,
                   ),
-                  SettingsSegmentRow<ChatNotesMode>(
+                  // 「详细 / 简洁」就是一个开 / 关：开 = 逐项列出，关 = 折成一行统计。
+                  // 不再用分段控件——右边一个开关，和这一页其它行的语义一致。
+                  SettingsSwitchRow(
                     icon: AppIcons.list,
                     title: '工具调用显示',
                     subtitle: settings.chatNotesMode == ChatNotesMode.compact
                         ? '折叠成「思考 · 2 次工具调用」'
                         : '逐项列出，带工具参数摘要',
-                    segments: const <ButtonSegment<ChatNotesMode>>[
-                      ButtonSegment<ChatNotesMode>(
-                        value: ChatNotesMode.detailed,
-                        label: Text('详细'),
-                      ),
-                      ButtonSegment<ChatNotesMode>(
-                        value: ChatNotesMode.compact,
-                        label: Text('简洁'),
-                      ),
-                    ],
-                    selected: settings.chatNotesMode,
-                    onChanged: settings.setChatNotesMode,
+                    value: settings.chatNotesMode == ChatNotesMode.detailed,
+                    onChanged: (bool detailed) => settings.setChatNotesMode(
+                      detailed ? ChatNotesMode.detailed : ChatNotesMode.compact,
+                    ),
                   ),
                 ],
               ),

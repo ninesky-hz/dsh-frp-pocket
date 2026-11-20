@@ -3,11 +3,12 @@ import 'package:dsh_frp_app/models/session_summary.dart';
 import 'package:dsh_frp_app/models/workspace_view_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-SessionSummary _session(String id, {String? title}) {
+SessionSummary _session(String id, {String? title, bool running = false}) {
   return SessionSummary(
     sessionId: id,
     title: title ?? '会话 $id',
     cwd: '/repo/$id',
+    running: running,
   );
 }
 
@@ -194,5 +195,71 @@ void main() {
 
     expect(() => groups.add(groups.first), throwsUnsupportedError);
     expect(() => groups.first.sessions.clear(), throwsUnsupportedError);
+  });
+
+  test('同一个工作区里，正在跑的排到最前面，其余顺序不动', () {
+    final groups = groupSessions(
+      sessions: <SessionSummary>[
+        _session('s1'),
+        _session('s2', running: true),
+        _session('s3'),
+        _session('s4', running: true),
+        _session('s5'),
+      ],
+      workspaces: <WorkspaceEntry>[
+        _workspace('w1', <String>['s1', 's2', 's3', 's4', 's5']),
+      ],
+      pinnedSessionIds: const <String>{},
+    );
+
+    expect(_sessionIds(groups.single), <String>['s2', 's4', 's1', 's3', 's5']);
+  });
+
+  test('跨组不搬会话：别的组里那条在跑，也不会跑到这个组来', () {
+    final groups = groupSessions(
+      sessions: <SessionSummary>[
+        _session('a1'),
+        _session('b1', running: true),
+        _session('b2'),
+      ],
+      workspaces: <WorkspaceEntry>[
+        _workspace('w1', <String>['a1']),
+        _workspace('w2', <String>['b1', 'b2']),
+      ],
+      pinnedSessionIds: const <String>{},
+    );
+
+    expect(_ids(groups), <String>['w1', 'w2']);
+    expect(_sessionIds(groups[0]), <String>['a1']);
+    expect(_sessionIds(groups[1]), <String>['b1', 'b2']);
+  });
+
+  test('一条都没在跑时顺序原样，且顺序与传入完全一致', () {
+    final groups = groupSessions(
+      sessions: <SessionSummary>[
+        _session('s3'),
+        _session('s1'),
+        _session('s2'),
+      ],
+      workspaces: <WorkspaceEntry>[
+        _workspace('w1', <String>['s1', 's2', 's3']),
+      ],
+      pinnedSessionIds: const <String>{},
+    );
+
+    expect(_sessionIds(groups.single), <String>['s3', 's1', 's2']);
+  });
+
+  test('置顶组里也照样把正在跑的提前', () {
+    final groups = groupSessions(
+      sessions: <SessionSummary>[
+        _session('p1'),
+        _session('p2', running: true),
+      ],
+      workspaces: const <WorkspaceEntry>[],
+      pinnedSessionIds: <String>{'p1', 'p2'},
+    );
+
+    expect(_sessionIds(groups.single), <String>['p2', 'p1']);
   });
 }

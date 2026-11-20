@@ -39,7 +39,7 @@ class SessionGroup {
   /// 组头第二行的小字路径；置顶组与未分组组为空串。
   final String path;
 
-  /// 组内会话，顺序与传入的 `sessions` 一致。
+  /// 组内会话；**正在跑的排在最前面**，其余保持传入顺序（见 [_runningFirst]）。
   final List<SessionSummary> sessions;
 
   /// 是否是「置顶」这个虚拟组（它不是工作区，没有路径）。
@@ -53,10 +53,12 @@ class SessionGroup {
 /// 把当前列表按「置顶 → 工作区顺序 → 未分组」切成组。
 ///
 /// 规则：
-/// - 有置顶会话时，第一组固定是 `pinned`，组内保持传入顺序；
-/// - 其余会话按 [workspaces] 的顺序归组，组内同样保持传入顺序；已在置顶组里
-///   的会话不会再出现在工作区组里（即使工作区仍然列着它）；
+/// - 有置顶会话时，第一组固定是 `pinned`；
+/// - 其余会话按 [workspaces] 的顺序归组；已在置顶组里的会话不会再出现在工作区
+///   组里（即使工作区仍然列着它）；
 /// - 哪个工作区都不属于的会话落进最后一组 `ungrouped`；
+/// - **组内正在跑（`running`）的排到最前面**，其余保持传入顺序——手机上翻列表时
+///   最想先看到的是「哪几件事还在动」，而不是按更新时间排下来的那一坨；
 /// - **空组一律不产出**（工作区存在但没有会话时没有组头），会话为空时返回空表。
 ///
 /// 纯函数、无副作用，供列表页每次重建时现算：工作区/置顶/归档都是增量帧，
@@ -86,7 +88,7 @@ List<SessionGroup> groupSessions({
         id: kPinnedGroupId,
         title: kPinnedGroupTitle,
         path: '',
-        sessions: List<SessionSummary>.unmodifiable(pinned),
+        sessions: runningFirst(pinned),
         pinnedGroup: true,
       ),
     );
@@ -115,7 +117,7 @@ List<SessionGroup> groupSessions({
             : workspace.workspaceId,
         title: _titleOf(workspace),
         path: workspace.path,
-        sessions: List<SessionSummary>.unmodifiable(grouped),
+        sessions: runningFirst(grouped),
       ),
     );
   }
@@ -130,12 +132,33 @@ List<SessionGroup> groupSessions({
         id: kUngroupedGroupId,
         title: kUngroupedGroupTitle,
         path: '',
-        sessions: List<SessionSummary>.unmodifiable(ungrouped),
+        sessions: runningFirst(ungrouped),
       ),
     );
   }
 
   return List<SessionGroup>.unmodifiable(groups);
+}
+
+/// 排序：正在跑的排最前，其余保持原相对顺序（稳定分区）。
+///
+/// 两处用到它：分组时按组各调一次（组头是工作区，跨组搬会话会让人找不到刚看的那
+/// 条）；平铺模式在整条列表上调一次（正在跑的整体提到最上面）。
+/// 没有正在跑的会话、或全都在跑时直接返回，避免无意义的重建。
+List<SessionSummary> runningFirst(List<SessionSummary> list) {
+  var running = 0;
+  for (final session in list) {
+    if (session.running) running += 1;
+  }
+  if (running == 0 || running == list.length) {
+    return List<SessionSummary>.unmodifiable(list);
+  }
+  final busy = <SessionSummary>[];
+  final idle = <SessionSummary>[];
+  for (final session in list) {
+    (session.running ? busy : idle).add(session);
+  }
+  return List<SessionSummary>.unmodifiable(<SessionSummary>[...busy, ...idle]);
 }
 
 /// 组头标题：工作区标题优先，空则退回路径末段，再空才用固定兜底文案。

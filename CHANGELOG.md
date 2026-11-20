@@ -1,3 +1,19 @@
+## 2026-11-20（会话列表把「进行中」提到最上面；工具调用显示改成一个开关）
+
+### app 1.16.0+64
+
+- **新功能：会话列表里正在跑的排最上面**。症状：一键开三四个会话之后，正在跑的那几个被按时间压到下面，得往下翻才知道哪几件事还在动。
+  - 根因：列表顺序完全照搬宿主 `workspace` 流（约等于按 `updatedAt` 排），没有任何「在跑」的权重。
+  - 改法：`packages/app/lib/models/session_groups.dart` 新增 `runningFirst()`（稳定分区：`running` 排前面，其余保持原相对顺序；全在跑或全没跑时原样返回）；分组模式每组建好之后各调一次，平铺模式在 `_visibleSessions` 上整条调一次——**不跨组搬会话**，组头还是工作区，不会因为别的组里有会话在跑就把它挪走。
+  - 测试：`test/session_groups_test.dart` +4（组内提前、跨组不搬、全没跑时顺序原样、置顶组里也照样提前）；`test/host_sessions_groups_test.dart` +2（分组模式与平铺模式各一条，用 `getTopLeft().dy` 比位置）。把 `runningFirst` 撤掉跑一遍，这 6 条必红。
+
+- **「工具调用显示」改成一个开关**：开 = 详细，关 = 简洁。症状：这一行下面原本挂着一枚 详细/简洁 分段控件，控件自己占一行、标题下面留一段空，跟上面几行「开关在右边」的样子不是一套。
+  - 根因：两段二选一被当成了「多选一」，用了 `SegmentedButton`。
+  - 改法：`packages/app/lib/screens/settings_screen.dart` 换成 `SettingsSwitchRow`——`value = chatNotesMode == ChatNotesMode.detailed`，`onChanged` 写回 `detailed` / `compact`，说明文字跟着当前模式变，整行可点；`SettingsSegmentRow` 只留给三段带图标的「外观」。
+  - 测试：`test/chat_notes_setting_test.dart` 的设置页那条改成点标题（整行可点）关掉再点开，断言 store 与说明文字都跟着走。
+
+- 质量门：全量 **572 条通过**（566 + 6 新用例），`flutter analyze` 无问题。
+
 ## 2026-11-20（设置页重排：分组标题不再染色，行内对齐到同一条线）
 
 ### app 1.15.0+63

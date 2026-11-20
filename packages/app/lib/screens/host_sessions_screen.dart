@@ -927,8 +927,12 @@ class _HostSessionsScreenState extends State<HostSessionsScreen>
   ///
   /// 非搜索态直接返回原列表（同一个实例，零开销）；搜索态按标题 + cwd 过滤。
   /// live 帧与三态标记仍然按全量算，过滤只决定「这一帧显示谁」。
-  List<SessionSummary> get _visibleSessions =>
-      _searching ? filterSessions(_sessions, _query) : _sessions;
+  /// 显示用列表：先按搜索词过滤（非搜索态就是 `_sessions` 本身），再把正在跑的
+  /// 提到最前面。分组模式里 [groupSessions] 会再按组各排一次，两次都不改变
+  /// 其余会话的相对顺序，所以「跑着的在上面」在分组/平铺两种模式下都成立。
+  List<SessionSummary> get _visibleSessions => runningFirst(
+    _searching ? filterSessions(_sessions, _query) : _sessions,
+  );
 
   /// 搜索态下的标题输入框：无边框、autofocus；回车只是收起键盘（过滤是即时的，
   /// 不需要「提交」这一步），关掉键盘才能完整看到结果列表。

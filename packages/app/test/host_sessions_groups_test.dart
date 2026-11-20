@@ -69,11 +69,16 @@ class _FakeRemote extends DshRemote {
   }
 }
 
-SessionSummary _summary(String sessionId, String title) {
+SessionSummary _summary(
+  String sessionId,
+  String title, {
+  bool running = false,
+}) {
   return SessionSummary(
     sessionId: sessionId,
     title: title,
     cwd: '/proj/home',
+    running: running,
     // 有 updatedAt 且没读过 → unread，卡片上会带 row-state 标记。
     updatedAt: DateTime(2026, 1, 1),
   );
@@ -273,5 +278,46 @@ void main() {
     expect(find.text('置顶'), findsOneWidget);
     expect(find.text('重命名'), findsOneWidget);
     expect(find.text('归档'), findsOneWidget);
+  });
+
+  testWidgets('同一个工作区里，正在跑的那条卡片刻排到最上面', (tester) async {
+    final api = _FakeApi(<SessionSummary>[
+      _summary('s1', '会话一'),
+      _summary('s2', '会话二', running: true),
+    ]);
+    final remote = _FakeRemote();
+    addTearDown(remote.workspaces.close);
+
+    await _pump(tester, api: api, remote: remote, grouped: true);
+    await _baseline(tester, remote);
+
+    // 组内顺序：跑着的 s2 在上，s1 在下（位置判断，不靠列表快照）。
+    expect(_card('s2'), findsOneWidget);
+    expect(_card('s1'), findsOneWidget);
+    final topOfRunning = tester.getTopLeft(_card('s2')).dy;
+    final topOfIdle = tester.getTopLeft(_card('s1')).dy;
+    expect(
+      topOfRunning,
+      lessThan(topOfIdle),
+      reason: '正在跑的会话必须排在同一组的上面',
+    );
+  });
+
+  testWidgets('平铺模式下，正在跑的那条也排在最上面', (tester) async {
+    final api = _FakeApi(<SessionSummary>[
+      _summary('s1', '会话一'),
+      _summary('s2', '会话二', running: true),
+    ]);
+    final remote = _FakeRemote();
+    addTearDown(remote.workspaces.close);
+
+    await _pump(tester, api: api, remote: remote, grouped: false);
+    await _baseline(tester, remote);
+
+    expect(
+      tester.getTopLeft(_card('s2')).dy,
+      lessThan(tester.getTopLeft(_card('s1')).dy),
+      reason: '平铺模式没有组，正在跑的要排到整条列表最上面',
+    );
   });
 }

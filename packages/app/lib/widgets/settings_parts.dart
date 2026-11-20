@@ -225,7 +225,10 @@ class SettingsSwitchRow extends StatelessWidget {
   }
 }
 
-/// 分段控件行：标题（+说明）一行，控件另起一行的宽度吃满。
+/// 分段控件行：标题（+说明）一行，控件另起一行，靠左。
+///
+/// 只有「三段、带图标」的控件（外观）适合它。两段二选一的东西用 [SettingsSwitchRow]
+/// ——开关在右边，和这一页所有「开/关」的语义统一，也不用另起一行。
 class SettingsSegmentRow<T> extends StatelessWidget {
   const SettingsSegmentRow({
     super.key,
@@ -262,7 +265,7 @@ class SettingsSegmentRow<T> extends StatelessWidget {
               style: settingsSegmentStyle(theme),
               segments: segments,
               selected: <T>{selected},
-                          onSelectionChanged: (selection) => onChanged(selection.first),
+              onSelectionChanged: (selection) => onChanged(selection.first),
             ),
           ),
         ),

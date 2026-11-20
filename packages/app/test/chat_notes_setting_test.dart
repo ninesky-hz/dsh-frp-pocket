@@ -221,17 +221,23 @@ void main() {
     expect(find.text('逐项列出，带工具参数摘要'), findsOneWidget);
 
     await tester.dragUntilVisible(
-      find.text('简洁'),
+      find.byType(Switch).last,
       find.byType(ListView),
       const Offset(0, -120),
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('简洁'));
+    // 这一行是「开 = 详细，关 = 简洁」：点标题（整行可点）就等于关掉它。
+    await tester.tap(find.text('工具调用显示'));
     await tester.pumpAndSettle();
 
     expect(settings.chatNotesMode, ChatNotesMode.compact);
     expect(find.textContaining('次工具调用'), findsOneWidget);
+    // 再点一下回到详细。
+    await tester.tap(find.text('工具调用显示'));
+    await tester.pumpAndSettle();
+    expect(settings.chatNotesMode, ChatNotesMode.detailed);
+    expect(find.text('逐项列出，带工具参数摘要'), findsOneWidget);
   });
 
   testWidgets('设置页有「完成后收起过程」开关，点一下写进 store 并落盘', (tester) async {
