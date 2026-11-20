@@ -1,3 +1,22 @@
+## 2026-11-20（「清除」按下去报错；重启后还冒出第二个 frpc 抢同一个域名）
+
+### app 1.17.1+71
+
+**症状**：上一版点了「清除」按钮，面板红字 `失败：setLogs is not defined`；同时隧道看着「停了」，可公网地址其实还打得开。
+
+- **根因**（两条，都是上一版带进来的）：
+
+  1. **`setLogs` 不存在**：主面板的日志是 `status.frpc.logs` 派生的（渲染前 `const logs = frpc.logs ?? status?.logs ?? []`），它自己**没有** `logs` state；只有设置页 `FrpPocketSection` 建了 `const [logs, setLogs] = useState([])`。清除按钮的代码是照着设置页写的，于是主面板里 `setLogs([])` 直接 ReferenceError——而 RPC 已经发出去了（日志确实被清空），红字只是前端副作用。
+  2. **重启 DSH 后起了第二个 frpc**：旧插件进程退出时，它 spawn 的 frpc 成了孤儿进程继续跑；新的插件进程 `start()` 只看 `state.json` 里的 pid，而那份 state 里没有可用的 pid（被清/被重写），于是又 spawn 了一个。两个进程拿**同一个 `frpc.toml`** 去连 frps，抢同一个 proxy 名，后起的那个只会一直打印 `start error: proxy [dsh-frp-host-da7b3aea] already exists`——而 `state.json` 记的正是这个打不通的 pid，面板于是显示一个「看着在跑、其实连不上」的隧道。
+
+- **改法**：
+  - `packages/plugin/client/index.js`：主面板 `clearLogs` 不再碰 `setLogs`，改成 `await load()` 重新拉一次 status（日志本来就是从 status 派生的）。
+  - `packages/plugin/lib/frpc.mjs`：`start()` 在「state.json 的 pid 不活」之后加一层进程表兜底——用 `findFrpcPidsSync(paths().frpcToml)`（原本只有 `stop()` 用它）按**命令行里带本插件 toml**捞进程，捞到就接管（多个则留一个、kill 其余），并按日志里最后一个隧道事件补写 `state.json`，不再 spawn 第二个。为此 `createFrpcManager` 新增可注入的 `findPidsOverride`（测试用）。
+- 测试：新增 `start：state.json 没记 pid、进程表里有同 toml 的 frpc → 接管而不是再起一个`；必红验证——把接管分支短路成 `if (known && known.length && false)` → 红（`应当走进程表接管分支`），恢复即绿。plugin 全量 **143 / 143**。`flutter analyze` No issues，`flutter test` **579 全过**。
+- 现场同时收拾了：`17344`（抢不到 proxy 的那个）已结束，`state.json` 改回真正在转发流量的 `20288`（since 2026-11-19 18:46:42）；公网地址访问从 7.9s 回到 0.12s。
+
+**安装**：下载 `dsh-pocket-1.17.1-71.apk`，`adb install -r` 覆盖安装即可（签名不变）。插件侧改动要重启一次 DSH 宿主生效。
+
 ## 2026-11-20（面板与设置页重做成仪表盘；日志既能兜底读出、也能一键清空）
 
 ### app 1.17.0+70

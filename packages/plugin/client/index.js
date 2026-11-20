@@ -1260,10 +1260,9 @@ window.__ModuleLoader__.load({
         setNotice('');
         try {
           await call('frpc.logs.clear', {});
-          if (mounted.current) {
-            setLogs([]);
-            setNotice('日志已清空');
-          }
+          // 主面板的日志是 status 派生的，没有独立 setState —— 重新拉一次即可
+          await load();
+          if (mounted.current) setNotice('日志已清空');
         } catch (err) {
           if (mounted.current) setError(err?.message ?? String(err));
         } finally {

@@ -534,7 +534,13 @@ function waitForExit(pid, timeoutMs) {
  * @param {{command:string,args:string[]}} [opts.spawnOverride] 测试用：替换 frpc 命令，
  *        toml 路径会追加在 args 之后。
  */
-export function createFrpcManager({ getConfig, log = console, onStateChange = null, spawnOverride = null } = {}) {
+export function createFrpcManager({
+  getConfig,
+  log = console,
+  onStateChange = null,
+  spawnOverride = null,
+  findPidsOverride = null,
+} = {}) {
   let child = null;
   let adoptedPid = null;
   let stopping = false;
@@ -931,6 +937,34 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
       startTail(persisted.pid, { fromEnd: true });
       const v = reconcile();
       return { ok: true, state: v.frpState, pid: persisted.pid, already: true, logPath: frpcLogPath() };
+    }
+
+    // state.json 不可信时的兜底：DSH 重启、state 被清、pid 被系统复用，都会让
+    // 「文件里没 pid」和「真有 frpc 在跑」同时成立。此时若直接 spawn 第二个进程，
+    // 它拿同一个 toml 去连 frps，只会换来一直 `proxy [...] already exists` 的失败，
+    // 而真正的隧道还挂在那个孤儿进程上 —— 面板显示的 pid 反而是打不通的那个。
+    // 所以先按「命令行里带本插件 toml」去进程表捞，捞到就接管（多的杀掉）。
+    const known = (findPidsOverride ?? findFrpcPidsSync)(paths().frpcToml);
+    if (known && known.length) {
+      const [keep, ...extra] = known;
+      for (const pid of extra) {
+        log.warn?.(`frpc: 发现 ${known.length} 个同配置 frpc 进程，保留 ${keep}、结束 ${pid}`);
+        killTree(pid);
+      }
+      adoptedPid = keep;
+      startTail(keep, { fromEnd: true });
+      // reconcile 只认 state.json；这里补一次写盘，让后续 status() 也走 running 分支
+      const ev = findLastTunnelEvent(frpcLogPath(), 0);
+      log.warn?.(`frpc: state.json 没记 pid，按进程表接管 ${keep}（最后事件 ${ev?.kind ?? 'unknown'}）`);
+      setState(ev?.kind === 'ready' ? 'running' : 'starting', ev?.kind === 'down' ? ev.line : null, keep);
+      return {
+        ok: true,
+        state: state.frpState,
+        pid: keep,
+        already: true,
+        adopted: true,
+        logPath: frpcLogPath(),
+      };
     }
 
     stopping = false;

@@ -485,6 +485,39 @@ test('clearLogs：截断日志文件、清空面板缓冲，隧道状态不变',
   }
 });
 
+test('start：state.json 没记 pid、进程表里有同 toml 的 frpc → 接管而不是再起一个', async () => {
+  cleanDataDir();
+  const cfg = cfgForFix();
+  // 模拟「DSH 重启后 state.json 里没有 pid，但 frpc 还在跑」的孤儿进程
+  const orphan = spawn(process.execPath, ['-e', FAKE_FRPC], { stdio: ['ignore', 'pipe', 'pipe'] });
+  try {
+    writeState({ frpState: 'stopped', frpSince: Date.now(), lastError: null, pid: null });
+
+    const m = createFrpcManager({
+      getConfig: () => cfg,
+      log: QUIET,
+      spawnOverride: { command: process.execPath, args: ['-e', FAKE_FRPC] },
+      findPidsOverride: () => [orphan.pid],
+    });
+    const r = m.start();
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(r.adopted, true, '应当走进程表接管分支，而不是 spawn 新进程');
+    assert.equal(r.pid, orphan.pid, `接管的应当是进程表里那个 pid：${JSON.stringify(r)}`);
+
+    // 关键：没有起第二个 frpc（第二个只会一直 "proxy already exists"）
+    const st = m.status();
+    assert.equal(st.pid, orphan.pid, 'state.json 要补齐孤儿 pid');
+    assert.ok(['starting', 'running'].includes(st.state), `接管后状态应可推进：${JSON.stringify(st)}`);
+    m.stop();
+  } finally {
+    try {
+      orphan.kill('SIGKILL');
+    } catch {
+      /* 已退出 */
+    }
+  }
+});
+
 test('接管：state.json 的 pid 还活着 → status().logs 读日志文件兜底（不再「暂无日志」）', async () => {
   cleanDataDir();
   const cfg = cfgForFix();
