@@ -15,6 +15,7 @@ import {
   findReadyInLog,
   frpcLogPath,
   isProcessAlive,
+  readLogLines,
   resolveFrpc,
   restartDelayMs,
   rotateLogFile,
@@ -22,6 +23,7 @@ import {
   CONFLICT_PATTERN,
   LOG_KEEP_BYTES,
   LOG_MAX_BYTES,
+  LOG_PANEL_LINES,
   RESTART_BASE_MS,
   RESTART_MAX_MS,
 } from '../lib/frpc.mjs';
@@ -425,6 +427,96 @@ test('F3：frpc.log 超过 1 MiB 时截断保留尾部', () => {
   const tail = readFileSync(file, 'utf8');
   assert.ok(tail.includes('TAIL-MARK'), '截断必须保留尾部（最新日志）');
   assert.ok(findReadyInLog(file, 0), '尾部仍有就绪行可被读到');
+});
+
+test('readLogLines：从文件尾部取最后 N 行（去 ANSI、去空行）', () => {
+  cleanDataDir();
+  const file = frpcLogPath();
+  writeFileSync(
+    file,
+    [
+      '\u001b[31m2026-11-20 10:00:00.000 [I] [a] line-1\u001b[0m',
+      '',
+      '2026-11-20 10:00:01.000 [I] [a] line-2',
+      '2026-11-20 10:00:02.000 [I] [a] line-3',
+    ].join('\n'),
+  );
+  assert.deepEqual(readLogLines(file, 2), [
+    '2026-11-20 10:00:01.000 [I] [a] line-2',
+    '2026-11-20 10:00:02.000 [I] [a] line-3',
+  ]);
+  const all = readLogLines(file, 10);
+  assert.equal(all.length, 3, `空行不该算一行：${JSON.stringify(all)}`);
+  assert.match(all[0], /^2026-11-20 10:00:00\.000/, 'ANSI 颜色码要去掉');
+  assert.equal(LOG_PANEL_LINES, 20, '面板默认行数');
+  assert.deepEqual(readLogLines(join(PKG_ROOT, 'test', '.no-such-frpc.log'), 5), [], '文件不存在给空数组');
+});
+
+test('clearLogs：截断日志文件、清空面板缓冲，隧道状态不变', async () => {
+  cleanDataDir();
+  const cfg = cfgForFix();
+  const m = createFrpcManager({
+    getConfig: () => cfg,
+    log: QUIET,
+    spawnOverride: { command: process.execPath, args: ['-e', FAKE_FRPC] },
+  });
+  m.start();
+  try {
+    const up = await waitFor(() => (m.status().state === 'running' ? m.status() : null), 6000);
+    assert.ok(up, `假 frpc 应先就绪：${JSON.stringify(m.status())}`);
+    assert.ok(m.status().logs.length > 0, '清之前应当有日志');
+    assert.ok(statSync(frpcLogPath()).size > 0, '清之前日志文件应当有内容');
+
+    const r = m.clearLogs();
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(r.truncated, true, '文件存在就应当被截断');
+    assert.equal(statSync(frpcLogPath()).size, 0, '日志文件应变成 0 字节');
+    assert.deepEqual(m.status().logs, [], '面板缓冲也要清空');
+    assert.equal(m.status().state, 'running', '清日志不能动隧道状态');
+    assert.ok(m.status().pid > 0, '进程还在，不该被顺带停掉');
+
+    // 文件本来就不存在时不该报错
+    rmSync(frpcLogPath(), { force: true });
+    const r2 = m.clearLogs();
+    assert.equal(r2.ok, true, JSON.stringify(r2));
+    assert.equal(r2.truncated, false, '文件不存在不算截断');
+  } finally {
+    m.stop();
+  }
+});
+
+test('接管：state.json 的 pid 还活着 → status().logs 读日志文件兜底（不再「暂无日志」）', async () => {
+  cleanDataDir();
+  const cfg = cfgForFix();
+  const m1 = createFrpcManager({
+    getConfig: () => cfg,
+    log: QUIET,
+    spawnOverride: { command: process.execPath, args: ['-e', FAKE_FRPC] },
+  });
+  const r = m1.start();
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const up = await waitFor(() => (m1.status().state === 'running' ? m1.status() : null), 6000);
+  assert.ok(up, `假 frpc 应先就绪：${JSON.stringify(m1.status())}`);
+
+  // 模拟「插件进程重启」：新管理器没有内存日志缓冲，只能靠 state.json + frpc.log
+  const m2 = createFrpcManager({ getConfig: () => cfg, log: QUIET });
+  try {
+    const st = m2.status();
+    assert.equal(st.state, 'running', JSON.stringify(st));
+    assert.equal(st.pid, r.pid);
+    assert.ok(st.logs.length > 0, `接管后 logs 不能为空：${JSON.stringify(st)}`);
+    assert.ok(
+      st.logs.some((l) => /start proxy success|login to server success/.test(l)),
+      `logs 应包含文件里的就绪行：${JSON.stringify(st.logs)}`,
+    );
+    assert.ok(
+      st.logs.length <= LOG_PANEL_LINES,
+      `status().logs 最多 ${LOG_PANEL_LINES} 行，实际 ${st.logs.length}`,
+    );
+  } finally {
+    m2.stop();
+    m1.stop();
+  }
 });
 
 test('F2：就绪行解析（登录/代理两种信号 + 时间戳过滤）', () => {

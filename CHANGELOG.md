@@ -1,3 +1,25 @@
+## 2026-11-20（面板与设置页重做成仪表盘；日志既能兜底读出、也能一键清空）
+
+### app 1.17.0+70
+
+**症状**：三件互不相干但都扎眼的事——
+
+1. FRP 面板一眼模板样：状态灯 + 彩色胶囊 + 带框版本号挤一行，九个同等权重的描边按钮（运行中「启动」仍可点），深蓝黑日志块压在浅色页面上，卡片 10 / 按钮 6 / 内边距 14 的圆角套不起来，配对串折成两行半，空日志写 `(暂无日志 | no logs yet)`。
+2. 设置页更糟：一整页都是同一档 12px 灰字 + 同权重输入框，15 个 frps 字段连成一片，没有任何分组；成功/失败靠 `✓ / ✗` 前缀；`已保存 | saved` 这类中英双语提示散在各处。
+3. 插件重启后接管到还活着的 frpc，「frpc 日志」永远显示「暂无日志」；日志攒到几万行也没有清空入口。
+
+- **根因**（日志那条）：`status()` 原本返回内存环形缓冲 `logs.slice(-20)`，而 adopt 分支（`isProcessAlive(persisted.pid)` 命中）既不 `pushLog` 也不 `startTail`，于是 `$DSH_HOME/dsh-frp-pocket/frpc.log` 里 465KB 真实内容一行都读不到。
+
+- **改法**：
+  - **面板**（`packages/plugin/client/index.js`）：`pageStyles` 整段换成 `PANEL_CSS`（`.frpk` 前缀，全部走 `--dsw-alias-*` 变量 + fallback），样式改由 `PanelStyle()` 作为子节点随组件渲染。头部收成「标题 + 8px 指示灯 + 等宽读数」；公网地址 22px 等宽做全页唯一的视觉重心，「打开」是唯一 primary；facts 三列；PIN 卡 152px QR + 单行截断配对串；日志块是全页唯一深色区域。复制反馈就地变「已复制」1.6s。
+  - **设置页**（同文件 `FrpPocketSection`）：6 张卡（本机 / 访问 PIN / 手机配对 / frps 服务器 / 域名占用 / 隧道状态），表单统一 `132px + 1fr` 两列栅格，组内 gap 12 / 组间 16，`.frps-group` 用 1px 分隔线切「连接 / 暴露方式 / 保存」；`保存配置` 只在有改动时才是 primary；提示全部去英文化（`已保存 | saved` → `配置已保存`，`✓/✗` 前缀改成 `.frps-note` 语义色竖条）；日志改成 `white-space: pre` 的横向滚动终端。
+  - **日志兜底**（`packages/plugin/lib/frpc.mjs`）：新增 `readLogLines()` / `panelLogs()`，`status()` 与 `logTail()` 都改走它——文件行是主时间线，内存里只有插件自己的诊断行（不进文件），按「内存独有行在前 + 文件行在后」拼接后切尾 20 行；adopt 分支补 `startTail(pid, { fromEnd: true })`，从文件末尾跟、不重放历史。
+  - **清空日志**：`clearLogs()` 置空缓冲与读位后，用 `r+` + `ftruncateSync` 把 `frpc.log` 截到 0 字节（不换 inode，frpc 以 O_APPEND 持有的句柄继续从 0 偏移写）；新 RPC 端点 `frpc.logs.clear`；面板与设置页日志卡头各加一个 quiet「清除」，空日志时禁用。
+- 测试：`packages/plugin` `node --test test/*.test.mjs` **142 条全过**（新增 `readLogLines` 用例、接管兜底用例、`clearLogs` 用例；接管与 clearLogs 两条都做过必红验证——把 `logs: panelLogs()` 改回 `logs.slice(-20)`、把 `ftruncateSync` 换成空操作，both 红、恢复即绿）。`flutter analyze` / `flutter test` 见本次发布记录。
+- 插件版本同步到 **0.5.0**（面板右上角读数）。
+
+**安装**：下载 `dsh-pocket-1.17.0-70.apk`，`adb install -r` 覆盖安装即可（签名不变）。
+
 ## 2026-11-20（删除角标看着小、按着还是大）
 
 ### app 1.16.5+69

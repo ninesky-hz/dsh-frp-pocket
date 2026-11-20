@@ -220,15 +220,15 @@ test('主面板：显示插件版本号，二维码容器是固定正方形（�
   assert.ok(text.includes('v0.1.0'), '主面板应显示 status.version（版本号来自宿主，不是写死）');
   assert.ok(text.includes('dsh-frp-pocket 插件版本'), '版本 chip 应带说明');
 
-  // 二维码容器：宽高都是 168 且裁切，SVG 用 100% 填充
-  const qrNode = JSON.stringify(tree).match(/"width":168,"height":168[^}]*/);
-  assert.ok(qrNode, '二维码容器应固定为 168×168，避免 SVG 溢出压住右侧文字');
-  // SVG 经 dangerouslySetInnerHTML 渲染，JSON 里引号是转义过的，用正则宽松匹配
+  // 二维码容器：尺寸写在组件自带的样式里（随组件渲染，不依赖宿主 head）
+  assert.match(SOURCE, /\.frpk-qr \{ width: 152px; height: 152px;/, '二维码容器应固定 152×152，避免 SVG 溢出压住右侧文字');
+  // SVG 铺满容器
+  assert.match(SOURCE, /\.frpk-qr svg \{ display: block; width: 100%; height: 100%; \}/, '二维码 SVG 应自适应容器宽度');
   assert.match(text, /width=\\?"100%\\?"/, '二维码 SVG 应自适应容器宽度');
 
   // PIN 卡上要能直接换 PIN：这个动作以前只在设置页深处，卡片上写着「PIN 换了旧 cookie
   // 立刻失效」却没有入口，很别扭
-  assert.ok(text.includes('换个 PIN'), 'PIN 卡片上应有「换个 PIN」按钮');
+  assert.ok(text.includes('换 PIN'), 'PIN 卡片上应有「换 PIN」按钮');
 });
 
 /** 把渲染树摊平成节点数组，方便按文案找按钮。 */
@@ -274,8 +274,8 @@ test('主面板「换个 PIN」：二次确认后真的发 pin.regenerate 并换
 
   // 这一步就是回归点：按钮曾经直接调一个不存在的函数（那是设置页组件的局部函数），
   // 点了什么都不发生，也不报错到界面上。
-  const first = flatten(tree).find((n) => n.props?.children === '换个 PIN');
-  assert.ok(first, '卡片上应有「换个 PIN」');
+  const first = flatten(tree).find((n) => n.props?.children === '换 PIN');
+  assert.ok(first, '卡片上应有「换 PIN」');
   first.props.onClick();
 
   begin(store);

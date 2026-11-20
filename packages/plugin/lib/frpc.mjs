@@ -24,6 +24,7 @@ import {
   closeSync,
   existsSync,
   fstatSync,
+  ftruncateSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -45,6 +46,8 @@ import {
 } from './config.mjs';
 
 export const LOG_LIMIT = 100;
+/** 面板 status.logs 一次给多少行（前端还会再切一次，这里给够 20 行就是满屏）。 */
+export const LOG_PANEL_LINES = 20;
 /** 重启退避：3s 起步翻倍，60s 封顶，永不因「次数」放弃（F5）。 */
 export const RESTART_BASE_MS = 3000;
 export const RESTART_MAX_MS = 60_000;
@@ -279,6 +282,28 @@ export function readLogTail(file = frpcLogPath(), maxBytes = 128 * 1024) {
   } catch {
     return '';
   }
+}
+
+/**
+ * 读日志文件最后 maxLines 行（去 ANSI、去空行）。
+ *
+ * 为什么需要它：面板的 logs 一直只来自内存环形缓冲（pushLog），而进程被**接管**时
+ * （DSH 重启后 state.json 里的 pid 还活着，start() 走 adopt 分支直接 return）根本没人
+ * 调 pushLog —— 于是 frpc.log 里明明有几千行、面板却写「暂无日志」。文件才是真相，
+ * 内存只是实时性兜底。
+ *
+ * @returns {string[]} 最多 maxLines 行，时间正序
+ */
+export function readLogLines(file = frpcLogPath(), maxLines = LOG_PANEL_LINES, maxBytes = 64 * 1024) {
+  const text = readLogTail(file, maxBytes);
+  if (!text) return [];
+  const lines = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line) lines.push(line);
+  }
+  const keep = Math.max(1, Math.trunc(Number(maxLines) || LOG_PANEL_LINES));
+  return lines.slice(-keep);
 }
 
 /** 从 offset 起增量读取（最多 TAIL_MAX_READ）。文件被外部截断时重头读。 */
@@ -575,8 +600,33 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
       lastError: v.lastError,
       pid: v.pid,
       logPath: frpcLogPath(),
-      logs: logs.slice(-20),
+      logs: panelLogs(),
     };
+  }
+
+  /**
+   * 面板要展示的日志行。
+   *
+   * 文件（frpc 真实输出）是主时间线；内存里还可能有插件自己的诊断行（「frpc 启动 pid=…」
+   * 「域名冲突：… 重掷为 …」），那些不进文件，所以按「内存独有的在前 + 文件行在后」
+   * 拼起来再切最后 N 行：正常跟随运行时内存缺失的那几条会被文件行自然挤掉，
+   * 接管场景（内存空）则完全由文件兜底。
+   */
+  function panelLogs(limit = LOG_PANEL_LINES) {
+    const keep = Math.max(1, Math.trunc(Number(limit) || LOG_PANEL_LINES));
+    const fromFile = readLogLines(frpcLogPath(), keep);
+    if (!fromFile.length) return logs.slice(-keep);
+    const seen = new Set(fromFile);
+    const onlyInMemory = logs.filter((line) => !seen.has(line));
+    return [...onlyInMemory, ...fromFile].slice(-keep);
+  }
+
+  /** 这个 pid 现在还归本管理器管吗？自 spawn 的 child，或接管来的 adoptedPid。 */
+  function ownsPid(pid) {
+    const n = Number(pid);
+    if (!Number.isInteger(n) || n <= 0) return false;
+    if (child && child.pid === n) return true;
+    return adoptedPid === n && isProcessAlive(n);
   }
 
   /**
@@ -679,6 +729,8 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
     if (pids && pids.length) {
       const pid = pids[0];
       adoptedPid = pid;
+      // 进程表里捡到本插件的 frpc：同样要跟随它的日志（见 start() 的 adopt 分支注释）
+      if (!tailTimer) startTail(pid, { fromEnd: true });
       const ev = findLastTunnelEvent(frpcLogPath(), v.frpSince || 0);
       const next = ev?.kind === 'ready' ? 'running' : ev?.kind === 'down' ? 'reconnecting' : 'starting';
       setState(next, ev?.kind === 'down' ? ev.line : null, pid);
@@ -714,6 +766,37 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
       clearTimeout(tailTimer);
       tailTimer = null;
     }
+  }
+
+  /**
+   * 清空日志：截断 frpc.log，并把内存缓冲、tail 的读位、半行残留一起归零。
+   *
+   * 只动日志文件，不动 state.json —— 隧道该怎么跑还怎么跑，frpc 进程也不重启。
+   * frpc 是以 O_APPEND 持有该文件的，这里用 r+ + ftruncate（不换 inode），
+   * 它之后写的行会从 0 偏移续上，tail 下一跳就能接到（readAppend 对
+   * size < offset 本来就归零重读，所以即便这里漏改 logOffset 也不会读到垃圾）。
+   */
+  function clearLogs() {
+    logs = [];
+    tailCarry = '';
+    logOffset = 0;
+    const file = frpcLogPath();
+    let truncated = false;
+    let error = null;
+    try {
+      const fd = openSync(file, 'r+');
+      try {
+        ftruncateSync(fd, 0);
+        truncated = true;
+      } finally {
+        closeSync(fd);
+      }
+    } catch (err) {
+      // 文件不存在 = 本来就没日志，不算失败
+      if (err?.code !== 'ENOENT') error = err?.message ?? String(err);
+    }
+    log.info?.(`frpc: 日志已清空（truncated=${truncated}）`);
+    return { ok: !error, truncated, error, logPath: file };
   }
 
   function markRunning(via) {
@@ -794,12 +877,24 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
     return true;
   }
 
-  function startTail(pid) {
+  function startTail(pid, { fromEnd = false } = {}) {
     stopTail();
     tailCarry = '';
+    if (fromEnd) {
+      // 接管已有进程：从文件当前末尾开始跟，别把历史日志重放一遍
+      try {
+        logOffset = statSync(frpcLogPath()).size;
+      } catch {
+        logOffset = 0;
+      }
+    }
     const tick = () => {
       tailTimer = null;
-      if (!child || child.pid !== pid) return;
+      if (!ownsPid(pid)) {
+        // 自己 spawn 的进程退出由 exit 事件接管；接管来的进程只能靠这里收工
+        stopTail();
+        return;
+      }
       const { text, offset } = readAppend(frpcLogPath(), logOffset);
       logOffset = offset;
       if (text) {
@@ -831,6 +926,9 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
     const persisted = readState();
     if (isProcessAlive(persisted.pid)) {
       adoptedPid = persisted.pid;
+      // 接管也必须跟随日志：否则域名冲突自愈、ready/down 判定全失效，
+      // 面板也只能一直说「暂无日志」（内存缓冲是空的）
+      startTail(persisted.pid, { fromEnd: true });
       const v = reconcile();
       return { ok: true, state: v.frpState, pid: persisted.pid, already: true, logPath: frpcLogPath() };
     }
@@ -1046,7 +1144,8 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
 
   function logTail(n = 50) {
     const k = Math.max(1, Math.min(LOG_LIMIT, Number(n) || 50));
-    return logs.slice(-k);
+    // 同样以文件为准：CLI 自报日志时也不能因为「刚重启、内存空」而什么都没有
+    return panelLogs(k);
   }
 
   return {
@@ -1056,6 +1155,7 @@ export function createFrpcManager({ getConfig, log = console, onStateChange = nu
     status,
     statusAsync,
     logTail,
+    clearLogs,
     reconcile,
     get state() {
       return reconcile().frpState;

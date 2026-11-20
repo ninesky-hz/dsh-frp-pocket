@@ -247,14 +247,14 @@ test('设置页：填了 DNS 没保存，后台轮询不许把输入框清空（
   const { render, poll, calls } = await mountSection();
 
   // 手打一个 DNS 服务器
-  const dns = findInput(render().tree, '留空=跟随系统');
+  const dns = findInput(render().tree, '跟随系统');
   assert.ok(dns, '应能找到 DNS 服务器输入框');
   assert.equal(dns.props.value, '', '初始值应来自服务端（空）');
   dns.props.onChange({ target: { value: '223.5.5.5' } });
 
   // 用户改了字：立刻可见，并出现「有未保存改动」提示
   const typed = render();
-  assert.equal(findInput(typed.tree, '留空=跟随系统').props.value, '223.5.5.5');
+  assert.equal(findInput(typed.tree, '跟随系统').props.value, '223.5.5.5');
   assert.ok(
     JSON.stringify(typed.tree).includes('有未保存改动'),
     '改动后应提示「有未保存改动」，否则用户以为已经保存了',
@@ -265,7 +265,7 @@ test('设置页：填了 DNS 没保存，后台轮询不许把输入框清空（
   await poll();
   assert.ok(calls.length > before, '轮询应真的发了一次 status');
   assert.equal(
-    findInput(render().tree, '留空=跟随系统').props.value,
+    findInput(render().tree, '跟随系统').props.value,
     '223.5.5.5',
     '未保存的输入必须活过一轮轮询',
   );
@@ -274,7 +274,7 @@ test('设置页：填了 DNS 没保存，后台轮询不许把输入框清空（
 test('设置页：用户手上有改动时，轮询仍然刷新只读状态（日志/隧道状态）', async () => {
   const { render, poll, server } = await mountSection();
 
-  findInput(render().tree, '留空=跟随系统').props.onChange({ target: { value: '119.29.29.29' } });
+  findInput(render().tree, '跟随系统').props.onChange({ target: { value: '119.29.29.29' } });
   render();
 
   // 服务端在这一跳回了新日志：不该因为「有脏改动」就把整个状态刷新也跳过
@@ -284,7 +284,7 @@ test('设置页：用户手上有改动时，轮询仍然刷新只读状态（�
   const tree = render().tree;
   assert.ok(JSON.stringify(tree).includes('poll tick 42'), '轮询应刷新只读日志');
   assert.equal(
-    findInput(tree, '留空=跟随系统').props.value,
+    findInput(tree, '跟随系统').props.value,
     '119.29.29.29',
     '刷新状态的同时不许动输入框',
   );
@@ -293,7 +293,7 @@ test('设置页：用户手上有改动时，轮询仍然刷新只读状态（�
 test('设置页：点保存 → 改动随 config.save 发出，保存后采纳服务端值并清掉脏标记', async () => {
   const { render, calls } = await mountSection();
 
-  findInput(render().tree, '留空=跟随系统').props.onChange({ target: { value: '223.5.5.5' } });
+  findInput(render().tree, '跟随系统').props.onChange({ target: { value: '223.5.5.5' } });
   const typed = render();
 
   const saveBtn = findByText(typed.tree, '保存配置');
@@ -309,7 +309,7 @@ test('设置页：点保存 → 改动随 config.save 发出，保存后采纳�
   assert.equal(saved.payload.config.frp.dnsServer, '223.5.5.5', '提交的 dnsServer 应是刚填的值');
 
   const after = render().tree;
-  assert.equal(findInput(after, '留空=跟随系统').props.value, '223.5.5.5', '保存后输入框保持该值');
+  assert.equal(findInput(after, '跟随系统').props.value, '223.5.5.5', '保存后输入框保持该值');
   assert.ok(!JSON.stringify(after).includes('有未保存改动'), '保存后脏标记应清掉');
   assert.equal(findByText(after, '保存配置').props.disabled, true, '没改动时保存按钮应禁用');
 });
@@ -322,7 +322,7 @@ test('设置页：没有改动时轮询照常采纳服务端表单（首屏之�
   await poll();
 
   assert.equal(
-    findInput(render().tree, '留空=跟随系统').props.value,
+    findInput(render().tree, '跟随系统').props.value,
     '223.5.5.5',
     '手上没有未保存改动时，轮询应把服务端值同步进来',
   );

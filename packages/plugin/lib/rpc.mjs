@@ -24,6 +24,7 @@ export const RPC_ENDPOINTS = {
   frpcStop: 'frpc.stop',
   frpcRestart: 'frpc.restart',
   frpcLogs: 'frpc.logs',
+  frpcLogsClear: 'frpc.logs.clear',
   tunnelTest: 'tunnel.test',
   domainCheck: 'domain.check',
 };
@@ -339,6 +340,10 @@ export function createRpcHandler({ getConfig, saveConfig, frpc, gateway, version
       }
       if (endpoint === RPC_ENDPOINTS.frpcLogs) {
         return ok({ lines: frpc?.logTail?.(payload?.lines ?? 50) ?? [] });
+      }
+      if (endpoint === RPC_ENDPOINTS.frpcLogsClear) {
+        const r = frpc?.clearLogs?.() ?? { ok: false, error: 'frpc_unavailable' };
+        return ok({ result: r, status: statusPayload().value.frpc });
       }
 
       if (endpoint === RPC_ENDPOINTS.domainCheck) {
