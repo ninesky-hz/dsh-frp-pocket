@@ -33,23 +33,8 @@ const TextStyle kSettingsMachine = TextStyle(
 );
 
 
-/// 分段控件的统一外观：圆角 10、hairline 边框、紧凑高度。
-///
-/// M3 默认是胶囊形（stadium），跟这一页 12 的卡片圆角摆在一起像两种语言。
-ButtonStyle settingsSegmentStyle(ThemeData theme) {
-  return SegmentedButton.styleFrom(
-    visualDensity: VisualDensity.compact,
-    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    minimumSize: const Size(0, 36),
-    padding: const EdgeInsets.symmetric(horizontal: 10),
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-    side: BorderSide(color: theme.colorScheme.outlineVariant),
-    textStyle: theme.textTheme.labelLarge?.copyWith(
-      fontSize: 13,
-      fontWeight: FontWeight.w500,
-    ),
-  );
-}
+/// 分段控件的高度。圆角 10、hairline 外框，和这一页 12 的卡片同一套语言。
+const double kSettingsSegmentHeight = 36;
 
 /// 一个分组：标题 + 若干行，行之间一条细线。
 class SettingsSection extends StatelessWidget {
@@ -251,7 +236,6 @@ class SettingsSegmentRow<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final title = this.title;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -259,17 +243,102 @@ class SettingsSegmentRow<T> extends StatelessWidget {
         if (title != null) SettingsRow(icon: icon, title: title, subtitle: subtitle),
         Padding(
           padding: EdgeInsets.fromLTRB(16, title == null ? kSettingsRowPadV : 0, 16, 12),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: SegmentedButton<T>(
-              style: settingsSegmentStyle(theme),
-              segments: segments,
-              selected: <T>{selected},
-              onSelectionChanged: (selection) => onChanged(selection.first),
-            ),
+          child: _EqualSegments<T>(
+            segments: segments,
+            selected: selected,
+            onChanged: onChanged,
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 每段等宽、内容居中的分段控件。
+///
+/// 不用 M3 的 [SegmentedButton]：它按内容分宽度，同样的三段里字多的那段更宽、
+/// 图标和文字在各自段里跟着偏左，看起来就是「没居中」。这里用 [Expanded] 均分，
+/// 再把图标与文字合成一个居中的整体。
+class _EqualSegments<T> extends StatelessWidget {
+  const _EqualSegments({
+    required this.segments,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  final List<ButtonSegment<T>> segments;
+  final T selected;
+  final ValueChanged<T> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final radius = BorderRadius.circular(10);
+    return Container(
+      height: kSettingsSegmentHeight,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        borderRadius: radius,
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Row(
+        children: <Widget>[
+          for (int i = 0; i < segments.length; i++)
+            Expanded(
+              child: _segment(theme, segments[i], first: i == 0),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _segment(ThemeData theme, ButtonSegment<T> segment, {required bool first}) {
+    final scheme = theme.colorScheme;
+    final bool active = segment.value == selected;
+    final Color foreground = active ? scheme.onPrimaryContainer : scheme.onSurfaceVariant;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: active ? scheme.primaryContainer : Colors.transparent,
+        border: first
+            ? null
+            : Border(left: BorderSide(color: scheme.outlineVariant)),
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          onTap: () => onChanged(segment.value),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  if (segment.icon != null) ...<Widget>[
+                    IconTheme.merge(
+                      data: IconThemeData(size: 16, color: foreground),
+                      child: segment.icon!,
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                  Flexible(
+                    child: DefaultTextStyle.merge(
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: foreground,
+                      ),
+                      child: segment.label ?? const SizedBox.shrink(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

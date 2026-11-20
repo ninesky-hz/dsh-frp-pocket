@@ -1,3 +1,17 @@
+## 2026-11-20（「外观」那三段终于等宽居中：不再借 M3 的 SegmentedButton）
+
+### app 1.16.1+65
+
+- **症状**：设置页最上面那枚「跟随系统 / 浅色 / 深色」看着没居中——三格宽窄不一（实测 246 / 208 / 276 dp），每格里的图标加文字又各自偏左几个像素，一眼就能看出歪。
+- **根因**：`SegmentedButton` 按**内容**分配宽度：四字的「跟随系统」比两字的宽，加了图标再各差一截；它内部又是按起始边排布，于是每格的内容都不在自己那一格的中心。之前只把它改成圆角 10 + 紧凑高度，没动它的布局算法。
+- **改法**：`packages/app/lib/widgets/settings_parts.dart` 里自己画一个 `_EqualSegments`，替掉 `SegmentedButton`：
+  - 每段 `Expanded` 等宽，图标与文字用 `Row(mainAxisSize: min)` 合成一个整体再 `Center`，所以是**真正居中**；
+  - 外框 hairline + 圆角 10，段与段之间一条细线，选中段铺 `primaryContainer`、文字用 `onPrimaryContainer`，高 `kSettingsSegmentHeight = 36`；
+  - 去掉 `settingsSegmentStyle()`（M3 的那套 `styleFrom` 不再需要），`SettingsSegmentRow` 的入参仍是 `ButtonSegment<T>`，调用方不用改。
+- 侧面变化：选中态不再额外插一个对勾——颜色与底色已经说清选中，多一个勾会把「跟随系统」四个字整体往右推几个像素。
+- 测试：`test/settings_layout_test.dart` 新增「外观那三段等宽，标签在自己那格里居中」——比较三个标签中心点的间距必须相等（`closeTo(..., 0.5)`）。
+- 质量门：全量 **573 条通过**（572 + 1 新用例），`flutter analyze` 无问题。
+
 ## 2026-11-20（会话列表把「进行中」提到最上面；工具调用显示改成一个开关）
 
 ### app 1.16.0+64

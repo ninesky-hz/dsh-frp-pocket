@@ -99,4 +99,22 @@ void main() {
     expect(cache, repo, reason: '不同分组之间的标签列必须一致');
     expect(api, repo, reason: '接口前缀那行也要落在同一列');
   });
+
+  testWidgets('外观那三段等宽，标签在自己那格里居中', (tester) async {
+    await pump(tester);
+
+    // 三段文字的中心点间距必须相等：间距相等 ⇔ 每格一样宽且标签居中。
+    // 之前用 M3 的 SegmentedButton，它按内容分配宽度，三段是 246/208/276，
+    // 标签就各自偏左，看着「没居中」。
+    final system = tester.getCenter(find.text('跟随系统')).dx;
+    final light = tester.getCenter(find.text('浅色')).dx;
+    final dark = tester.getCenter(find.text('深色')).dx;
+
+    expect(
+      dark - light,
+      closeTo(light - system, 0.5),
+      reason: '三格必须等宽：跟随系统/浅色/深色 的间距不一致就说明宽度不一样',
+    );
+    expect(light - system, greaterThan(60), reason: '三段要均分那一行，不是挤在一起');
+  });
 }
