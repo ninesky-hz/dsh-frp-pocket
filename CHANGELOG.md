@@ -1,3 +1,21 @@
+## 2026-11-20（待发的图能点开放大看了；「完成后收起过程」改完立刻生效）
+
+### app 1.16.3+67
+
+**症状**：在输入框上方选好一张或几张图，只能点右上角的 × 删掉，没法放大确认挑的是哪张截图。
+
+- **根因**：待发缩略图那排 `Stack[Image, 删除按钮]` 只挂了删除，没挂点击；能点开的看图页只给了气泡里的历史图片。
+- **改法**：
+  - `lib/widgets/chat/image_viewer.dart` 重写成「一张也看、多张能翻」：`showImageViewerGallery({images, labels, initialIndex})`（`showImageViewer` 委托它）；`ImageViewerPage` 用 `PageView` 逐张渲染，每张各自一份 `TransformationController`（翻页不继承上一张的缩放）；顶部多张时显示 `1 / 2`，底部给上一张/下一张（`image-viewer.prev` / `.next`）——放大层会吞掉横向拖动，靠甩手势翻页在放大后必然失效，所以给一对明确的按钮。
+  - `lib/screens/session_chat_screen.dart` 的 `_buildAttachedRow`：缩略图包 `GestureDetector(key: 'attach-open.$index')` → `_openAttached(index)`；该方法只把**真正有字节**的图交给看图页并按同样顺序重算索引（`_attachedBytes` 可能比 `_attached` 短）。
+  - 顺手修掉一个会误删的坑：删除按钮的 `IconButton` 没设 `tapTargetSize: shrinkWrap`，M3 会把命中区撑到 48×48，不可见的那一圈正好压在 56px 缩略图上——点图想放大，结果是删图。
+- 测试：`test/session_chat_image_test.dart` 新增 e7（点缩略图打开看图页、关掉回到输入区且图还在）、e8（点第 2 张打开的就是第 2 张、按上一张/下一张翻、最后一张的「下一张」是灰的）；撤掉 `onTap` 后 e7 必红。
+- **放大后图片能被拖到屏幕外无穷远**：`InteractiveViewer` 的 `boundaryMargin` 之前给的是 `double.infinity`，等于「随便拖多远都行」；气泡里的历史图和刚加的待发预览都走同一个看图页，所以两处都能一直往外拖。改成 `EdgeInsets.zero`，并把双击放大自己算的位移也夹进 `[viewport - viewport * scale, 0]`（手写矩阵时焦点在角上最容易把图推出屏幕）。
+  内容盒也改成 `SizedBox.expand` + `BoxFit.contain`——交给 `Center` 自适应尺寸的话，边界要按图片实际尺寸算，容易偏。
+  测试：`test/chat_image_viewer_test.dart` 新增「放大后拖动会被夹住」（把 `boundaryMargin` 改回 `infinity` 时实测位移跑到 `+580`，必红）与「双击在右下角放大，图仍然盖满整页」。
+- **「完成后收起过程」只生效一半**：`SessionChatScreen` 只有 `_displayItems` 读这条设置、没订阅 `SettingsStore`，所以关掉开关时明细会立刻铺开、但「按轮聚合」不重算，三条过程还挤在一个气泡里。改法是 `build` 里 `_syncSettings()` 订阅（`_onSettingsChanged` → `setState`，`dispose` 里摘掉），`_displayItems` 改读 `_settings?.foldNotesWhenDone`。测试 `test/session_chat_turn_fold_test.dart` 断言 `NotesLine` 数量 1 → 3（只断言 `notes-fold` 消失挡不住回归）。
+- 全量：`flutter analyze` No issues；`flutter test` **578 条全过**。
+
 ## 2026-11-20（「外观」那三段终于等宽居中：不再借 M3 的 SegmentedButton）
 
 ### app 1.16.1+65

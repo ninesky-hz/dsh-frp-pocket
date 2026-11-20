@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:dsh_frp_app/theme/app_icons.dart';
 import 'package:dsh_frp_app/widgets/chat/chat_bubbles.dart';
+import 'package:dsh_frp_app/widgets/chat/image_viewer.dart';
 
 const Host _host = Host(
   id: 'host-img',
@@ -359,6 +360,80 @@ void main() {
     }
 
     expect(find.byType(ChatImageTile), findsOneWidget);
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('e7 点待发缩略图能放大看，关掉回到输入区', (tester) async {
+    final remote = await _pumpChat(tester, pickImage: _pickOne);
+
+    await tester.tap(find.byKey(const ValueKey<String>('chat-attach')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    // 56px 的缩略图分不清是哪张截图，点一下必须能放大。
+    await tester.tap(find.byKey(const ValueKey<String>('attach-open.0')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.byType(ImageViewerPage), findsOneWidget);
+    // 单张不显示页码：1 / 1 只是噪音。
+    expect(
+      find.byKey(const ValueKey<String>('image-viewer.counter')),
+      findsNothing,
+    );
+
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.byType(ImageViewerPage), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('attach-remove.0')),
+      findsOneWidget,
+      reason: '看完图回来，待发的图还在',
+    );
+
+    await _disposeChat(tester, remote);
+  });
+
+  testWidgets('e8 点第二张打开的就是第二张，还能按上一张/下一张翻', (tester) async {
+    final remote = await _pumpChat(tester, pickImage: _pickOne);
+
+    for (var i = 0; i < 2; i++) {
+      await tester.tap(find.byKey(const ValueKey<String>('chat-attach')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    // 点第 2 张：索引要按「有字节的那些图」重算，不能直接用缩略图下标。
+    await tester.tap(find.byKey(const ValueKey<String>('attach-open.1')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    final counter = find.byKey(const ValueKey<String>('image-viewer.counter'));
+    expect(tester.widget<Text>(counter).data, '2 / 2');
+
+    // 放大层会吞掉横向拖动，所以要有明确的上一张/下一张。
+    await tester.tap(find.byKey(const ValueKey<String>('image-viewer.prev')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.widget<Text>(counter).data, '1 / 2');
+
+    await tester.tap(find.byKey(const ValueKey<String>('image-viewer.next')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.widget<Text>(counter).data, '2 / 2');
+
+    // 到最后一张，下一张变灰不许点。
+    expect(
+      tester
+          .widget<IconButton>(
+            find.byKey(const ValueKey<String>('image-viewer.next')),
+          )
+          .onPressed,
+      isNull,
+    );
 
     await _disposeChat(tester, remote);
   });

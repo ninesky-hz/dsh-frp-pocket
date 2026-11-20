@@ -259,6 +259,7 @@ subdomain = "home"
    - 流式期间有 120ms 节流（`kMdStreamThrottle`）与 8000 字降级（`kMdStreamPlainLimit`）；光标是独立的一块（`MdView.caretKey`），不再是 `▌` 字符。
    - 定稿长消息按 `kLongTextChars`（**600 字**）截断，给的是 `previewMarkdown`（截断点落在换行、未闭合围栏会补齐），点「展开全文」看原文。门槛按手机行宽定：一行约 20–22 个汉字或 45 个西文字符，600 字已经是十来屏的一半；定太高时英文/代码那种「字数不多、行数很多」的消息会漏在门槛下面，整条铺满几屏。
    - 工具/思考行改成竖排时间线（左侧细线 + 圆点），折叠与展开逻辑不变。
+   - **「完成后收起过程」管两件事**（`settings.foldNotesWhenDone`，键 `dsh_frp.chatNotesFold`，默认开）：① 定稿历史在 `_displayItems` 里先按轮聚合（`foldTurnNotes`，把同一 turn 被宿主拆成多条的过程并到头上那条，掏空的条丢掉）；② 聚合出来的过程是否再折成一行摘要（`NotesLine`，点开看细节）。正在跑的那一轮两项都不做。会话页必须订阅 `SettingsStore`（`_syncSettings()`）——开关一变就重算聚合，否则「明细会展开、但三条过程还挤在一个气泡里」，看起来像只生效了一半。
    - **链接可点**：`http`/`https` 的 `[文字](url)` 与裸链接都交给系统浏览器（`openExternalLink` → `PlatformBridge.openUrl` → 原生 `Intent.ACTION_VIEW`，不引入 `url_launcher`）；打不开时复制到剪贴板并提示。相对路径 / `#锚点` / `mailto:` 不画成链接（`isOpenableUrl` 只认 http/https）。点击识别器挂在**叶子** span 上——命中测试取的是最深那层，挂外层点不到。
    - 配色/字号集中在 `MdStyle.of(theme)`（`md_style.dart`），要更贴近 PC 只改这一个文件。
    - 「展开全文」的阅读页（`widgets/chat/text_viewer.dart`）对 assistant 走同一套 `MdView`
@@ -271,6 +272,8 @@ subdomain = "home"
    - **不许按 UTF-16 码元切 span**：`md_highlight.dart` 的兜底分支必须「吃到下一个 token 起点」整段切片（`code.substring(index, next)`）。写成 `TextSpan(text: code[index])` 会把 emoji 的代理对拆成两个孤立半码元，屏幕上就是两个豆腐块（`🔹` → `♦♦`）。同理，任何逐字符遍历都要区分码元与 rune。
    - **列表要认「松列表」**：项之间空一行在 PC 端（CommonMark）还是同一张列表，解析器必须跳过空行看下一行是不是同类列表项；否则每项都成为单元素列表，编号全从头开始（PC 是 1/2/3/4/5，手机是一串 1.）。有序列表的起始号取第一项写的数字（`MdList.start`），渲染用 `start + i`。
    - 等宽字体里没有 emoji 字形：`MdStyle.mono` 的 `fontFamilyFallback` 末尾必须留着 `Noto Color Emoji` / `Apple Color Emoji`，缺字时才落得到系统 emoji 字体。
+   - **看图与待发缩略图**：`widgets/chat/image_viewer.dart` 的 `showImageViewer`（单张）/ `showImageViewerGallery`（多张）是唯一入口，`ImageViewerPage` 用 `PageView` 逐张渲染、每张独立 `TransformationController`（翻页不继承缩放）。气泡里的历史图与输入框上方的待发缩略图（`attach-open.$index` → `_openAttached`）都走它；多张时顶部显示 `n / total`，底部给 `image-viewer.prev` / `.next`——放大层会吞掉横向拖动，**不能只靠甩手势翻页**。待发缩略图的删除按钮必须 `tapTargetSize: MaterialTapTargetSize.shrinkWrap`，否则 M3 把命中区撑到 48×48，点图会变成删图。
+   - **看图页的位移必须夹住**：`InteractiveViewer` 的 `boundaryMargin` 只能是 `EdgeInsets.zero`（给 `double.infinity` 等于「随便拖多远」），内容盒用 `SizedBox.expand` + `BoxFit.contain` 撑满整页，好让边界按视口算；自己写矩阵做双击放大时位移要夹进 `[viewport - viewport * scale, 0]`，否则焦点落在角上时会把图推出屏幕。`panEnabled` 只在放大后打开——原始大小允许拖动会抢走横向手势，多张翻页就废了。
 
 7. **待回显气泡的可见性**（`session_chat_screen.dart`）：从磁盘缓存（`PendingStore`）回填的「已发未回显」气泡默认**不上屏**——`_displayItems` 的顺序是「历史 → 待回显 → 宿主队列 → 草稿」，它一上屏就只能挂在最末尾，历史里其实早有这条时会变成「位置不对、几秒后又消失」的鬼影。规则：
    - 历史没对完账时只放行本次会话自己刚发的、以及 `queued`/`failed` 的（这两种确实还没开跑，位置在底部是对的）；`kHistorySettleFallback`（10s）只是断线慢网的最后一道阀门。

@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../app_scope.dart';
+import '../data/settings_store.dart';
 import '../models/agent_preset_option.dart';
 import '../models/assistant_draft.dart';
 import '../models/dsh_queue.dart';
@@ -33,6 +34,7 @@ import '../widgets/chat/chat_bubbles.dart';
 import '../widgets/ignore_show_on_screen.dart';
 import '../widgets/chat/chat_scroll.dart';
 import '../widgets/chat/chat_tail_filler.dart';
+import '../widgets/chat/image_viewer.dart';
 import '../widgets/chrome.dart';
 import '../widgets/status_dot.dart';
 import '../theme/app_icons.dart';
@@ -284,6 +286,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   DateTime? _pointerDownTime;
   bool _disposed = false;
 
+  /// 当前挂着的全局设置（只用来听变化，见 [_syncSettings]）。
+  SettingsStore? _settings;
+
   /// App 是否在前台。
   ///
   /// 只用来决定「回前台要不要重连」；「弹胶囊还是发通知」归全局的
@@ -447,6 +452,8 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   @override
   void dispose() {
     _disposed = true;
+    _settings?.removeListener(_onSettingsChanged);
+    _settings = null;
     WidgetsBinding.instance.removeObserver(this);
     _snapshotTimer?.cancel();
     _childrenTimer?.cancel();
@@ -1478,6 +1485,32 @@ class _SessionChatScreenState extends State<SessionChatScreen>
       if (index < _attachedBytes.length) _attachedBytes.removeAt(index);
     });
     _persistAttachments();
+  }
+
+  /// 放大看待发的那张（多张时整排都能左右翻）。
+  ///
+  /// 只把真正有字节的图交给看图页，索引按同样的顺序重算——还原草稿时
+  /// `_attachedBytes` 可能比 `_attached` 短，直接用原索引会错位。
+  void _openAttached(int index) {
+    if (index < 0 || index >= _attached.length) return;
+    final images = <Uint8List>[];
+    final labels = <String?>[];
+    var start = 0;
+    for (var i = 0; i < _attached.length; i += 1) {
+      if (i >= _attachedBytes.length) break;
+      if (i == index) start = images.length;
+      images.add(_attachedBytes[i]);
+      labels.add(_attached[i].name);
+    }
+    if (images.isEmpty) return;
+    unawaited(
+      showImageViewerGallery(
+        context,
+        images: images,
+        labels: labels,
+        initialIndex: start,
+      ),
+    );
   }
 
   /// 待发图一变就落盘：返回列表再进来，选好的图得还在。
@@ -3240,6 +3273,25 @@ class _SessionChatScreenState extends State<SessionChatScreen>
     return _pending.length != before;
   }
 
+  /// 跟上全局设置：开关一变，这一页要重新按轮折一遍。
+  ///
+  /// 「完成后收起过程」和「工具调用显示」都在设置页里，改完回到已经开着的会话，
+  /// 如果这里不订阅，`_displayItems` 里那次按轮合并会一直停在上次算出来的结果上
+  /// ——明细那部分（`NotesLine` 自己订阅了 settings）会立刻变，可「一轮并成一条」
+  /// 得等到下一帧有新事件才跟上，看起来就像开关没生效。
+  void _syncSettings() {
+    final settings = AppScope.maybeOf(context)?.settings;
+    if (identical(settings, _settings)) return;
+    _settings?.removeListener(_onSettingsChanged);
+    _settings = settings;
+    _settings?.addListener(_onSettingsChanged);
+  }
+
+  void _onSettingsChanged() {
+    if (_disposed || !mounted) return;
+    setState(() {});
+  }
+
   /// 上屏的行 = 定稿历史 + 本地待发 + 离线队列 + 流式草稿。
   ///
   /// 定稿的那部分先按轮折一遍：一个 turn 常被宿主拆成七八条只有过程的助手消息，
@@ -3250,7 +3302,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
   /// 退回「按位置押最后一组」（`keepLastOpen`）。
   List<ChatMessage> get _displayItems {
     final drafts = _drafts.visibleDrafts;
-    final folded = AppScope.maybeOf(context)?.settings.foldNotesWhenDone ?? false;
+    final folded = _settings?.foldNotesWhenDone ?? false;
     final busy = _running || _streaming || drafts.isNotEmpty;
     return <ChatMessage>[
       ...(folded
@@ -3269,6 +3321,7 @@ class _SessionChatScreenState extends State<SessionChatScreen>
 
   @override
   Widget build(BuildContext context) {
+    _syncSettings();
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,
       body: SafeArea(
@@ -4085,16 +4138,22 @@ class _SessionChatScreenState extends State<SessionChatScreen>
           return Stack(
             clipBehavior: Clip.none,
             children: <Widget>[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: SizedBox(
-                  width: 56,
-                  height: 56,
-                  child: bytes == null
-                      ? ColoredBox(
-                          color: theme.colorScheme.surfaceContainerHighest,
-                        )
-                      : Image.memory(bytes, fit: BoxFit.cover),
+              // 点一下就放大看：56px 的缩略图根本分不清挑的是哪张截图。
+              // 多张时整排都能左右翻，不用关掉再点下一张。
+              GestureDetector(
+                key: ValueKey<String>('attach-open.$index'),
+                onTap: () => _openAttached(index),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: SizedBox(
+                    width: 56,
+                    height: 56,
+                    child: bytes == null
+                        ? ColoredBox(
+                            color: theme.colorScheme.surfaceContainerHighest,
+                          )
+                        : Image.memory(bytes, fit: BoxFit.cover),
+                  ),
                 ),
               ),
               Positioned(
@@ -4113,6 +4172,9 @@ class _SessionChatScreenState extends State<SessionChatScreen>
                   iconSize: 14,
                   style: IconButton.styleFrom(
                     backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                    // 不 shrinkWrap 的话 M3 会把命中区强制撑到 48×48，
+                    // 那圈不可见的点击区正好压在缩略图上，点图想放大却删掉图。
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     side: BorderSide(
                       color: theme.colorScheme.outlineVariant.withValues(
                         alpha: 0.6,

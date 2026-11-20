@@ -10,6 +10,7 @@ import 'package:dsh_frp_app/models/session_summary.dart';
 import 'package:dsh_frp_app/screens/session_chat_screen.dart';
 import 'package:dsh_frp_app/services/dsh_remote.dart';
 import 'package:dsh_frp_app/services/turn_watch.dart';
+import 'package:dsh_frp_app/widgets/chat/chat_bubbles.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -234,6 +235,41 @@ void main() {
     expect(find.text('工具调用 · read'), findsOneWidget);
     expect(find.text('工具调用 · ops_bash'), findsOneWidget);
     expect(find.text('思考 · 改完了，收尾'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    await remote.close();
+  });
+
+  testWidgets('在设置里关掉它，已经开着的这一屏立刻散开（不用等新消息）', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final settings = SettingsStore();
+    await settings.load();
+    final remote = await _pumpChat(tester, settings, history: _oneTurn());
+
+    // 一开始按默认设置折成一行：整轮的三步过程并到头上那一条里。
+    expect(find.byKey(const ValueKey<String>('notes-fold')), findsOneWidget);
+    expect(find.byType(NotesLine), findsOneWidget);
+
+    // 用户在设置页把它关掉（同一个全局 SettingsStore，不重进这一页）。
+    await settings.setFoldNotesWhenDone(false);
+    await tester.pumpAndSettle();
+
+    // 关掉之后过程得散回各自那一条消息里——「按轮合并」这一步也要跟着重算，
+    // 只看明细展不展开是不够的：合并没重算时，三条过程仍挤在同一个气泡里。
+    expect(
+      find.byType(NotesLine),
+      findsNWidgets(3),
+      reason: '开关一变，这一页就得重算按轮合并，不能等下一次有新事件',
+    );
+    expect(find.byKey(const ValueKey<String>('notes-fold')), findsNothing);
+    expect(find.text('工具调用 · read'), findsOneWidget);
+    expect(find.text('工具调用 · ops_bash'), findsOneWidget);
+
+    // 再打开，同一屏又收回去。
+    await settings.setFoldNotesWhenDone(true);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey<String>('notes-fold')), findsOneWidget);
+    expect(find.byType(NotesLine), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());
     await remote.close();

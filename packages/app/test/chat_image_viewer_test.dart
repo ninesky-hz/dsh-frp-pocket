@@ -87,4 +87,98 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(ImageViewerPage), findsNothing);
   });
+
+  testWidgets('放大后拖动会被夹住：图片不会无限往屏幕外跑', (tester) async {
+    await tester.pumpWidget(
+      _host(
+        ChatImageTile(
+          image: _ref,
+          future: Future<Uint8List>.value(_png),
+          localBytes: _png,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(ChatImageTile));
+    await tester.pumpAndSettle();
+
+    final viewer = tester.widget<InteractiveViewer>(
+      find.byType(InteractiveViewer),
+    );
+    final controller = viewer.transformationController!;
+
+    // 先放大到 2.5×，否则原始大小根本不该能拖。
+    await tester.tap(find.byType(InteractiveViewer));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.tap(find.byType(InteractiveViewer));
+    await tester.pumpAndSettle();
+    expect(controller.value.getMaxScaleOnAxis(), closeTo(2.5, 0.01));
+
+    // 往右下狂拖：位移必须夹在「整页被图盖住」的范围里，
+    // 也就是 tx/ty <= 0、且不小于 -(viewport * (scale - 1))。
+    await tester.drag(find.byType(InteractiveViewer), const Offset(1200, 1200));
+    await tester.pumpAndSettle();
+    var t = controller.value.getTranslation();
+    expect(t.x, lessThanOrEqualTo(0.5), reason: '往右拖过头，图的左边缘会离开屏幕');
+    expect(t.y, lessThanOrEqualTo(0.5));
+
+    await tester.drag(
+      find.byType(InteractiveViewer),
+      const Offset(-3000, -3000),
+    );
+    await tester.pumpAndSettle();
+    t = controller.value.getTranslation();
+    final size = tester.getSize(find.byType(InteractiveViewer));
+    final scale = controller.value.getMaxScaleOnAxis();
+    expect(
+      t.x,
+      greaterThanOrEqualTo(-size.width * (scale - 1) - 0.5),
+      reason: '往左拖过头，图的右边缘会离开屏幕',
+    );
+    expect(t.y, greaterThanOrEqualTo(-size.height * (scale - 1) - 0.5));
+
+    // 双击放大的落点在角上时同样要夹住（这条是手写矩阵最容易漏的）。
+    await tester.tap(find.byType(InteractiveViewer));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.tap(find.byType(InteractiveViewer));
+    await tester.pumpAndSettle();
+    expect(controller.value.getMaxScaleOnAxis(), closeTo(1, 0.001));
+  });
+
+  testWidgets('双击在右下角放大，图仍然盖满整页', (tester) async {
+    await tester.pumpWidget(
+      _host(
+        ChatImageTile(
+          image: _ref,
+          future: Future<Uint8List>.value(_png),
+          localBytes: _png,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(ChatImageTile));
+    await tester.pumpAndSettle();
+
+    final viewer = tester.widget<InteractiveViewer>(
+      find.byType(InteractiveViewer),
+    );
+    final controller = viewer.transformationController!;
+    final rect = tester.getRect(find.byType(InteractiveViewer));
+
+    // 双击靠近右下角：位移必须收进边界，否则会把图推出屏幕。
+    final at = rect.bottomRight - const Offset(6, 6);
+    await tester.tapAt(at);
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.tapAt(at);
+    await tester.pumpAndSettle();
+
+    final scale = controller.value.getMaxScaleOnAxis();
+    expect(scale, closeTo(2.5, 0.01));
+    final t = controller.value.getTranslation();
+    expect(t.x, lessThanOrEqualTo(0.5));
+    expect(t.x, greaterThanOrEqualTo(-rect.width * (scale - 1) - 0.5));
+    expect(t.y, lessThanOrEqualTo(0.5));
+    expect(t.y, greaterThanOrEqualTo(-rect.height * (scale - 1) - 0.5));
+  });
 }
