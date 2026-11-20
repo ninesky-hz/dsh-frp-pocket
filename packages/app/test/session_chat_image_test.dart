@@ -453,6 +453,15 @@ void main() {
     expect(kAttachRemoveHit, greaterThanOrEqualTo(30));
 
     // 命中区不能盖住缩略图中心：那块是「点开看大图」的地方。
+    // 画出来的圆钮要小（不然压在图上一大坨），能点的那圈要大。
+    final dot = tester.getSize(
+      find.byKey(const ValueKey<String>('attach-remove-dot.0')),
+    );
+    expect(dot.width, kAttachRemoveVisual);
+    expect(dot.height, kAttachRemoveVisual);
+    expect(dot.width, lessThan(kAttachRemoveHit));
+    expect(kAttachRemoveVisual, lessThanOrEqualTo(22));
+
     final removeRect = tester.getRect(remove);
     final openRect = tester.getRect(
       find.byKey(const ValueKey<String>('attach-open.0')),

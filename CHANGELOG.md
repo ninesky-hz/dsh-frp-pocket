@@ -1,3 +1,17 @@
+## 2026-11-20（删除角标看着小、按着还是大）
+
+### app 1.16.5+69
+
+**症状**：上一版把待发缩略图的删除角标放大到好点了，但**画出来**也跟着变成 32 的一枚大白圆钮，压在图上一大坨，比图本身还显眼。
+
+- **根因**：命中区和视觉尺寸用了同一个值。`IconButton` 的 `backgroundColor` 会铺满它的整个盒子，盒子是 32，画出来的圆就是 32。
+- **改法**（`lib/screens/session_chat_screen.dart`）：
+  - 拆成两个常量：`kAttachRemoveHit = 32`（可按的那圈，看不见）、`kAttachRemoveVisual = 20`（真画出来的圆钮直径，`ValueKey('attach-remove-dot.$index')`）。
+  - `IconButton` 的底色改成 `Colors.transparent`（hover/highlight 一起透明），圆底 + hairline + 极浅投影挪到 `icon:` 里那层 20×20 的 `Container` 上；叉号 12。
+  - 位置按视觉直径算：`top/right = -(kAttachRemoveHit - kAttachRemoveVisual) / 2 - 4`，圆钮仍探在缩略图右上角外侧。
+- 测试：e9 增加断言——圆钮实测 = 20、且 `< kAttachRemoveHit`、`<= 22`；原有「命中区 ≥ 32」「不包含缩略图中心点」「点角标能删」保持绿。
+- 全量：`flutter analyze` No issues；`flutter test` **579 条全过**。
+
 ## 2026-11-20（待发缩略图够大、删除角标够好点）
 
 ### app 1.16.4+68

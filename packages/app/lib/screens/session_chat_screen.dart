@@ -45,8 +45,11 @@ import '../theme/app_icons.dart';
 /// 点不准；图和角标一起放大到 64/30 才两头都够得着。
 const double kAttachThumbSize = 64;
 
-/// 待发缩略图右上角删除角标的命中边长。
+/// 待发缩略图右上角删除角标的命中边长（可按，但看不见的那圈）。
 const double kAttachRemoveHit = 32;
+
+/// 删除角标真正**画**出来的圆钮直径——跟命中区分开，看着小、按着大。
+const double kAttachRemoveVisual = 20;
 
 /// 补拉权限值时最多再重试几次：新建会话可能晚一拍才进 `session/list`。
 const int kPermissionHydrateRetries = 2;
@@ -4166,35 +4169,51 @@ class _SessionChatScreenState extends State<SessionChatScreen>
                   ),
                 ),
               ),
-              // 删除角标：直径 20 的视觉、30 的命中区，压在缩略图右上角的**外侧**
-              // ——中心点还在缩略图上（点图看大图），边上这圈够指头按住。
+              // 删除角标：**看**是 20 的一枚小圆钮，**按**是 32 的命中区。
+              // 视觉直接铺满 32 会显得又大又抢，所以底色画在 icon 里那层。
               Positioned(
-                top: -(kAttachRemoveHit - 22) / 2 - 3,
-                right: -(kAttachRemoveHit - 22) / 2 - 3,
+                top: -(kAttachRemoveHit - kAttachRemoveVisual) / 2 - 4,
+                right: -(kAttachRemoveHit - kAttachRemoveVisual) / 2 - 4,
                 child: IconButton(
                   key: ValueKey<String>('attach-remove.$index'),
                   onPressed: () => _removeAttachment(index),
                   tooltip: '移除',
-                  // 别加 `visualDensity: compact`：它会把这 30 的命中区再缩掉 8px。
+                  // 别加 `visualDensity: compact`：它会把这 32 的命中区再缩掉 8px。
                   constraints: const BoxConstraints.tightFor(
                     width: kAttachRemoveHit,
                     height: kAttachRemoveHit,
                   ),
                   padding: EdgeInsets.zero,
-                  iconSize: 15,
                   style: IconButton.styleFrom(
-                    backgroundColor: theme.colorScheme.surface,
+                    backgroundColor: Colors.transparent,
                     // 不 shrinkWrap 的话 M3 会把命中区强制撑到 48×48，
                     // 那圈不可见的点击区正好压在缩略图上，点图想放大却删掉图。
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    side: BorderSide(
-                      color: theme.colorScheme.outlineVariant,
-                      width: 1,
-                    ),
-                    shadowColor: Colors.black26,
-                    elevation: 1,
+                    hoverColor: Colors.transparent,
+                    highlightColor: Colors.transparent,
                   ),
-                  icon: const Icon(AppIcons.close),
+                  icon: Container(
+                    key: ValueKey<String>('attach-remove-dot.$index'),
+                    width: kAttachRemoveVisual,
+                    height: kAttachRemoveVisual,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surface,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: theme.colorScheme.outlineVariant),
+                      boxShadow: const <BoxShadow>[
+                        BoxShadow(
+                          color: Color(0x22000000),
+                          blurRadius: 2,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      AppIcons.close,
+                      size: 12,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                 ),
               ),
             ],
