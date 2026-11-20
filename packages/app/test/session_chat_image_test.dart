@@ -437,4 +437,43 @@ void main() {
 
     await _disposeChat(tester, remote);
   });
+
+  testWidgets('e9 删除角标够大够点，同时不挡住缩略图中心的「看大图」', (tester) async {
+    final remote = await _pumpChat(tester, pickImage: _pickOne);
+
+    await tester.tap(find.byKey(const ValueKey<String>('chat-attach')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    final remove = find.byKey(const ValueKey<String>('attach-remove.0'));
+    final removeSize = tester.getSize(remove);
+    // 之前在 56px 缩略图上只能给 22px，手指点不准——这条把「够大」钉住。
+    expect(removeSize.width, greaterThanOrEqualTo(kAttachRemoveHit));
+    expect(removeSize.height, greaterThanOrEqualTo(kAttachRemoveHit));
+    expect(kAttachRemoveHit, greaterThanOrEqualTo(30));
+
+    // 命中区不能盖住缩略图中心：那块是「点开看大图」的地方。
+    final removeRect = tester.getRect(remove);
+    final openRect = tester.getRect(
+      find.byKey(const ValueKey<String>('attach-open.0')),
+    );
+    expect(openRect.size.width, greaterThanOrEqualTo(kAttachThumbSize));
+    expect(
+      removeRect.contains(openRect.center),
+      isFalse,
+      reason: '删除角标盖到缩略图中心，点图放大就会变成删图',
+    );
+
+    // 角标落在右上角外侧，且仍在整行的高度内（探出去的会被列表剪掉）。
+    expect(removeRect.left, greaterThan(openRect.left));
+    expect(removeRect.center.dy, lessThan(openRect.top + 24));
+
+    await tester.tap(remove);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(find.byKey(const ValueKey<String>('attach-remove.0')), findsNothing);
+    expect(find.byKey(const ValueKey<String>('attach-open.0')), findsNothing);
+
+    await _disposeChat(tester, remote);
+  });
 }
