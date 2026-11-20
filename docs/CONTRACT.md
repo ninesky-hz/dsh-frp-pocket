@@ -308,6 +308,14 @@ subdomain = "home"
    - 设置页「存储 → 图片缓存」必须同时给三样：占用（`formatCacheSize(bytes)` + 张数）、清除按钮（空缓存时置灰）、确认框（说清「历史与电脑上的原件不动，未发出的图不清」）。key：`image-cache` / `image-cache.size` / `image-cache.clear` / `image-cache.confirm` / `image-cache.cancel`。
    - **不要**把离线队列里的图（SharedPreferences 里的 base64，见 `models/outbox.dart`）算进这块缓存，那是还没发出去的用户数据，清了等于吞掉用户的东西。
 
+11. **设置页版式**（`widgets/settings_parts.dart` 是唯一来源）：页面由「分组标题 + 若干行」组成，行与行之间一条 hairline。要点：
+   - 一行 = 图标（固定 20 宽）+ 12 间距 + 标题/说明 + 右侧控件；**没有图标时用等宽占位**，标签永远从 48 起（`SettingsRow`）。写了 `ListTile` 就会各自按 Material 默认内边距排，同一列会错开几像素。
+   - 分组标题 13/500、次要色，**不许用强调色**（`SettingsSection`）。强调色只留给有信号的东西（开关打开、选中、在线、已允许）。
+   - 开关行整行可点（`SettingsSwitchRow`）；分段控件单独占一行且圆角 10（`settingsSegmentStyle`，不要 M3 默认的胶囊）；机器值（版本号、缓存占用、上次事件、接口前缀）统一等宽数字（`SettingsValue` / `kSettingsMachine`）。
+   - 自带外框的内容（如权限状态卡）用 `SettingsInset` 包一层，分组就不会在它上下画细线。
+   - 权限状态卡里的状态用 8px 圆点表示就绪/待办，**不要对勾图标**（对勾是「已完成」的语义）；卡内按钮比行内按钮矮一档（30 高、圆角 8）。
+   - `test/settings_layout_test.dart` 钉住两条底线：标题不染强调色、所有行标签同一条左边缘。改版式先跑它。
+
 ### 7.3 二维码内容（插件设置页生成，App 扫）
 
 ```

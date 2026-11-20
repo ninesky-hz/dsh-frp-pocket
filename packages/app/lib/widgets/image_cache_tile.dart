@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/image_cache.dart';
 import '../theme/app_icons.dart';
+import 'settings_parts.dart';
 
 /// 设置页「存储 → 图片缓存」那一行。
 ///
@@ -112,16 +113,12 @@ class _ImageCacheTileState extends State<ImageCacheTile> {
     final theme = Theme.of(context);
     final stats = _stats;
     final canClear = !_busy && stats != null && !stats.isEmpty;
-    return ListTile(
+    return SettingsRow(
       key: ImageCacheTile.tileKey,
-      isThreeLine: stats != null && !stats.isEmpty,
-      leading: const Icon(AppIcons.image),
-      title: const Text('图片缓存'),
-      subtitle: Text(
-        _subtitle,
-        key: ImageCacheTile.sizeKey,
-        style: theme.textTheme.bodySmall,
-      ),
+      icon: AppIcons.image,
+      title: '图片缓存',
+      subtitle: _subtitle,
+      subtitleKey: ImageCacheTile.sizeKey,
       trailing: _busy
           ? const SizedBox(
               width: 16,
@@ -131,6 +128,16 @@ class _ImageCacheTileState extends State<ImageCacheTile> {
           : TextButton(
               key: ImageCacheTile.clearKey,
               onPressed: canClear ? _confirmClear : null,
+              style: TextButton.styleFrom(
+                minimumSize: const Size(0, 30),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+                textStyle: theme.textTheme.labelLarge?.copyWith(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
               child: const Text('清除'),
             ),
     );

@@ -70,6 +70,12 @@ abstract final class AppIcons {
   /// 答完提醒（灵动岛 / 系统通知）。
   static const IconData spark = CupertinoIcons.bell;
 
+  /// 灵动岛：药丸形，跟「系统通知」的铃铛分开。
+  static const IconData island = CupertinoIcons.capsule;
+
+  /// 屏幕亮度：设置页「保持屏幕常亮」用。
+  static const IconData brightness = CupertinoIcons.brightness;
+
   /// 后台运行资格（电池优化名单）。
   static const IconData battery = CupertinoIcons.battery_25;
 

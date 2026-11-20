@@ -7,6 +7,7 @@ import '../services/platform_bridge.dart';
 import '../services/turn_alerts.dart';
 import '../services/turn_watch.dart';
 import '../theme/app_icons.dart';
+import 'settings_parts.dart';
 
 /// 设置页里那块「答完提醒到底通不通」：权限现状、后台资格、当场自测。
 ///
@@ -203,85 +204,124 @@ class _TurnAlertPermissionTileState extends State<TurnAlertPermissionTile>
 
     return Padding(
       key: const ValueKey<String>('notify-perm-tile'),
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                status.ready ? AppIcons.check : AppIcons.shieldWarn,
-                size: 20,
-                color: status.ready ? const Color(0xFF3DDC97) : null,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  '系统通知权限',
-                  style: theme.textTheme.titleSmall,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _subtitle(status),
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          if (last != null) ...[
-            const SizedBox(height: 2),
-            Text(
-              '上次：$last',
-              key: const ValueKey<String>('notify-watch-last'),
-              style: theme.textTheme.bodySmall?.copyWith(
-                fontSize: 11,
-                color: theme.colorScheme.onSurfaceVariant.withValues(
-                  alpha: 0.75,
-                ),
-              ),
-            ),
-          ],
-          const SizedBox(height: 2),
-          Wrap(
-            spacing: 4,
-            runSpacing: 2,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              if (status.ready) ...[
-                TextButton(
-                  key: const ValueKey<String>('notify-test-action'),
-                  onPressed: _busy ? null : _sendTest,
-                  child: const Text('试一下'),
-                ),
-                TextButton(
-                  key: const ValueKey<String>('notify-test-later'),
-                  onPressed: _busy ? null : () => _scheduleTest(),
-                  child: const Text('15 秒后'),
-                ),
-              ],
-              TextButton(
-                key: const ValueKey<String>('notify-perm-action'),
-                onPressed: _busy ? null : () => _onAction(status),
-                child: Text(_actionLabel(status)),
-              ),
-              if (_busy)
-                const Padding(
-                  padding: EdgeInsets.only(left: 6),
-                  child: SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 14),
+      child: _card(
+        theme,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                _StatusDot(status: status),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '系统通知权限',
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      fontSize: 13.5,
+                      height: 18 / 13.5,
+                      fontWeight: FontWeight.w500,
+                      color: theme.colorScheme.onSurface,
+                    ),
                   ),
                 ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _subtitle(status),
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 12.5,
+                height: 17 / 12.5,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            if (last != null) ...<Widget>[
+              const SizedBox(height: 3),
+              Text(
+                '上次：$last',
+                key: const ValueKey<String>('notify-watch-last'),
+                style: kSettingsMachine.copyWith(
+                  fontSize: 11.5,
+                  height: 16 / 11.5,
+                  color:
+                      theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+                ),
+              ),
             ],
-          ),
-          if (_ignoringBattery == false) ...[
-            const SizedBox(height: 2),
-            _BatteryRow(onPressed: _busy ? null : _allowBackground),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 2,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: <Widget>[
+                if (status.ready)
+                  TextButton(
+                    key: const ValueKey<String>('notify-test-action'),
+                    onPressed: _busy ? null : _sendTest,
+                    style: _actStyle(theme, primary: true),
+                    child: const Text('试一下'),
+                  ),
+                if (status.ready)
+                  TextButton(
+                    key: const ValueKey<String>('notify-test-later'),
+                    onPressed: _busy ? null : () => _scheduleTest(),
+                    style: _actStyle(theme),
+                    child: const Text('15 秒后'),
+                  ),
+                TextButton(
+                  key: const ValueKey<String>('notify-perm-action'),
+                  onPressed: _busy ? null : () => _onAction(status),
+                  style: _actStyle(theme, primary: status.granted && !status.ready),
+                  child: Text(_actionLabel(status)),
+                ),
+                if (_busy)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 4),
+                    child: SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+              ],
+            ),
+            if (_ignoringBattery == false) ...<Widget>[
+              const SizedBox(height: 4),
+              _BatteryRow(onPressed: _busy ? null : _allowBackground),
+            ],
           ],
-        ],
+        ),
+      ),
+    );
+  }
+
+  /// 卡片本体：次级表面 + 一圈 hairline，视觉重量与上面那些行不同。
+  Widget _card(ThemeData theme, {required Widget child}) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: child,
+    );
+  }
+
+  /// 卡里的小按钮：比列表里的 TextButton 矮一档，内边距挨紧。
+  ButtonStyle _actStyle(ThemeData theme, {bool primary = false}) {
+    final color =
+        primary ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant;
+    return TextButton.styleFrom(
+      minimumSize: const Size(0, 30),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
+      foregroundColor: color,
+      textStyle: theme.textTheme.labelLarge?.copyWith(
+        fontSize: 12.5,
+        fontWeight: FontWeight.w500,
       ),
     );
   }
@@ -315,17 +355,19 @@ class _BatteryRow extends StatelessWidget {
     return Row(
       key: const ValueKey<String>('notify-battery-row'),
       crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
+      children: <Widget>[
         Icon(
           AppIcons.battery,
-          size: 18,
+          size: 15,
           color: theme.colorScheme.onSurfaceVariant,
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 6),
         Expanded(
           child: Text(
             '锁屏或切后台后容易被系统冻结，答完可能不提醒',
             style: theme.textTheme.bodySmall?.copyWith(
+              fontSize: 12,
+              height: 16 / 12,
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
@@ -333,6 +375,16 @@ class _BatteryRow extends StatelessWidget {
         TextButton(
           key: const ValueKey<String>('notify-battery-action'),
           onPressed: onPressed,
+          style: TextButton.styleFrom(
+            minimumSize: const Size(0, 28),
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.compact,
+            textStyle: theme.textTheme.labelLarge?.copyWith(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
           child: const Text('允许后台运行'),
         ),
       ],
@@ -340,7 +392,34 @@ class _BatteryRow extends StatelessWidget {
   }
 }
 
-/// 三种「查不到状态」的占位统一走这里，样式与正式块一致。
+/// 状态点：8px 圆点。没批之前不画对勾——对勾是「完成」的语义，这里只是状态。
+class _StatusDot extends StatelessWidget {
+  const _StatusDot({required this.status});
+
+  final NotifyPermission status;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final Color color;
+    if (status.ready) {
+      color = status.bannerSilent
+          ? const Color(0xFFC8871B)
+          : theme.colorScheme.primary;
+    } else if (status.granted) {
+      color = const Color(0xFFC8871B);
+    } else {
+      color = theme.colorScheme.error;
+    }
+    return Container(
+      width: 8,
+      height: 8,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    );
+  }
+}
+
+/// 三种「查不到状态」的占位统一走这里，外框与正式卡一致。
 class _Shell extends StatelessWidget {
   const _Shell({required this.icon, required this.title, required this.lines});
 
@@ -353,26 +432,45 @@ class _Shell extends StatelessWidget {
     final theme = Theme.of(context);
     return Padding(
       key: const ValueKey<String>('notify-perm-tile'),
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, size: 20),
-              const SizedBox(width: 10),
-              Expanded(child: Text(title, style: theme.textTheme.titleSmall)),
-            ],
-          ),
-          const SizedBox(height: 4),
-          for (final line in lines)
-            Text(
-              line,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 14),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(icon, size: 15, color: theme.colorScheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      fontSize: 13.5,
+                      height: 18 / 13.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
             ),
-        ],
+            const SizedBox(height: 4),
+            for (final line in lines)
+              Text(
+                line,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontSize: 12.5,
+                  height: 17 / 12.5,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
